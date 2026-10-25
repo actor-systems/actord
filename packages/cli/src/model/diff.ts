@@ -129,6 +129,7 @@ function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} → ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
   if (b.approval !== h.approval) add("effect.approval", s, "risky", `Approval ${b.approval} → ${h.approval}`, { approval: h.approval === "none" });
   if (b.reconcile !== h.reconcile) add("effect.reconcile", s, "risky", `Reconciliation ${b.reconcile} → ${h.reconcile}`);
+  if ((b.result ?? null) !== (h.result ?? null)) add("effect.result", s, "risky", `Outcome message ${b.result ?? "none"} → ${h.result ?? "none"}; in-flight outcomes use the old message`);
 }
 
 type Schema = Record<string, unknown> | null;

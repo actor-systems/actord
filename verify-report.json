@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-25T00:25:55.560Z",
+  "generatedAt": "2026-10-25T00:45:14.508Z",
   "versions": {
     "claude": "2.1.310",
     "node": "v24.22.1",
@@ -13,15 +13,15 @@
     "platform": "darwin-arm64"
   },
   "summary": {
-    "pass": 19,
-    "fail": 0,
+    "pass": 22,
+    "fail": 2,
     "blocked": 1,
     "skipped": 0
   },
   "gates": {
     "G0": {
       "title": "Ground truth",
-      "status": "passed",
+      "status": "failed",
       "missing": []
     },
     "G1": {
@@ -31,6 +31,11 @@
     },
     "G2": {
       "title": "Model and CLI",
+      "status": "failed",
+      "missing": []
+    },
+    "G3": {
+      "title": "Runtime evidence",
       "status": "passed",
       "missing": []
     }
@@ -55,8 +60,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 85,
-      "outputTail": "✔ deny rules cover deployment (0.465084ms)\n✔ deny rules cover secrets (0.059917ms)\n✔ deny rules cover remote writes (0.04875ms)\n✔ deny rules cover publishing (0.049417ms)\n✔ deny rules cover tag pushes (0.047958ms)\n✔ deny rules cover force pushes (0.041416ms)\n✔ model-backed evals and plain pushes still ask (0.04575ms)\n✔ no allow rules widen the agent's authority (0.060416ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 49.21625"
+      "durationMs": 80,
+      "outputTail": "✔ deny rules cover deployment (0.406625ms)\n✔ deny rules cover secrets (0.056375ms)\n✔ deny rules cover remote writes (0.043542ms)\n✔ deny rules cover publishing (0.047333ms)\n✔ deny rules cover tag pushes (0.047042ms)\n✔ deny rules cover force pushes (0.038833ms)\n✔ model-backed evals and plain pushes still ask (0.045667ms)\n✔ no allow rules widen the agent's authority (0.050834ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.9525"
     },
     {
       "id": "g0.spike.types",
@@ -66,19 +71,19 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 855,
-      "outputTail": "\n ⛅️ wrangler 4.152.0\n────────────────────\nGenerating project types...\n\ninterface __BaseEnv_Env {\n\tSENDER: DurableObjectNamespace<import(\"./src/index\").Sender>;\n\tRECEIVER: DurableObjectNamespace<import(\"./src/index\").Receiver>;\n}\ndeclare namespace Cloudflare {\n\tinterface GlobalProps {\n\t\tmainModule: typeof import(\"./src/index\");\n\t\tdurableNamespaces: \"Sender\" | \"Receiver\";\n\t}\n\tinterface Env extends __BaseEnv_Env {}\n}\ninterface Env extends __BaseEnv_Env {}\n\nGenerating runtime types...\n\nRuntime types generated.\n\n\n✨ Types written to worker-configuration.d.ts\n\n📖 Read about runtime types\nhttps://developers.cloudflare.com/workers/languages/typescript/#generate-types\n📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file."
+      "durationMs": 997,
+      "outputTail": "\n ⛅️ wrangler 4.152.0\n────────────────────\nGenerating project types...\n\ninterface __BaseEnv_Env {\n\tSENDER: DurableObjectNamespace<import(\"./src/index\").Sender>;\n\tRECEIVER: DurableObjectNamespace<import(\"./src/index\").Receiver>;\n\tGATE: DurableObjectNamespace<import(\"./src/index\").Gate>;\n\tSLOW: DurableObjectNamespace<import(\"./src/index\").Slow>;\n\tTX: DurableObjectNamespace<import(\"./src/index\").Tx>;\n}\ndeclare namespace Cloudflare {\n\tinterface GlobalProps {\n\t\tmainModule: typeof import(\"./src/index\");\n\t\tdurableNamespaces: \"Sender\" | \"Receiver\" | \"Gate\" | \"Slow\" | \"Tx\";\n\t}\n\tinterface Env extends __BaseEnv_Env {}\n}\ninterface Env extends __BaseEnv_Env {}\n\nGenerating runtime types...\n\nRuntime types generated.\n\n\n✨ Types written to worker-configuration.d.ts\n\n📖 Read about runtime types\nhttps://developers.cloudflare.com/workers/languages/typescript/#generate-types\n📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file."
     },
     {
       "id": "g0.spike.typecheck",
       "gate": "G0",
       "title": "DO spike typechecks (TypeScript 7)",
       "command": "npm run --silent typecheck -w spike-do-messaging",
-      "status": "pass",
-      "reason": null,
+      "status": "fail",
+      "reason": "exit 1",
       "evidenceSource": "host",
-      "durationMs": 168,
-      "outputTail": null
+      "durationMs": 176,
+      "outputTail": "src/index.ts(2,32): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled."
     },
     {
       "id": "g0.spike.runtime",
@@ -88,8 +93,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1097,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/spikes/do-messaging\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  17:25:39\n   Duration  576ms (transform 42%, tests 33%, worker 13%, import 11%)"
+      "durationMs": 1223,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/spikes/do-messaging\n\n\n Test Files  2 passed (2)\n      Tests  6 passed (6)\n   Start at  17:44:54\n   Duration  742ms (tests 72%, transform 17%, worker 6%, import 5%)"
     },
     {
       "id": "g0.sandbox",
@@ -99,7 +104,7 @@
       "status": "pass",
       "reason": "finding reproduced (decision 0004)",
       "evidenceSource": "host",
-      "durationMs": 2159,
+      "durationMs": 2317,
       "outputTail": "default 1 listen-eperm\nlocal-binding 0 passes"
     },
     {
@@ -121,8 +126,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 497,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  27 passed (27)\n   Start at  17:25:42\n   Duration  127ms (tests 68%, import 17%, transform 10%, worker 5%)"
+      "durationMs": 486,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  27 passed (27)\n   Start at  17:44:57\n   Duration  142ms (tests 46%, transform 38%, import 13%, worker 4%)"
     },
     {
       "id": "g1.dist.fresh",
@@ -132,7 +137,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 418,
+      "durationMs": 432,
       "outputTail": "built actors-toolkit 0.1.0 → dist/cli.mjs, plugin/dist/actors.mjs"
     },
     {
@@ -143,8 +148,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 580,
-      "outputTail": "✔ runs the bundled build outside any project (133.345458ms)\n✔ delegates to a pinned project CLI from a nested directory and passes the bundled version (359.47175ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 543.447166"
+      "durationMs": 488,
+      "outputTail": "✔ runs the bundled build outside any project (131.1795ms)\n✔ delegates to a pinned project CLI from a nested directory and passes the bundled version (265.678709ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 451.198709"
     },
     {
       "id": "g1.validate.plugin",
@@ -154,7 +159,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 584,
+      "durationMs": 582,
       "outputTail": "Validating plugin manifest: /Users/jaredmcfarland/Developer/actors-plugin/plugin/.claude-plugin/plugin.json\n\nPlugin directory checks for /Users/jaredmcfarland/Developer/actors-plugin/plugin. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.\n\n⚠ Found 1 plugin directory warning:\n\n  ❯ .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.\n    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.\n\nAbout these checks:\n\n  ❯ The repository root was taken to be /Users/jaredmcfarland/Developer/actors-plugin, the nearest parent folder with a .git folder or file. README.md was taken from it, because this plugin folder has none of its own. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.\n\nThese plugin directory checks do not change the result below.\n\nThe directory also runs a safety scan and a policy review that this command does not.\n\n✔ Validation passed"
     },
     {
@@ -165,7 +170,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 511,
+      "durationMs": 501,
       "outputTail": "Validating marketplace manifest: /Users/jaredmcfarland/Developer/actors-plugin/.claude-plugin/marketplace.json\n\n✔ Validation passed"
     },
     {
@@ -176,8 +181,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2334,
-      "outputTail": "== marketplace add /Users/jaredmcfarland/Developer/actors-plugin\nAdding marketplace…✔ Successfully added marketplace: actors-toolkit (declared in user settings)\n== install actors@actors-toolkit\nInstalling plugin \"actors@actors-toolkit\"...✔ Successfully installed plugin: actors@actors-toolkit (scope: user)\n== list\n== launcher from the installed plugin\nlauncher: /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.Rve1cnh7NR/plugins/cache/actors-toolkit/actors/0.1.0/bin/actors\n== uninstall\n✔ Successfully uninstalled plugin: actors (scope: user)\n✔ Successfully removed marketplace: actors-toolkit\n== nothing left\ninstall-smoke: ok (actors 0.1.0)"
+      "durationMs": 2352,
+      "outputTail": "== marketplace add /Users/jaredmcfarland/Developer/actors-plugin\nAdding marketplace…✔ Successfully added marketplace: actors-toolkit (declared in user settings)\n== install actors@actors-toolkit\nInstalling plugin \"actors@actors-toolkit\"...✔ Successfully installed plugin: actors@actors-toolkit (scope: user)\n== list\n== launcher from the installed plugin\nlauncher: /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.iutJ5akhwB/plugins/cache/actors-toolkit/actors/0.1.0/bin/actors\n== uninstall\n✔ Successfully uninstalled plugin: actors (scope: user)\n✔ Successfully removed marketplace: actors-toolkit\n== nothing left\ninstall-smoke: ok (actors 0.1.0)"
     },
     {
       "id": "g1.budget",
@@ -187,7 +192,7 @@
       "status": "pass",
       "reason": "always-on ~66 tokens",
       "evidenceSource": "host",
-      "durationMs": 1568,
+      "durationMs": 1609,
       "outputTail": "{\"pluginDir\":66,\"installed\":66,\"max\":66,\"target\":1000,\"limit\":1500}"
     },
     {
@@ -198,8 +203,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 82,
-      "outputTail": "✔ README has a trust section (0.39225ms)\n✔ every settings-style hook command is listed (0.105625ms)\n✔ every monitor command is listed (0.454625ms)\n﹣ every mod event and mod call is listed (0.111625ms) # no mod module yet\nℹ tests 4\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 45.273"
+      "durationMs": 86,
+      "outputTail": "✔ README has a trust section (0.37325ms)\n✔ every settings-style hook command is listed (0.101625ms)\n✔ every monitor command is listed (0.37825ms)\n﹣ every mod event and mod call is listed (0.087667ms) # no mod module yet\nℹ tests 4\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 43.141334"
     },
     {
       "id": "g1.start-session",
@@ -220,7 +225,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 272,
+      "durationMs": 256,
       "outputTail": null
     },
     {
@@ -231,7 +236,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 3580,
+      "durationMs": 3421,
       "outputTail": "ok   valid/evolved: tsc pass (expected pass)\nok   valid/minimal: tsc pass (expected pass)\nok   negative/actor-unjustified: tsc pass (expected pass)\nok   negative/agent-budget-missing: tsc pass (expected pass)\nok   negative/config-binding-missing: tsc pass (expected pass)\nok   negative/config-export-missing: tsc pass (expected pass)\nok   negative/declaration-load-failed: tsc fail (expected fail)  fixtures/negative/declaration-load-failed/system.ts(2,37): error TS2307: Cannot find module './src/messages/missing.ts' or its corresponding type declarations.\nok   negative/effect-undeclared: tsc fail (expected fail)  fixtures/negative/effect-undeclared/system.ts(21,7): error TS2322: Type '[\"notify.pager\"]' is not assignable to type 'readonly [\"notify.pager\"] & readonly never[]'.\nok   negative/entry-export-missing: tsc pass (expected pass)\nok   negative/manifest-stale: tsc pass (expected pass)\nok   negative/route-unknown-actor: tsc fail (expected fail)  fixtures/negative/route-unknown-actor/system.ts(26,45): error TS2322: Type '\"Ghost\"' is not assignable to type '\"Pinger\" | \"Ponger\"'.\nok   negative/route-unknown-message: tsc fail (expected fail)  fixtures/negative/route-unknown-message/system.ts(25,25): error TS2322: Type '\"ping.vanished\"' is not assignable to type '\"ping.due\" | \"ping.kicked\" | \"ping.sent\"'.\nok   negative/schedule-route-missing: tsc pass (expected pass)\nok   negative/schema-invalid: tsc pass (expected pass)"
     },
     {
@@ -239,11 +244,11 @@
       "gate": "G2",
       "title": "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes",
       "command": "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts",
-      "status": "pass",
-      "reason": null,
+      "status": "fail",
+      "reason": "exit 1",
       "evidenceSource": "host",
-      "durationMs": 2826,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  30 passed (30)\n   Start at  17:25:53\n   Duration  2.48s (tests 99%, import 1%)"
+      "durationMs": 2460,
+      "outputTail": "      \"projectRoot\",\n\n ❯ test/fixtures.test.ts:36:65\n     34|         const b = run(dir, ...args);\n     35|         expect(a.out).toBe(b.out);\n     36|         expect(args.includes(\"--json\") ? stable(a.out) : a.out).toMatc…\n       |                                                                 ^\n     37|       }\n     38|     });\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯\n\n FAIL  test/fixtures.test.ts > valid fixtures > evolved: the committed manifest is what graph --json derives\nAssertionError: expected { …(7) } to deeply equal { schemaVersion: 1, …(6) }\n\n- Expected\n+ Received\n\n@@ -68,11 +68,10 @@\n        \"approval\": \"none\",\n        \"description\": \"Message the operator about a sequence gap\",\n        \"idempotency\": \"key\",\n        \"name\": \"notify.operator\",\n        \"reconcile\": false,\n-       \"result\": null,\n      },\n    ],\n    \"messages\": [\n      {\n        \"description\": \"The schedule says it's time to ping\",\n\n ❯ test/fixtures.test.ts:41:83\n     39|     it(`${name}: the committed manifest is what graph --json derives`,…\n     40|       const graph = JSON.parse(run(dir, \"graph\", \"--json\").out);\n     41|       expect(JSON.parse(readFileSync(join(dir, \"actors.manifest.json\")…\n       |                                                                                   ^\n     42|     });\n     43|   }\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯"
     },
     {
       "id": "g2.negative.unchanged",
@@ -253,8 +258,63 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 28,
+      "durationMs": 27,
       "outputTail": null
+    },
+    {
+      "id": "g3.radar.typecheck",
+      "gate": "G3",
+      "title": "Release Radar typechecks (wrangler types + tsc)",
+      "command": "npm run --silent typecheck -w release-radar",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 905,
+      "outputTail": null
+    },
+    {
+      "id": "g3.radar.check",
+      "gate": "G3",
+      "title": "actors check passes on Release Radar (declaration, config, exports, manifest)",
+      "command": "node ../../plugin/dist/actors.mjs check",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 87,
+      "outputTail": "✓ release-radar: 0 error(s), 0 warning(s)"
+    },
+    {
+      "id": "g3.radar.runtime",
+      "gate": "G3",
+      "title": "Release Radar fault matrix passes in workerd",
+      "command": "node scripts/run-example-tests.mjs examples/release-radar duplicate-input duplicate-delivery malformed unauthorized-route unknown-message out-of-order crash-before-mutation crash-after-mutation delivery-retry restart retry-exhausted scheduled-wake lost-ack-idempotent",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 1936,
+      "outputTail": "ok   [duplicate-input] 1 test(s)\nok   [duplicate-delivery] 1 test(s)\nok   [malformed] 4 test(s)\nok   [unauthorized-route] 1 test(s)\nok   [unknown-message] 1 test(s)\nok   [out-of-order] 2 test(s)\nok   [crash-before-mutation] 1 test(s)\nok   [crash-after-mutation] 1 test(s)\nok   [delivery-retry] 1 test(s)\nok   [restart] 2 test(s)\nok   [retry-exhausted] 1 test(s)\nok   [scheduled-wake] 2 test(s)\nok   [lost-ack-idempotent] 1 test(s)\n20/20 tests passed in workerd"
+    },
+    {
+      "id": "g3.radar.trace",
+      "gate": "G3",
+      "title": "A real significant release traces from @clock to a confirmed notification",
+      "command": "scripts/trace-smoke.sh",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 58,
+      "outputTail": "trace 38wmwjgimus0a · correlation 0e3ix8zrsupuw · coverage: .actors/events.ndjson (local only)\n  @clock → FeedPoller:crash-before  feed.poll.due  ✓ handled (323njowhyd073)\n  └─ effect feed.fetch [poll-1792888112920]  ✓ confirmed\n     └─ FeedPoller:crash-before → FeedPoller:crash-before  feed.fetched  ✓ handled (20we2xfxf3ooa)\n        ├─ FeedPoller:crash-before → ReleaseLedger:main  release.observed  ✓ handled after 1 retry (026nsc7lusbrb)\n        │    ! injected fault at before-handler\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (14e48lve42rf6)\n        │     └─ effect notify.digest [crash-before-2.0.0]  ✓ confirmed\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (0vrdg75jjyqxi)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (3p5cykg2po2dn)\n        │     └─ effect notify.digest [wsdk-5.0.0]  ✓ confirmed\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (1w7e9ki6ooqcl)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (38wmwjgimus0a)  ◀ target\n        │     └─ effect notify.digest [wsdk-4.151.1]  ✓ confirmed\n        └─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (1wfvdylarke0w)"
+    },
+    {
+      "id": "g3.cli.events",
+      "gate": "G3",
+      "title": "actors events/trace on recorded logs: known, unknown, truncated, retries, follow",
+      "command": "npx --no-install vitest run test/events.test.ts",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 1321,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n   Start at  17:45:13\n   Duration  960ms (tests 99%, import 1%)"
     }
   ]
 }

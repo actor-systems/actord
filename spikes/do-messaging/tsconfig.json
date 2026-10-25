@@ -3,11 +3,20 @@
     "target": "es2024",
     "module": "es2022",
     "moduleResolution": "bundler",
-    "lib": ["es2024"],
+    "lib": [
+      "es2024"
+    ],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["@cloudflare/vitest-plugin/types"]
+    "types": [
+      "@cloudflare/vitest-plugin/types"
+    ],
+    "allowImportingTsExtensions": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "worker-configuration.d.ts"
+  ]
 }

@@ -177,6 +177,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
         "idempotency": "key",
         "name": "notify.operator",
         "reconcile": false,
+        "result": null,
       },
     ],
     "messages": [

@@ -765,6 +765,7 @@ function diffEffect(b, h, add) {
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} \u2192 ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
   if (b.approval !== h.approval) add("effect.approval", s, "risky", `Approval ${b.approval} \u2192 ${h.approval}`, { approval: h.approval === "none" });
   if (b.reconcile !== h.reconcile) add("effect.reconcile", s, "risky", `Reconciliation ${b.reconcile} \u2192 ${h.reconcile}`);
+  if ((b.result ?? null) !== (h.result ?? null)) add("effect.result", s, "risky", `Outcome message ${b.result ?? "none"} \u2192 ${h.result ?? "none"}; in-flight outcomes use the old message`);
 }
 function comparePayload(oldS, newS, path = "payload") {
   if (JSON.stringify(oldS) === JSON.stringify(newS)) return [];
