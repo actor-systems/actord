@@ -32,6 +32,8 @@ export interface Evidence {
   claims: ClassifiedClaim[];
   summary: { provedLocally: number; stubOnly: number; notGuaranteed: number; blocked: number; failing: number; untested: number };
   verdict: "pass" | "fail" | "blocked";
+  /** Why the verdict isn't pass, one line each; empty on pass. Kept next to the verdict so a tail shows it. */
+  verdictReasons: string[];
   /** Content hash of the actor files the evidence was produced from; a later edit makes it stale. */
   fingerprint: string | null;
 }
@@ -122,7 +124,7 @@ export function runTests(root: string, profile: string): { step: Step; tests: Te
 export async function verify(cwd: string, opts: { out?: string; profile?: string }): Promise<CommandResult<Evidence>> {
   const root = findProjectRoot(cwd);
   const profile = opts.profile === "extended" ? "extended" : "standard";
-  const empty: Evidence = { projectRoot: null, generatedAt: new Date().toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", fingerprint: null };
+  const empty: Evidence = { projectRoot: null, generatedAt: new Date().toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", verdictReasons: ["no actor project here"], fingerprint: null };
   if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const steps: Step[] = [];
 
@@ -173,7 +175,8 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   };
   const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
   const verdict: Evidence["verdict"] = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
-  const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
+  const reasons = verdictReasons(steps, claims, error);
+  const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, verdictReasons: reasons, fingerprint: fingerprint(root) };
 
   const outPath = resolve(cwd, opts.out ?? join(root, ".actors/evidence.json"));
   mkdirSync(dirname(outPath), { recursive: true });
@@ -193,9 +196,24 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
         ]
       : []),
   ];
+  // Readers often see only the end of the output, so it repeats the verdict and why.
+  lines.push("", `Verdict: ${verdict.toUpperCase()}${reasons.length ? `: ${reasons.join("; ")}` : ""}`);
   // The step after verify is never a deploy: say where the plan comes from.
-  lines.push("", "Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
+  lines.push("Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
   return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
+}
+
+/** One line per thing that keeps the verdict from pass: failed and blocked steps, then failing and untested claims. */
+export function verdictReasons(steps: Step[], claims: ClassifiedClaim[], claimsError: string | null): string[] {
+  const ids = (status: string) => claims.filter((c) => c.status === status).map((c) => c.id);
+  const reasons = [
+    ...steps.filter((s) => s.status === "fail").map((s) => `${s.id} failed (${s.summary})`),
+    ...(claimsError ? [`claims unreadable (${claimsError})`] : []),
+    ...(ids("failing").length ? [`${ids("failing").length} claim(s) failing: ${ids("failing").join(", ")}`] : []),
+    ...(ids("untested").length ? [`${ids("untested").length} claim(s) untested: ${ids("untested").join(", ")}`] : []),
+    ...steps.filter((s) => s.status === "blocked").map((s) => `${s.id} blocked (${s.summary})`),
+  ];
+  return reasons;
 }
 
 function statusMark(s: string): string {

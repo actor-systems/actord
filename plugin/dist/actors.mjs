@@ -2234,7 +2234,7 @@ function runTests(root, profile) {
 async function verify(cwd, opts) {
   const root = findProjectRoot(cwd);
   const profile = opts.profile === "extended" ? "extended" : "standard";
-  const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", fingerprint: null };
+  const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", verdictReasons: ["no actor project here"], fingerprint: null };
   if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const steps = [];
   const pkg = readJson(join12(root, "package.json"));
@@ -2274,7 +2274,8 @@ async function verify(cwd, opts) {
   };
   const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
   const verdict = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
-  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
+  const reasons = verdictReasons(steps, claims, error);
+  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, verdictReasons: reasons, fingerprint: fingerprint(root) };
   const outPath = resolve7(cwd, opts.out ?? join12(root, ".actors/evidence.json"));
   mkdirSync4(dirname6(outPath), { recursive: true });
   writeFileSync4(
@@ -2292,8 +2293,20 @@ async function verify(cwd, opts) {
       ...claims.map((cl) => `  ${statusMark(cl.status)} ${cl.status.padEnd(14)} ${cl.id}: ${cl.statement}${cl.why ? ` (${cl.why})` : ""}`)
     ] : []
   ];
-  lines.push("", "Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
+  lines.push("", `Verdict: ${verdict.toUpperCase()}${reasons.length ? `: ${reasons.join("; ")}` : ""}`);
+  lines.push("Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
   return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
+}
+function verdictReasons(steps, claims, claimsError) {
+  const ids = (status) => claims.filter((c) => c.status === status).map((c) => c.id);
+  const reasons = [
+    ...steps.filter((s) => s.status === "fail").map((s) => `${s.id} failed (${s.summary})`),
+    ...claimsError ? [`claims unreadable (${claimsError})`] : [],
+    ...ids("failing").length ? [`${ids("failing").length} claim(s) failing: ${ids("failing").join(", ")}`] : [],
+    ...ids("untested").length ? [`${ids("untested").length} claim(s) untested: ${ids("untested").join(", ")}`] : [],
+    ...steps.filter((s) => s.status === "blocked").map((s) => `${s.id} blocked (${s.summary})`)
+  ];
+  return reasons;
 }
 function statusMark(s) {
   return { "proved-locally": "\u2713", "stub-only": "~", "not-guaranteed": "\xB7", blocked: "\u2298", failing: "\u2717", untested: "?" }[s] ?? "?";
