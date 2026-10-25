@@ -197,6 +197,9 @@ import { settle } from "@actord/toolkit/testing";
 import { expect, it } from "vitest";
 import system from "../system.ts";
 
+// Durable Object storage persists across the tests in one file (each file starts empty), and effects
+// dedupe by key per instance: give each test its own instance keys and ids.
+
 it("[end-to-end] a greeting reaches the guestbook", async () => {
   expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "Ada" })).toMatchObject({ status: "handled" });
   await settle(env, system);

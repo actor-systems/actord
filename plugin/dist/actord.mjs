@@ -141,6 +141,7 @@ An actor system on Cloudflare Durable Objects, built with @actord/toolkit.
 - \`npm run verify\` runs everything and writes \`.actord/evidence.json\`. Run it before committing.
 - When adding behavior, keep public read methods (names and return shapes) and existing tests as they are; prove the change with a new test.
 - Deploys need a person's approval. Asked to deploy, give the plan from \`npx actord diff\`; never run \`wrangler deploy\` unasked.
+- Write and change files with the Write and Edit tools, not shell redirection or heredocs.
 `;
 }
 
@@ -1696,6 +1697,9 @@ import { type Envelope, ingress } from "@actord/toolkit/runtime";
 import { settle } from "@actord/toolkit/testing";
 import { expect, it } from "vitest";
 import system from "../system.ts";
+
+// Durable Object storage persists across the tests in one file (each file starts empty), and effects
+// dedupe by key per instance: give each test its own instance keys and ids.
 
 it("[end-to-end] a greeting reaches the guestbook", async () => {
   expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "Ada" })).toMatchObject({ status: "handled" });

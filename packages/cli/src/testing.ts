@@ -93,17 +93,21 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
   return busy;
 }
 
-let ticks = 0;
+let lastWake = 0;
 
 /**
- * Simulate a scheduled wake now: mark the instance's next tick due and run its alarm. Each call is a
- * distinct wake (a distinct scheduled time, so a distinct message id).
+ * Simulate a scheduled wake now: mark the instance's next tick due at the current time and run its alarm,
+ * as when an alarm fires on schedule, so the wake's `payload.at` is now. Each call is a distinct wake (a
+ * later scheduled time, so a distinct message id).
  */
 export async function tick(env: unknown, system: System, actor: string, key = "main"): Promise<boolean> {
   const spec = system.actors[actor];
   if (!spec) throw new Error(`${actor} is not declared`);
   const stub = (env as Env)[spec.binding]!.getByName(key);
-  const due = String(Date.now() - 1_000_000 + ++ticks);
+  const at = Math.max(Date.now(), lastWake + 1);
+  lastWake = at;
+  if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now() + 1));
+  const due = String(at);
   await runInDurableObject(stub, async (_i, state) => {
     state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES ('schedule.next', ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", due);
     // An alarm set to "now" would fire on its own and race the test; park one far ahead instead,

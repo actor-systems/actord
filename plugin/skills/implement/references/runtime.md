@@ -63,7 +63,10 @@ import { injectFault, overrideBudget, overrideEffect, resetSeams, settle, tick }
 ```
 
 - `settle(env, system)` delivers everything pending and waits for running effects, fast-forwarding backoff.
-- `tick(env, system, "Actor", key)` simulates a scheduled wake.
+- `tick(env, system, "Actor", key)` delivers a scheduled wake due now, so its `payload.at` is the current
+  time, as when the alarm fires on schedule. Each call is a new wake.
+- Storage persists across the tests in one file (each file starts empty), and effects dedupe by key per
+  instance, so give each test its own instance keys and ids.
 - `injectFault({ actor, type, at: "before-handler" | "after-handler" | "deliver", times })`.
 - `overrideEffect(name, adapter)` and `overrideBudget(actor, { timeoutMs, maxAttempts })`; call `resetSeams()`
   in `afterEach`.

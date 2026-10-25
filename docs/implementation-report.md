@@ -22,7 +22,9 @@ verdict and its reasons; `start` reaches the plugin's own CLI when `bin/` isn't 
     in don't-ask mode and no `actord verify` completed, so the evidence graders found nothing. The policy
     graders (capability declared, requested as an effect) pass in all six plugin runs of H and I.
   - Host gate: `evolve-scheduled-digest` 0/3 vs 3/3 (H+I: 1/6 vs 5/6). Existing tests pass in every plugin
-    run; the plugin runs' own new digest tests fail, while the baseline's pass.
+    run; the plugin runs' own new digest tests fail, while the baseline's pass. Causes, found by re-running
+    the kept workspaces: the test helper `tick()` delivered a stale wake (fixed after run I), and tests
+    that assumed storage resets between the tests in one file (now documented). Not yet re-measured.
 - **The handler regression is fixed.** With the rules in the project's `CLAUDE.md`, no plugin run in H or
   I changed an existing read method or broke an existing test (`add-message-handler` host 4/6 vs 5/6). G1
   passes: `start-orients` is 1.00 in both runs.

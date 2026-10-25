@@ -44,7 +44,13 @@ release-i: suite score 0.95, mean Δ +0.05, 8/12 cases at threshold, $10.14, 819
     item 4). That's four plugin runs across F, G, and I; the evidence graders then find no evidence file.
   - Host gate: `evolve-scheduled-digest` 0/3 vs 3/3 (H+I: 1/6 vs 5/6). Existing tests pass in every
     plugin run; the failures are the plugin runs' own new digest tests, while the baseline's new tests
-    pass. Neither arm can run workerd in the sandbox to notice.
+    pass. Neither arm can run workerd in the sandbox to notice. Re-running run I's kept workspaces on
+    the host found the causes. In one, the test helper `tick()` delivered a wake 1,000 s in the past, so
+    a handler using `payload.at` as the wake's time (right in production) failed its test; it passes with
+    `tick()` due now. The other two reused instance keys across the tests in one file, where storage and
+    effect keys persist, and one asserted a send its title said wouldn't happen. After run I, `tick()`
+    fires due now, and the testing reference, the example helpers, and the starter test say that storage
+    persists per file. Not yet measured.
 - **The handler regression is fixed by project guidance.** No plugin run in H or I changed an existing read
   method or broke an existing test (G: two of three did); its two host failures are its own new tests.
 - **Where the plugin helps:** orientation (+0.50 both), scaffolding (+0.47 in H), trace questions (+0.17,

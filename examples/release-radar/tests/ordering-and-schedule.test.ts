@@ -53,6 +53,25 @@ it("[scheduled-wake] watching a feed arms the poll alarm about 15 minutes ahead,
   expect(rearmed).not.toBeNull();
 });
 
+it("[scheduled-wake] a forced wake is due now, as when the alarm fires on schedule, and each wake is distinct", async () => {
+  const url = "https://feeds.example.test/now.json";
+  useFixtures({ [url]: [] });
+  await ingress(env, system, "FeedPoller", "feed.watch", { feedId: "now", url }, { key: "now" });
+  const before = Date.now();
+  await tick(env, system, "FeedPoller", "now");
+  await tick(env, system, "FeedPoller", "now");
+  // The poller keys each fetch by its wake's payload.at.
+  const wakes = await runInDurableObject(env.FEED_POLLER.getByName("now"), (_i, s) =>
+    s.storage.sql
+      .exec<{ id: string }>("SELECT id FROM _actors_outbox WHERE id LIKE 'fx:feed.fetch:poll-%' ORDER BY seq")
+      .toArray()
+      .map((r) => Number(r.id.split("poll-")[1])),
+  );
+  expect(wakes).toHaveLength(2);
+  expect(wakes[0]).toBeGreaterThanOrEqual(before);
+  expect(wakes[1]).toBeGreaterThan(wakes[0]!);
+});
+
 it("[scheduled-wake] a wake before any feed is watched is a recorded no-op", async () => {
   useFixtures({});
   // A watched poller arms its schedule; force a wake on one that has a schedule but no feed row.
