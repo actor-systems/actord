@@ -73,7 +73,7 @@ that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged
 
 | App | Run | Result |
 | --- | --- | --- |
-| Release Radar | `cd examples/release-radar && npx actord verify` | PASS: 20 workerd tests pass (1 `[extended]` skipped); claims 8 proved locally, 1 stub only, 3 not guaranteed |
+| Release Radar | `cd examples/release-radar && npx actord verify` | PASS: 21 workerd tests pass (1 `[extended]` skipped); claims 8 proved locally, 1 stub only, 3 not guaranteed |
 | Briefing Desk | `cd examples/briefing-desk && npx actord verify` | PASS: 11 workerd tests; claims 6 proved locally, 2 stub only, 3 not guaranteed; check warns `EFFECT_IN_DOUBT notify.brief` by design |
 | Causal path | `npx actord trace <id>` (`g3.radar.trace`, `g4.desk.trace`) | Root cause through effects to consequences; *unknown* where coverage ends |
 | Fresh project | `actord init` → `npm install` → `actord verify` (`g5.starter.smoke`, container lane) | PASS, 3 claims proved locally |
@@ -86,7 +86,7 @@ that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged
 | --- | --- | --- |
 | CLI unit and snapshot tests (Vitest) | 128 | `packages/cli/test` |
 | Runtime probe tests (workerd) | 6 | `packages/cli/test-runtime` |
-| Release Radar (workerd) | 21 (20 + 1 extended) | `examples/release-radar/tests` |
+| Release Radar (workerd) | 22 (21 + 1 extended) | `examples/release-radar/tests` |
 | Briefing Desk (workerd) | 11 | `examples/briefing-desk/tests` |
 | DO messaging spike + platform probes (workerd) | spike suite | `spikes/do-messaging` |
 | Mod tests (`claude plugin test`, terminal + desktop) | 18 | `plugin/tests/room.test.tsx` |
