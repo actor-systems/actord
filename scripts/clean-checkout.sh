@@ -3,6 +3,10 @@
 # lockfile, confirm the build reproduces the committed plugin/dist, and run the full offline verification.
 # Needs the npm registry (or its cache); no credentials, no model calls.
 set -euo pipefail
+# Under `npm run verify`, npm 11 exports the user's allow-scripts setting as npm_config_allow_scripts, and a
+# nested project-scoped `npm ci` refuses it as a command-line option (EALLOWSCRIPTS). Read from .npmrc, the
+# same setting is accepted, so drop only the exported copy: the clone then installs as it would directly.
+unset npm_config_allow_scripts
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
