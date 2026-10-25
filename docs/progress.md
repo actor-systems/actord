@@ -5,7 +5,9 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**G5 — Agent-guided development** (next). G0, G2–G4 passed; G1 offline-complete (`g1.start-session` blocked on eval approval).
+**G6 — The Room** (next). G0, G2–G4 passed; G1 and G5 offline-complete — only their model-backed eval
+checks (`g1.start-session`, `g5.evals.run`) are blocked, awaiting owner approval (ask after G6/G7 so the
+suite measures the final plugin).
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
@@ -31,22 +33,21 @@ Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-re
   runtime: background effects (fixed head-of-line blocking), orphan recovery, ctx.approve/deny;
   `packages/cli/test-runtime` probe tests; `actors.claims.json` per example drives required test tags.
 
-## Next (G5 plan, in order)
-1. CLI `actors verify` (typecheck → check → workerd tests w/ JSON reporter → claims classification:
-   proved-locally / stub-only / not-guaranteed / blocked(sandbox EPERM) → `.actors/evidence.json` +
-   `--out`), `actors test [--profile extended]`, `actors init [dir] [--adopt]` (template: minimal 2-actor
-   project + `.claude/skills/verify/SKILL.md` + `.claude/settings.json` ask rules from EFFECT_PATTERNS +
-   ≤10-line CLAUDE.md; never overwrite `.claude/`), `actors hook check-on-edit|evidence-gate`.
-2. Plugin: hooks/hooks.json (PostToolUse Write|Edit, Stop), userConfig (check_on_edit, strict_evidence,
-   fault_profile options), 6 more skills (setup, design, implement, reliability, inspect, evolve) with
-   dynamic context injection + exact allowed-tools, agents boundary-critic + delivery-auditor (Read/Grep/Glob).
-   Load skill-creator / create-subagents / create-hooks guidance when writing them. Keep always-on ≤1000 tok.
-3. Examples: run `actors init --adopt` so each ships verify skill, settings, CLAUDE.md.
-4. Eval suite `plugin/evals/` (≥12 cases incl. start-orients, 2 adversarial, deploy, 2 negative-trigger,
-   co-installed); scaffold copies examples + node_modules (APFS `cp -c` clone) into workspace; graders on
-   `.actors/evidence.json` + tool_used/tool_order + short llm. Then ASK OWNER for eval approval
-   (budget $50 total, --max-cost-usd each run, --no-publish, pinned --model/--judge-model).
-5. Optional workflow design-review: skip unless evals justify (decision record).
+- **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok), 2 read-only critics, hooks
+  (check-on-edit, evidence-gate), userConfig, `actors init/verify/test/hook`, claims classification,
+  examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke, verify-blocked.
+
+## Next
+- G6: the Room mod (`plugin/hooks/room.ts`, `types/index.d.ts`, `tests/*.test.ts`): `/actors-room` pane with
+  Topology / Mailboxes / Contracts / Evidence tabs from CLI JSON via `$.process.run`/`spawn`; status line;
+  `tool.call` effect guard on Bash using EFFECT_PATTERNS (needs a CLI `actors guard --json <cmd>` so the mod
+  computes nothing); `.catch` refuses; non-interactive → refuse. Monitor `monitors/monitors.json`
+  (`actors events --follow --notable`, on-skill-invoke reliability + inspect). Use plugin-authoring skill
+  (types saved in scratchpad `plugin-authoring-2.1.310/`; reload skill if gone). Mod tests via
+  `claude plugin test plugin`; surfaces terminal + desktop; /clear; guard refusal cases.
+- G7: README/docs polish, CI workflow (.github/workflows/verify.yml, offline lane), clean-container install
+  (ask owner: needs network/docker), `claude plugin tag --dry-run`, final report.
+- Then ASK OWNER: eval lane approval (calibration run ≤$2, then full suite ×2 within $50).
 
 ## Open issues
 - Eval runs and local port binding are unverified until the first approved eval run (decision 0004).

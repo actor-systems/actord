@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T01:29:48.661Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T01:31:02.340Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -22,12 +22,12 @@ Generated 2026-10-25T01:29:48.661Z by `npm run verify` (`scripts/verify.mjs`). M
 | --- | --- | --- |
 | G0 — Ground truth | **passed** | — |
 | G1 — Installable plugin | **blocked** | — |
-| G2 — Model and CLI | **failed** | — |
+| G2 — Model and CLI | **passed** | — |
 | G3 — Runtime evidence | **passed** | — |
 | G4 — Agentic example | **passed** | — |
 | G5 — Agent-guided development | **blocked** | — |
 
-## Checks (35 pass · 1 fail · 2 blocked · 0 skipped)
+## Checks (36 pass · 0 fail · 2 blocked · 0 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ Generated 2026-10-25T01:29:48.661Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g2.contract.types` Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors | G2 | pass | host | `npx --no-install tsc -p tsconfig.contract.json` |  |
 | `g2.fixtures.typecheck` tsc passes on valid fixtures and fails where negative fixtures expect it | G2 | pass | host | `node scripts/typecheck-fixtures.mjs` |  |
 | `g2.cli.model` Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes | G2 | pass | host | `npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts` |  |
-| `g2.negative.unchanged` No file under fixtures/negative differs from the last commit | G2 | fail | host | `git diff --exit-code --stat HEAD -- fixtures/negative && test -z "$(git status --porcelain -- fixtures/negative)"` | exit 1 |
+| `g2.negative.unchanged` No file under fixtures/negative differs from the last commit | G2 | pass | host | `git diff --exit-code --stat HEAD -- fixtures/negative && test -z "$(git status --porcelain -- fixtures/negative)"` |  |
 | `g3.radar.typecheck` Release Radar typechecks (wrangler types + tsc) | G3 | pass | host | `npm run --silent typecheck -w release-radar` |  |
 | `g3.radar.check` actors check passes on Release Radar (declaration, config, exports, manifest) | G3 | pass | host | `node ../../plugin/dist/actors.mjs check` |  |
 | `g3.radar.runtime` Release Radar fault matrix passes in workerd | G3 | pass | host | `node scripts/run-example-tests.mjs examples/release-radar` |  |
@@ -69,24 +69,4 @@ Generated 2026-10-25T01:29:48.661Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g5.verify.blocked` actors verify inside the default sandbox reports BLOCKED, static evidence passing | G5 | pass | host | `scripts/verify-blocked.sh` |  |
 | `g5.examples.verify` actors verify passes on both reference apps | G5 | pass | host | `cd examples/release-radar && node ../../plugin/dist/actors.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actors.mjs verify` |  |
 | `g5.evals.run` Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0 | G5 | blocked | host | `claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)` | model-backed; awaiting owner approval of the eval lane ($50 total ceiling) |
-
-## Output of non-passing checks
-
-### g2.negative.unchanged (fail)
-
-```text
- fixtures/negative/actor-unjustified/.actors/last-check.json       | 2 +-
- fixtures/negative/agent-budget-missing/.actors/last-check.json    | 2 +-
- fixtures/negative/config-binding-missing/.actors/last-check.json  | 2 +-
- fixtures/negative/config-export-missing/.actors/last-check.json   | 2 +-
- fixtures/negative/declaration-load-failed/.actors/last-check.json | 2 +-
- fixtures/negative/effect-undeclared/.actors/last-check.json       | 2 +-
- fixtures/negative/entry-export-missing/.actors/last-check.json    | 2 +-
- fixtures/negative/manifest-stale/.actors/last-check.json          | 2 +-
- fixtures/negative/route-unknown-actor/.actors/last-check.json     | 2 +-
- fixtures/negative/route-unknown-message/.actors/last-check.json   | 2 +-
- fixtures/negative/schedule-route-missing/.actors/last-check.json  | 2 +-
- fixtures/negative/schema-invalid/.actors/last-check.json          | 2 +-
- 12 files changed, 12 insertions(+), 12 deletions(-)
-```
 
