@@ -10,7 +10,10 @@ const evals = new URL("../plugin/evals/", import.meta.url).pathname;
 const cases = readdirSync(evals).filter((d) => existsSync(join(evals, d, "prompt.md")));
 const fm = (text) => /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
 const read = (...p) => readFileSync(join(evals, ...p), "utf8");
-const graders = (c) => readdirSync(join(evals, c, "graders")).map((g) => ({ name: g, text: read(c, "graders", g) }));
+const graders = (c) =>
+  readdirSync(join(evals, c, "graders"))
+    .filter((g) => g.endsWith(".md")) // not a stray .DS_Store
+    .map((g) => ({ name: g, text: read(c, "graders", g) }));
 const tags = (c) => (/tags:\s*\[([^\]]*)\]/.exec(fm(read(c, "prompt.md")))?.[1] ?? "").split(",").map((t) => t.trim());
 const PROMPT_KEYS = new Set(["schema_version", "name", "description", "tags", "plugins", "runs", "expected_outcome", "model", "max_turns", "timeout_seconds", "allowed_tools", "append_system_prompt", "env"]);
 

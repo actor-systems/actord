@@ -16,6 +16,12 @@ git clone -q "$root" "$work/repo"
 cd "$work/repo"
 step "npm ci"
 npm ci --no-audit --no-fund --silent
+# Finder writes a .DS_Store into any folder it shows. They're gitignored and never ship, so no check may
+# trip on one: put one (with a real file's header) in every directory before anything runs.
+step "a stray .DS_Store in every directory"
+find . \( -path ./.git -o -name node_modules \) -prune -o -type d -print | while IFS= read -r d; do
+  printf '\0\0\0\1Bud1' >"$d/.DS_Store"
+done
 step "build reproduces plugin/dist"
 npm run --silent build -w @actord/toolkit
 git diff --exit-code --stat -- plugin/dist plugin/hooks/effect-patterns.ts
