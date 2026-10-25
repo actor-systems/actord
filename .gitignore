@@ -12,3 +12,5 @@ plugin/evals/results/
 .claude/settings.local.json
 .cc-writes/
 worker-configuration.d.ts
+plugin/.claude-plugin/types/
+packages/cli/dist/

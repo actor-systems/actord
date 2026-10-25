@@ -1,5 +1,8 @@
 // Registry of verification checks, grouped by charter gate. Each check returns
 // { status: pass|fail|blocked|skipped, reason?, output?, command?, ms?, evidenceSource? }.
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 function command(id, gate, title, cmd, opts = {}) {
   return {
@@ -26,11 +29,41 @@ function atLeast(version, floor) {
   return true;
 }
 
+const hash = (path) => (existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null);
+
+/** The newest recorded eval result (docs/evidence/evals/*.json) that contains a case, or null. */
+export function recordedEvalCase(root, caseName) {
+  const dir = join(root, "docs/evidence/evals");
+  if (!existsSync(dir)) return null;
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")).sort().reverse()) {
+    const doc = JSON.parse(readFileSync(join(dir, f), "utf8"));
+    const c = doc.cases?.find((c) => c.name === caseName);
+    if (c) return { file: `docs/evidence/evals/${f}`, case: c };
+  }
+  return null;
+}
+
 export const gates = [
   {
     id: "G0",
     title: "Ground truth",
     requires: ["g0.versions", "g0.guardrails", "g0.spike.types", "g0.spike.typecheck", "g0.spike.runtime", "g0.sandbox"],
+  },
+  {
+    id: "G1",
+    title: "Installable plugin",
+    requires: [
+      "g1.cli.typecheck",
+      "g1.cli.unit",
+      "g1.dist.fresh",
+      "g1.launcher",
+      "g1.validate.plugin",
+      "g1.validate.marketplace",
+      "g1.install",
+      "g1.budget",
+      "g1.trust",
+      "g1.start-session",
+    ],
   },
 ];
 
@@ -63,4 +96,49 @@ export const checks = [
         : { status: "fail", reason: "sandbox behavior differs from decision 0004; revisit it" };
     },
   }),
+  command("g1.cli.typecheck", "G1", "CLI typechecks (TypeScript 7)", "npm run --silent typecheck -w actors-toolkit"),
+  command("g1.cli.unit", "G1", "CLI unit tests (doctor, effect pattern table)", "npm test --silent -w actors-toolkit"),
+  {
+    id: "g1.dist.fresh",
+    gate: "G1",
+    title: "Shipped plugin/dist matches a fresh build of packages/cli",
+    command: "npm run --silent build -w actors-toolkit",
+    async run({ sh, root }) {
+      const files = ["plugin/dist/actors.mjs", "plugin/dist/VERSION"].map((f) => join(root, f));
+      const before = files.map(hash);
+      const r = sh("npm run --silent build -w actors-toolkit");
+      if (r.code !== 0) return { ...r, status: "fail", reason: "build failed" };
+      const after = files.map(hash);
+      return before.every((h, i) => h === after[i])
+        ? { ...r, status: "pass" }
+        : { ...r, status: "fail", reason: "plugin/dist was stale; it has been rebuilt, commit it" };
+    },
+  },
+  command("g1.launcher", "G1", "bin/actors prefers the project pin, else the bundle", "node --test tests/launcher.test.mjs"),
+  command("g1.validate.plugin", "G1", "claude plugin validate --strict plugin", "claude plugin validate --strict plugin"),
+  command("g1.validate.marketplace", "G1", "claude plugin validate --strict (marketplace)", "claude plugin validate --strict ."),
+  command("g1.install", "G1", "Clean install from the repo marketplace, use, uninstall (isolated config)", "scripts/install-smoke.sh"),
+  command("g1.budget", "G1", "Always-on context cost ≤ 1,500 tokens (target 1,000)", "scripts/budget.sh", {
+    classify(r) {
+      const m = /\{"pluginDir".*\}/.exec(r.output);
+      const b = m ? JSON.parse(m[0]) : null;
+      if (r.code !== 0 || !b) return { status: "fail", reason: b ? `always-on ~${b.max} tokens exceeds 1,500` : "could not measure" };
+      return { status: "pass", reason: `always-on ~${b.max} tokens${b.max > 1000 ? " (over the 1,000 target)" : ""}` };
+    },
+  }),
+  command("g1.trust", "G1", "README trust section lists every hook, mod event, mod call, monitor", "node --test tests/trust-section.test.mjs"),
+  {
+    id: "g1.start-session",
+    gate: "G1",
+    title: "`start` works in a fresh session (eval case start-orients)",
+    command: "claude plugin eval plugin --case start-orients (model-backed; owner-approved lane)",
+    async run({ root }) {
+      const rec = recordedEvalCase(root, "start-orients");
+      if (!rec) return { status: "blocked", reason: "needs a model-backed fresh session; awaiting owner approval of the eval lane" };
+      const score = rec.case.aggregates?.score ?? 0;
+      return score >= 1
+        ? { status: "pass", reason: `score ${score} in ${rec.file}`, evidenceSource: "eval-run" }
+        : { status: "fail", reason: `score ${score} in ${rec.file}`, evidenceSource: "eval-run" };
+    },
+  },
 ];

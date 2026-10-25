@@ -1,0 +1,25 @@
+#!/bin/sh
+# actors: on the Bash tool's PATH while the plugin is enabled.
+# Prefers a project's pinned CLI (node_modules/.bin/actors), so Claude and CI run the same version;
+# otherwise runs the bundled single-file build. Never contacts the network.
+plugin_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+bundle="$plugin_root/dist/actors.mjs"
+ACTORS_PLUGIN_VERSION=$(cat "$plugin_root/dist/VERSION" 2>/dev/null || echo unknown)
+export ACTORS_PLUGIN_VERSION
+dir=$(pwd)
+while :; do
+  if [ -x "$dir/node_modules/.bin/actors" ]; then
+    ACTORS_LAUNCHER=project-pin
+    export ACTORS_LAUNCHER
+    exec "$dir/node_modules/.bin/actors" "$@"
+  fi
+  [ "$dir" = "/" ] && break
+  dir=$(dirname -- "$dir")
+done
+if ! command -v node >/dev/null 2>&1; then
+  echo "actors: Node.js 22.18 or later is required (node was not found on PATH)" >&2
+  exit 127
+fi
+ACTORS_LAUNCHER=plugin-bundle
+export ACTORS_LAUNCHER
+exec node "$bundle" "$@"

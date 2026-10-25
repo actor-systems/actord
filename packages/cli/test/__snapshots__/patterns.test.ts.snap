@@ -1,0 +1,24 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`effect pattern table > ask rules are unique and stable 1`] = `
+[
+  "Bash(*wrangler deploy*)",
+  "Bash(*wrangler publish*)",
+  "Bash(*wrangler versions upload*)",
+  "Bash(*wrangler versions deploy*)",
+  "Bash(*wrangler rollback*)",
+  "Bash(*wrangler delete*)",
+  "Bash(*wrangler triggers deploy*)",
+  "Bash(*wrangler secret*)",
+  "Bash(*wrangler versions secret*)",
+  "Bash(*wrangler * --remote*)",
+  "Bash(*wrangler * create*)",
+  "Bash(*wrangler * delete*)",
+  "Bash(*wrangler login*)",
+  "Bash(* run deploy*)",
+  "Bash(yarn deploy*)",
+  "Bash(cf deploy*)",
+  "Bash(cf * deploy*)",
+  "Bash(*void deploy*)",
+]
+`;

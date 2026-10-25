@@ -1,0 +1,20 @@
+Actor-Native Cloudflare Toolkit (actors) 0.1.0
+  Description: Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.
+  Source: actors@actors-toolkit
+
+Component inventory
+  Skills (1)  start
+  Agents (0)
+  Hooks (0)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+  Always-on:   ~66 tok   added to every session
+
+Per-component (rounded)
+  component  always-on  on-invoke
+  start            ~70       ~510
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.

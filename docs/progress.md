@@ -5,17 +5,21 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**G1 — Installable plugin** (next)
+**G2 — Model and CLI** (next). G1 offline-complete; `g1.start-session` blocked on eval approval.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
 - **G0 passed** (verify run 2026-10-24): versions, guardrail rules test, DO messaging spike
   (types, typecheck, workerd runtime), sandbox spike reproduced with srt. Decisions 0002–0005.
 
+- **G1 offline-complete** (verify 2026-10-24): `actors-toolkit` CLI (`doctor`, effect pattern table) bundled
+  to `plugin/dist/actors.mjs`; `bin/actors` launcher (prefers project pin); `start` skill; marketplace
+  `actors-toolkit`; README trust section + test; strict validation; isolated install/uninstall smoke;
+  always-on ~66 tok. `g1.start-session` = eval case `start-orients` (blocked until evals approved).
+
 ## Next
-- G1: marketplace.json, plugin.json, `start` skill, `bin/actors` launcher + bundled `doctor`, README trust
-  section; checks: `claude plugin validate --strict`, local install/uninstall, `claude plugin details` budget,
-  `start` in a fresh session (needs a model call; see open issues).
+- G2: `system.ts` convention (`defineSystem`/`actor`/`message`, zod 4 payloads), normalized manifest,
+  `check/graph/diff`, valid + negative fixtures, CLI snapshots.
 
 ## Open issues
 - Eval runs and local port binding are unverified until the first approved eval run (decision 0004).
