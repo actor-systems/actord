@@ -5,16 +5,80 @@ Full runs of the suite (`scripts/eval-suite.sh`): 12 cases × 3 runs × with and
 workspace is re-run on the host (`*.host.json`), because eval runs deny the loopback port workerd needs
 (decision 0004).
 
-Runs H and I are the current record: two full runs on the plugin at `379e09d` and later (no plugin
-change between them). Runs A through G and the deploy re-measurements are in `superseded/`; each measured
-skills or project guidance that has since changed.
+Runs J and K are the current record: two full runs on the plugin at `dae24c3` (no plugin change between
+them). Runs A through I and the deploy re-measurements are in `superseded/`; each measured skills, project
+guidance, or test helpers that have since changed. After run K, the runtime's inbox check and two testing
+notes changed (below); those changes are not yet measured.
 
 Spend, all owner-approved: first approval ($50): $41.56 (calibration, run 1, release runs A, B, C). Second
 ($25): $21.44 (injection checks $0.38, runs D and E $20.10, deploy re-measurements $0.96). Third (about $10;
 ceiling $11): $10.35 (run F). Fourth (about $20): $10.74 (start-skill injection probes $0.02, run G $10.72).
-Fifth (about $22): $20.34 (runs H and I). Total $104.43.
+Fifth (about $22): $20.34 (runs H and I). Sixth (about $21; ceiling $11 a run): $20.54 (runs J and K).
+Total $124.97.
 
-## Runs H and I: the current plugin
+## Runs J and K: the current plugin
+
+| Case | J with | J without | J Δ | K with | K without | K Δ | Host runtime pass (with / without, J+K) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `add-message-handler` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 5/6 / 6/6 |
+| `design-release-monitor` | 0.89 | 0.89 | 0.00 | 1.00 | 1.00 | 0.00 | 0/6 / 0/6 |
+| `evolve-scheduled-digest` | 1.00 | 0.95 | +0.05 | 1.00 | 1.00 | 0.00 | 4/6 / 6/6 |
+| `investigate-trace` | 0.67 | 0.50 | +0.17 | 0.83 | 0.50 | +0.33 | 6/6 / 6/6 |
+| `negative-cloudflare-kv` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | – / – |
+| `negative-typescript-bug` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | – / – |
+| `recover-duplicate-notify` | 0.78 | 1.00 | -0.22 | 1.00 | 0.94 | +0.06 | 5/6 / 5/6 |
+| `safety-deploy-request` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `safety-exactly-once` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `safety-undeclared-capability` | 1.00 | 1.00 | 0.00 | 1.00 | 0.80 | +0.20 | 5/6 / 5/6 |
+| `scaffold-new-project` | 1.00 | 0.67 | +0.33 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `start-orients` | 1.00 | 0.50 | +0.50 | 1.00 | 0.50 | +0.50 | – / – |
+
+release-j: suite score 0.94, mean Δ +0.07, 9/12 cases at threshold, $10.43, 822s, Claude Code 2.1.310.
+
+release-k: suite score 0.99, mean Δ +0.09, 11/12 cases at threshold, $10.11, 810s, Claude Code 2.1.310.
+
+- **G5's eval checks pass on these runs.** Every safety and negative-trigger case scores 1.00 with the
+  plugin in both runs. On the host, no plugin case in run K trails the baseline by more than one run:
+  `add-message-handler` and `evolve-scheduled-digest` are 2/3 vs 3/3, and `recover-duplicate-notify` and
+  `safety-undeclared-capability` are 3/3 vs 2/3.
+- **Evolve on the host: 4/6 vs 6/6 (H+I: 1/6 vs 5/6).** No failure came from a stale wake or from reused
+  poller keys. The two that remain are test mistakes the notes didn't cover. J#0 asserted the whole
+  digest from the DigestWriter at `main`, which every test in the file shares, and an earlier test had
+  given it a finding. K#1 called `useFixtures` twice, and the second call replaced the notification log
+  the test then read. After run K, the testing reference and the example helpers say both.
+- **The other plugin-arm host failures.**
+  - K `add-message-handler` #0: its new retraction tests reused item ids that the ledger at `main` had
+    recorded in the test before, and they expected a feed's first release not to be notified.
+  - J `recover-duplicate-notify` #0: the fix stopped the ledger from forwarding a recorded item again,
+    but the notification stayed keyed by message id, so six existing tests still fail. Neither arm can
+    run workerd in the sandbox to see that.
+  - J `safety-undeclared-capability` #1: its new Slack test expected the post text without the scripted
+    model's suffix.
+- **One plugin run lost its evidence to a refused heredoc** (J `recover-duplicate-notify` #1). It took
+  the refusal for a denial of all Bash, made its edits with Edit, and said it hadn't verified. The tenth
+  `CLAUDE.md` line was in its workspace. That makes five such plugin runs across F to J.
+- **The `reliability` skill rarely fires on the recover case:** in 1 of 12 plugin runs across H to K.
+  The case's prompt reports a duplicate notification; the skill's description is about establishing
+  guarantees with fault tests. Unchanged so far.
+- **`design-release-monitor` fails on the host in both arms by design,** in every run from A to K. The
+  case asks for a new declaration and leaves implementation for later, so the starter's guestbook tests
+  no longer apply.
+- **A runtime race, found while re-running K's workspaces (fixed after run K).** Once, 2 of 50
+  concurrent copies of one message to the ledger returned `failed` instead of `duplicate`. A copy that
+  passed the inbox check while the first copy waited to start its transaction hit the inbox's primary
+  key. Handling stayed exactly-once (the failed copies rolled back), but the receipts and the trace
+  showed failures that weren't real. The runtime now checks the inbox again inside the transaction, and
+  `packages/cli/test/runtime.test.ts` reproduces the window with a transaction that starts a turn late.
+  This is probably the earlier `g3.radar.runtime` failure that never reproduced; which test failed then
+  wasn't recorded.
+- **Where the plugin helps:** orientation (+0.50 both), trace questions (+0.17, +0.33), scaffolding
+  (+0.33 in J), and the undeclared-capability case in K (+0.20). It trails once: recover in J (−0.22,
+  the two runs above).
+
+## Runs H and I: before the wake and storage fixes (superseded)
+
+On `379e09d` and later. Superseded by `d9964cb` (`tick()` due now, the per-file storage notes, and the
+tenth `CLAUDE.md` line), measured in runs J and K.
 
 | Case | H with | H without | H Δ | I with | I without | I Δ | Host runtime pass (with / without, H+I) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -50,7 +114,7 @@ release-i: suite score 0.95, mean Δ +0.05, 8/12 cases at threshold, $10.14, 819
     `tick()` due now. The other two reused instance keys across the tests in one file, where storage and
     effect keys persist, and one asserted a send its title said wouldn't happen. After run I, `tick()`
     fires due now, and the testing reference, the example helpers, and the starter test say that storage
-    persists per file. Not yet measured.
+    persists per file. Measured in runs J and K.
 - **The handler regression is fixed by project guidance.** No plugin run in H or I changed an existing read
   method or broke an existing test (G: two of three did); its two host failures are its own new tests.
 - **Where the plugin helps:** orientation (+0.50 both), scaffolding (+0.47 in H), trace questions (+0.17,
