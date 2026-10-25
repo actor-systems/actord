@@ -142,6 +142,16 @@ describe("actors diff without git", () => {
   });
 });
 
+describe("--exit-zero", () => {
+  it("keeps the output and exits 0, for skill injection where any other exit aborts", () => {
+    const plain = run(tmp, ["room", "--json"]);
+    expect(plain.code).toBe(3);
+    const zero = run(tmp, ["room", "--json", "--exit-zero"]);
+    expect(zero.code).toBe(0);
+    expect(zero.out).toBe(plain.out);
+  });
+});
+
 describe("actors guard", () => {
   it("holds a deploy inside an actor project with the diff summary and plan, refusing by default", () => {
     const r = run(app, ["guard", "--json", "--", deploy]);

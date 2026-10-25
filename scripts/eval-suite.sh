@@ -12,11 +12,11 @@ log="$root/docs/evidence/evals/$label.log"
 cd "$root"
 claude plugin eval plugin --scaffold --no-publish --trust-plugin --keep-temp \
   --model claude-sonnet-5-5 --judge-model claude-haiku-5-5 --max-cost-usd "$ceiling" -j 4 \
-  --allow-tools Write Edit "Bash(actors *)" "Bash(npx actors *)" "Bash(npm run *)" "Bash(npm test*)" \
+  --allow-tools Write Edit "Bash(actors *)" "Bash(npx actors *)" "Bash(npx --no-install actors *)" "Bash(npm run *)" "Bash(npm test*)" \
   "Bash(npx vitest *)" "Bash(npx tsc *)" "Bash(git diff*)" "Bash(git status*)" "Bash(git log*)" \
   "Bash(git show*)" "Bash(git ls-files*)" "Bash(ls*)" "Bash(cat *)" "Bash(head *)" "Bash(tail *)" "Bash(wc *)" \
   "Bash(cd *)" "Bash(grep *)" "Bash(find *)" "Bash(sed *)" "Bash(mkdir *)" "Bash(mv *)" "Bash(cp *)" \
-  "Bash(echo *)" "Bash(printf *)" "Bash(test *)" "Bash(python3 *)" \
+  "Bash(echo *)" "Bash(printf *)" "Bash(test *)" "Bash(python3 *)" "Bash(which *)" \
   --json "$out" 2>"$log"
 status=$?
 "$root/scripts/rerun-eval-workspaces.sh" "$out" "$root/docs/evidence/evals/$label.host.json"

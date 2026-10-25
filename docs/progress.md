@@ -66,6 +66,10 @@ requests. Report: `docs/implementation-report.md`.
   (`claude-haiku-5-5`), $50 total ceiling: calibration (≤ $2) first, then the full suite twice; stop if the
   projection exceeds the ceiling. Acceptance step A9 (one model turn) approved.
 
+- 2026-10-25: second round approved ("approved." to the proposal): fix skill evidence injection and the
+  deploy-plan step, then two more release runs; ceiling $25 for the round (~$20 expected), Sonnet 5.5 agent,
+  Haiku 5.5 judge, `--max-cost-usd` on every run.
+
 ## Standing constraints (from the owner)
 - Ask before: any deploy, real credentials, publishing/submitting, contacting external services
   (beyond reading docs and installing npm packages), and any model-backed `claude plugin eval` run.

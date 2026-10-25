@@ -1,7 +1,7 @@
 ---
 name: start
 description: Orient a developer to the actors toolkit (Actor-Native Cloudflare Toolkit), run `actors doctor`, and point to the reference apps. Use when someone asks how to get started with actors, what this plugin does, or invokes /actors:start. Writes no files.
-allowed-tools: Bash(actors doctor *) Bash(actors --version)
+allowed-tools: Bash(npx --no-install actors doctor *) Bash(actors doctor *) Bash(actors --version)
 ---
 
 # Start with the actors toolkit
@@ -13,7 +13,7 @@ Rules that hold for this whole skill:
 
 ## Current environment
 
-!`actors doctor || true`
+!`actors doctor --exit-zero || npx --no-install actors doctor --exit-zero || true`
 
 ## What to tell the developer
 

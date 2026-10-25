@@ -2127,6 +2127,7 @@ async function verify(cwd, opts) {
       ...claims.map((cl) => `  ${statusMark(cl.status)} ${cl.status.padEnd(14)} ${cl.id}: ${cl.statement}${cl.why ? ` (${cl.why})` : ""}`)
     ] : []
   ];
+  lines.push("", "Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
   return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
 }
 function statusMark(s) {
@@ -2174,6 +2175,7 @@ Commands:
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
+  --exit-zero       Exit 0 whatever the result (for skill injection, where any other exit aborts)
   -h, --help        Show help
   -v, --version     Show the toolkit version
 
@@ -2210,6 +2212,7 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
       strict: false,
       options: {
         json: { type: "boolean" },
+        "exit-zero": { type: "boolean" },
         changed: { type: "string", multiple: true },
         format: { type: "string" },
         write: { type: "boolean" },
@@ -2261,7 +2264,7 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
     const result2 = await handler({ positionals: rest, json, cwd: io.cwd, values });
     io.out.write(json ? toJson(name, result2.data) : result2.text ? `${result2.text}
 ` : "");
-    return result2.exitCode;
+    return values["exit-zero"] === true ? 0 : result2.exitCode;
   } catch (err) {
     if (err instanceof UsageError) {
       io.err.write(`actors: ${err.message}
@@ -2276,4 +2279,10 @@ Run \`actors --help\` for usage.
 }
 
 // src/cli/bin.ts
+var emit = process.emitWarning.bind(process);
+process.emitWarning = ((warning, ...rest) => {
+  const text = typeof warning === "string" ? warning : warning.message;
+  if (/Type Stripping is an experimental feature/.test(text)) return;
+  return emit(warning, ...rest);
+});
 process.exitCode = await main(process.argv.slice(2));

@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.310",
+  "startedAt": "2026-10-25T06:17:34.948Z",
+  "durationSeconds": 32,
+  "costUsd": 0.0907472,
+  "partial": false,
+  "suite": {
+    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "ablation": "none",
+    "modelOverride": "claude-sonnet-5-5",
+    "judgeModel": "claude-haiku-5-5",
+    "caseFilter": "investigate-trace",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "actors",
+        "version": "0.1.0",
+        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "investigate-trace",
+      "dir": "evals/investigate-trace",
+      "source": "mixed",
+      "promptMarkdown": "Our release monitor's event log is in .actors/events.ndjson. The release crash-after-3.0.0 was eventually notified, but not on the first try. What happened, step by step? Cite the evidence.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "explains-retry",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "PASS if the answer says that the first delivery of the release.observed message for crash-after-3.0.0 failed (an injected fault at or after the ledger's handler), that it was retried and then handled, and that the significant release was then notified once, citing message ids, sequence numbers, or event kinds from the log.\nFAIL if it omits the failure or the retry, invents events that are not in the log, or says the release was notified more than once.",
+          "config": {
+            "criteria": "PASS if the answer says that the first delivery of the release.observed message for crash-after-3.0.0 failed (an injected fault at or after the ledger's handler), that it was retried and then handled, and that the significant release was then notified once, citing message ids, sequence numbers, or event kinds from the log.\nFAIL if it omits the failure or the retry, invents events that are not in the log, or says the release was notified more than once.",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "skill-fired",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\"\\s*:\\s*\"(?:actors:)?inspect\""
+          }
+        },
+        {
+          "name": "used-trace-or-events",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Bash",
+            "input_match": "actors (trace|events)"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.6666666666666666,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.0907472,
+            "judgeCostUsd": 0.0006349000000000001,
+            "durationSeconds": 32,
+            "startedAt": "2026-10-25T06:17:34.992Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-RSQDGr/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-retry",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "The notification went out on the second delivery attempt. The first attempt hit an injected fault, so the retry did the work.\n\n**What happened (correlation `300yq8dzupfbp`, actor `FeedPoller:crash-after`)**\n\n1. **Poll starts.** At seq 28–29, `@clock` sends `feed.poll.due` to `FeedPoller:crash-after`, and it is handled on attempt 1.\n2. **Fetch succeeds.** Seq 30–31 show `feed.fetch` requested and confirmed with effectKey `poll-1792888000235`. Seq 32–36 show the result coming back as `feed.fetched` and being handled.\n3. **Release forwarded.** At seq 35, the poller sends `release.observed` (message `0dysrg0sx7me4`) to `ReleaseLedger:main`.\n4. **First attempt fails.** The ledger receives the message at seq 37. At seq 38 it logs `failed` with the reason `\"injected fault at after-handler\"`. No `handled` event appears for attempt 1, and the ledger sent no `release.significant` message during it. So nothing reached `DigestWriter` and no notification could have gone out.\n5. **Retry scheduled.** At seq 39, `retry.scheduled` sets attempt 2 with `delayMs: 1000`.\n6. **Second attempt succeeds.** Seq 40–41 show the ledger receiving and handling `release.observed` on attempt 2. The log timestamps are about 4 ms after the failure (`…238` to `…242`), not the 1000 ms delay. That looks like a test clock, but the log doesn't say.\n7. **Digest writer is told.** At seq 42–44, the ledger sends `release.significant` to `DigestWriter:main`, and the digest writer handles it on attempt 1.\n8. **Notification confirmed.** At seq 45–46, `DigestWriter` requests `notify.digest` with effectKey `crash-after-3.0.0`, and it is confirmed on attempt 1. This is the only `notify.digest` in the crash-after flow.\n9. **Delivery receipts.** Seq 47–48 record both deliveries as `receipt: \"handled\"`.\n\n**What the log doesn't show**\n- **State after the fault.** The fault was at `after-handler`, so the attempt-1 handler may have run and written state before failing. The log has no state events. Whether the retry was safe against a double write isn't visible here. The single notification shows only that no duplicate `release.significant` message was sent.\n- **Actual receipt.** `effect.confirmed` means the effect was confirmed on the system side. The log doesn't show whether a person received the digest.\n- **Version string.** The `3.0.0` appears only in the effectKey. The payload shows keys but no values.\n- **Gaps in the log.** Seq 49–67 are missing. Seq 22–40 belong to a different scenario, `FeedPoller:exhausted`. In that one, delivery to `DigestWriter` failed with an injected fault at deliver, was retried through attempt 6, and ended in `retry.exhausted` (seq 86). That release was never notified, which contrasts with the crash-after case.\n\nI tried to load the `actors:inspect` skill first, but it needed a shell command that was denied in this mode. I read the log file directly instead."
+              },
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "used-trace-or-events",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Bash called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.6666666666666666,
+        "passRate": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0.6666666666666666,
+    "overallPassRate": 0
+  }
+}

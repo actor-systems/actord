@@ -37,6 +37,7 @@ Commands:
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
+  --exit-zero       Exit 0 whatever the result (for skill injection, where any other exit aborts)
   -h, --help        Show help
   -v, --version     Show the toolkit version
 
@@ -86,6 +87,7 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
       strict: false,
       options: {
         json: { type: "boolean" },
+        "exit-zero": { type: "boolean" },
         changed: { type: "string", multiple: true },
         format: { type: "string" },
         write: { type: "boolean" },
@@ -134,7 +136,7 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
     }
     const result = await handler({ positionals: rest, json, cwd: io.cwd, values: values as Args["values"] });
     io.out.write(json ? toJson(name, result.data) : result.text ? `${result.text}\n` : "");
-    return result.exitCode;
+    return values["exit-zero"] === true ? 0 : result.exitCode;
   } catch (err) {
     if (err instanceof UsageError) {
       io.err.write(`actors: ${err.message}\nRun \`actors --help\` for usage.\n`);

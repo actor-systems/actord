@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.310",
+  "startedAt": "2026-10-25T06:26:56.541Z",
+  "durationSeconds": 32,
+  "costUsd": 0.1108486,
+  "partial": false,
+  "suite": {
+    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "ablation": "none",
+    "modelOverride": "claude-sonnet-5-5",
+    "judgeModel": "claude-haiku-5-5",
+    "caseFilter": "investigate-trace",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "actors",
+        "version": "0.1.0",
+        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "investigate-trace",
+      "dir": "evals/investigate-trace",
+      "source": "mixed",
+      "promptMarkdown": "Our release monitor's event log is in .actors/events.ndjson. The release crash-after-3.0.0 was eventually notified, but not on the first try. What happened, step by step? Cite the evidence.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 30,
+      "graders": [
+        {
+          "name": "explains-retry",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "PASS if the answer says that the first delivery of the release.observed message for crash-after-3.0.0 failed (an injected fault at or after the ledger's handler), that it was retried and then handled, and that the significant release was then notified once, citing message ids, sequence numbers, or event kinds from the log.\nFAIL if it omits the failure or the retry, invents events that are not in the log, or says the release was notified more than once.",
+          "config": {
+            "criteria": "PASS if the answer says that the first delivery of the release.observed message for crash-after-3.0.0 failed (an injected fault at or after the ledger's handler), that it was retried and then handled, and that the significant release was then notified once, citing message ids, sequence numbers, or event kinds from the log.\nFAIL if it omits the failure or the retry, invents events that are not in the log, or says the release was notified more than once.",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "skill-fired",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\"\\s*:\\s*\"(?:actors:)?inspect\""
+          }
+        },
+        {
+          "name": "used-trace-or-events",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Bash",
+            "input_match": "actors (trace|events)"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.6666666666666666,
+            "passed": false,
+            "turns": 6,
+            "costUsd": 0.1108486,
+            "judgeCostUsd": 0.0004068,
+            "durationSeconds": 32,
+            "startedAt": "2026-10-25T06:26:56.588Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-wY5T0G/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-retry",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "The notification went out on its first attempt. What took two tries was the step before it, the ledger's handling of `release.observed`. Everything below comes from `.actors/events.ndjson`, which has only local test runs, so it can't tell us about production. I read the log directly because Bash was denied here, and `actors trace` wasn't on the path in the topology step. The causation links are therefore read by hand from the ids.\n\n**Step by step** (correlation `300yq8dzupfbp`, feed instance `FeedPoller:crash-after`, effect key `crash-after-3.0.0`)\n\n1. **The poll fires.** `feed.poll.due` (`300yq8dzupfbp`) comes from `@clock` and is handled on the first attempt (seq 28–29).\n2. **The fetch succeeds.** `FeedPoller` requests the `feed.fetch` effect with key `poll-1792888000235`, and it is `effect.confirmed` at attempt 1 (seq 30–31). The result comes back as `feed.fetched` (`12tw6j4ah7bsn`) and is handled (seq 32–34).\n3. **The poller reports the release.** It sends `release.observed` (`0dysrg0sx7me4`) to `ReleaseLedger:main` (seq 35).\n4. **The first attempt fails.** The ledger receives the message at attempt 1 (seq 37). Then seq 38 is `failed` with reason `\"injected fault at after-handler\"`. The reason says the fault was injected, so this is a deliberate crash-after test, not a real defect.\n5. **A retry is scheduled.** Seq 39 is `retry.scheduled` for attempt 2, with the same reason and `delayMs: 1000`.\n6. **The retry succeeds.** The ledger receives and handles `0dysrg0sx7me4` at attempt 2 (seq 40–41). It sends `release.significant` (`1ujlrpsny8uqa`) to `DigestWriter:main` (seq 42).\n7. **The notification is sent.** `DigestWriter` handles `1ujlrpsny8uqa` at attempt 1 (seq 43–44). It requests `notify.digest` with key `crash-after-3.0.0` (seq 45), and the effect is `effect.confirmed` at `attempt: 1` (seq 46).\n8. **Both hops close out.** Seq 47 and 48 are `delivered` with `receipt: \"handled\"` for `1ujlrpsny8uqa` and `0dysrg0sx7me4`.\n\n**What this shows**\n- The `notify.digest` effect was requested once and confirmed once. There is no duplicate request for `crash-after-3.0.0`.\n- I'm assuming the ledger's handler had already done its work before the injected crash. The after-handler fault and the single `release.significant` suggest so, but I haven't read the handler code.\n\n**Unknown**\n- Whether the `notify.digest` confirmation means the gateway actually delivered the message. The log records only the effect's confirmed status.\n- Anything about production, since the log has no coverage there.\n\nThe `FeedPoller:exhausted` events (seq 68–86) are a separate scenario. There the `release.significant` delivery was retried until `retry.exhausted`, so no notification went out."
+              },
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "used-trace-or-events",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Bash called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.6666666666666666,
+        "passRate": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0.6666666666666666,
+    "overallPassRate": 0
+  }
+}

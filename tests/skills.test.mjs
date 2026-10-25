@@ -46,8 +46,11 @@ for (const name of skills) {
         // A trailing " *" also matches the bare command (Claude Code's documented rule semantics).
         return new RegExp(`^${escaped.endsWith(" *") ? `${escaped.slice(0, -2).replace(/\*/g, ".*")}(?: .*)?` : escaped.replace(/\*/g, ".*")}$`);
       };
-      const ok = allowed.some((rule) => toRegex(rule).test(base));
-      assert.ok(ok, `injected command "${base}" is not pre-approved by allowed-tools (${allowed.join(", ")})`);
+      // Each command of an `a || b` chain is checked on its own, as Claude Code checks subcommands.
+      for (const part of base.split(/\s*\|\|\s*/)) {
+        const ok = allowed.some((rule) => toRegex(rule).test(part));
+        assert.ok(ok, `injected command "${part}" is not pre-approved by allowed-tools (${allowed.join(", ")})`);
+      }
     }
   });
   test(`${name}: states its rules up front, its done condition, and when to stop`, () => {

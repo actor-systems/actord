@@ -29,3 +29,10 @@ one with-plugin run didn't produce the plan); `start-orients` Δ +0.5, `evolve-s
   `actors verify` recorded "type errors" instead of `blocked`. All six such projects type-checked on the host.
 - Three runs (both arms) stopped after a denied `python3` edit, concluding all Bash was denied.
 - The `inspect` skill now fired, but Claude answered from `grep` rather than `actors trace`.
+
+## Release runs B and C (superseded)
+
+`2026-10-25-release-b.json` and `-release-c.json` were the first release pair (scores 0.95 and 0.93, mean Δ
++0.08 and +0.09; full table and findings in `release-b-c.md`). They found that skill evidence injection
+didn't resolve `actors` in eval runs and that one deploy run skipped the plan; the second round (approved by
+the owner) fixed both, so the release pair is D and E.

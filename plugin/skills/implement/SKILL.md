@@ -2,7 +2,7 @@
 name: implement
 description: Write or change actor code to match system.ts (message contracts, handlers, state, schedules, effects, model calls) in a Cloudflare Durable Objects actor project, starting from the current `actors check` output. Has the delivery-auditor review handlers that cause effects.
 paths: ["system.ts", "src/actors/**", "src/messages/**"]
-allowed-tools: Bash(actors check *) Bash(actors graph *) Bash(actors test *)
+allowed-tools: Bash(npx --no-install actors check *) Bash(actors check *) Bash(actors graph *) Bash(actors test *)
 ---
 
 # Implement actor behavior
@@ -26,7 +26,7 @@ Rules that hold for this whole skill:
 
 ## Current state
 
-!`actors check --json || true`
+!`actors check --json --exit-zero || npx --no-install actors check --json --exit-zero || true`
 
 ## Steps
 

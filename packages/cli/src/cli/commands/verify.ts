@@ -193,6 +193,8 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
         ]
       : []),
   ];
+  // The step after verify is never a deploy: say where the plan comes from.
+  lines.push("", "Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
   return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
 }
 

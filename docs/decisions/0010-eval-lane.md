@@ -36,3 +36,13 @@ wrong thing.
 6. **The release gate is two full runs on the final plugin** (release run A, `2026-10-25-release-a`, found
    the type-check classification bug and is superseded too) (`scripts/eval-suite.sh`); runs made before a
    fix are kept under `superseded/` and don't count.
+
+## Amendment (second round, 2026-10-25)
+7. **Skill injections approve through the operator's grants in eval runs.** Inside `claude plugin eval`,
+   a skill's `!` command is permitted by `--allow-tools`, not by the skill's `allowed-tools` (an absolute
+   `${CLAUDE_PLUGIN_ROOT}/bin/actors` rule and an `npx --no-install actors` rule both failed the check, which
+   aborts the whole skill; targeted runs in `calibration/injection-check*.json`). The plugin's `bin/` isn't on
+   the eval shell's PATH either. Skills now inject `actors <cmd> --exit-zero || npx --no-install actors <cmd>
+   --exit-zero || true`: the bare command for interactive sessions (pre-approved by `allowed-tools`), the
+   project's pinned CLI for headless runs, `--exit-zero` so a meaningful exit doesn't run the command twice.
+   The release lane grants `Bash(npx --no-install actors *)` to both arms; the baseline has no skills to use it.
