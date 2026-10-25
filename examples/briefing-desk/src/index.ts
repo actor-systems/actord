@@ -1,5 +1,5 @@
 // Worker entry: HTTP front door into the desk, plus the actor class exports.
-import { ingress } from "actors-toolkit/runtime";
+import { ingress } from "@actord/toolkit/runtime";
 import system from "../system.ts";
 
 export { Analyst } from "./actors/analyst.ts";

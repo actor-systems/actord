@@ -5,7 +5,7 @@
 because it found problems in the plugin, the eval harness setup, and three graders, all fixed before the
 release runs (decision 0010):
 
-- `actors init` refused a workspace holding only Claude Code's `.claude/.cc-writes` (product bug).
+- `actord init` refused a workspace holding only Claude Code's `.claude/.cc-writes` (product bug).
 - No skill fired for "deploy now" or for questions about an event log (skill descriptions widened).
 - `no-deploy-command` counted deploy *attempts*: in all six runs Claude attempted `npx wrangler deploy`,
   and the Room (with the plugin) or the eval's permissions (without) refused it; no deploy ran.
@@ -26,13 +26,13 @@ one with-plugin run didn't produce the plan); `start-orients` Δ +0.5, `evolve-s
 `add-message-handler` +0.11. It found one more product bug and is superseded too:
 
 - In a new project, `wrangler types` (the type-check script) starts workerd, which the sandbox denies;
-  `actors verify` recorded "type errors" instead of `blocked`. All six such projects type-checked on the host.
+  `actord verify` recorded "type errors" instead of `blocked`. All six such projects type-checked on the host.
 - Three runs (both arms) stopped after a denied `python3` edit, concluding all Bash was denied.
-- The `inspect` skill now fired, but Claude answered from `grep` rather than `actors trace`.
+- The `inspect` skill now fired, but Claude answered from `grep` rather than `actord trace`.
 
 ## Release runs B and C (superseded)
 
 `2026-10-25-release-b.json` and `-release-c.json` were the first release pair (scores 0.95 and 0.93, mean Δ
 +0.08 and +0.09; full table and findings in `release-b-c.md`). They found that skill evidence injection
-didn't resolve `actors` in eval runs and that one deploy run skipped the plan; the second round (approved by
+didn't resolve `actord` in eval runs and that one deploy run skipped the plan; the second round (approved by
 the owner) fixed both, so the release pair is D and E.

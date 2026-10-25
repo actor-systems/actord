@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import type { Envelope } from "actors-toolkit/runtime";
-import { resetSeams, settle } from "actors-toolkit/testing";
+import type { Envelope } from "@actord/toolkit/runtime";
+import { resetSeams, settle } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "../system.ts";
 import { analysis, decide, gateway, scriptedModel, status, submit } from "./helpers.ts";

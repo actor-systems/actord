@@ -1,4 +1,4 @@
-// `actors events` and `actors trace` through the shipped CLI, on event logs recorded from real
+// `actord events` and `actord trace` through the shipped CLI, on event logs recorded from real
 // Release Radar test runs in workerd (fixtures/events/).
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actors.mjs");
+const cli = join(repo, "plugin/dist/actord.mjs");
 const flow = join(repo, "fixtures/events/release-radar-flow.ndjson");
 const faults = join(repo, "fixtures/events/release-radar-faults.ndjson");
-const tmp = mkdtempSync(join(tmpdir(), "actors-events-"));
+const tmp = mkdtempSync(join(tmpdir(), "actord-events-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 const run = (...args: string[]) => {
@@ -24,7 +24,7 @@ const lines = (file: string) =>
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 const find = (file: string, pred: (e: Record<string, unknown>) => boolean) => lines(file).find(pred)?.messageId as string;
 
-describe("actors trace", () => {
+describe("actord trace", () => {
   const significant = find(flow, (e) => e.type === "release.significant" && e.kind === "handled");
 
   it("follows a known message from its root cause through effects to its consequences", () => {
@@ -79,14 +79,14 @@ describe("actors trace", () => {
   });
 });
 
-describe("actors events", () => {
+describe("actord events", () => {
   it("--notable keeps only faults, and --json prints NDJSON", () => {
     const r = run("events", "--notable", "--json", "--file", faults);
     expect(r.code).toBe(0);
     const events = r.out.trim().split("\n").map((l) => JSON.parse(l));
     expect(events.length).toBeGreaterThan(0);
     for (const e of events) expect(["failed", "retry.exhausted"]).toContain(e.kind);
-    expect(events.every((e) => e.$actors === 1)).toBe(true);
+    expect(events.every((e) => e.$actord === 1)).toBe(true);
   });
 
   it("explains that there are no events rather than printing nothing", () => {

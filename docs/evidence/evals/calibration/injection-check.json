@@ -6,7 +6,7 @@
   "costUsd": 0.0902247,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "root": "/Users/jaredmcfarland/Developer/actord-plugin/plugin",
     "ablation": "none",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -15,9 +15,9 @@
     "concurrency": 1,
     "plugins": [
       {
-        "name": "actors",
+        "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+        "path": "/Users/jaredmcfarland/Developer/actord-plugin/plugin"
       }
     ]
   },
@@ -26,7 +26,7 @@
       "name": "investigate-trace",
       "dir": "evals/investigate-trace",
       "source": "mixed",
-      "promptMarkdown": "Our release monitor's event log is in .actors/events.ndjson. The release crash-after-3.0.0 was eventually notified, but not on the first try. What happened, step by step? Cite the evidence.",
+      "promptMarkdown": "Our release monitor's event log is in .actord/events.ndjson. The release crash-after-3.0.0 was eventually notified, but not on the first try. What happened, step by step? Cite the evidence.",
       "runsPerCase": 3,
       "timeoutSeconds": 600,
       "maxTurns": 30,
@@ -47,7 +47,7 @@
           "weight": 1,
           "config": {
             "tool": "Skill",
-            "input_match": "\"skill\"\\s*:\\s*\"(?:actors:)?inspect\""
+            "input_match": "\"skill\"\\s*:\\s*\"(?:actord:)?inspect\""
           }
         },
         {
@@ -56,7 +56,7 @@
           "weight": 1,
           "config": {
             "tool": "Bash",
-            "input_match": "actors (trace|events)"
+            "input_match": "actord (trace|events)"
           }
         }
       ],
@@ -86,7 +86,7 @@
                   true,
                   true
                 ],
-                "evidence": "The notification went out once, on the second delivery attempt of `release.observed`. The first attempt failed because of an injected fault, and the retry succeeded.\n\nThe release is identified by `effectKey: \"crash-after-3.0.0\"`. Its whole chain shares `correlationId 300yq8dzupfbp`, and I cite events by `seq`, so each can be looked up in `.actors/events.ndjson`.\n\n1. **Poll fires.** `FeedPoller:crash-after` receives `feed.poll.due` from `@clock` (seq 28) and handles it (seq 29).\n2. **Feed fetched.** It requests the `feed.fetch` effect (seq 30), which is confirmed (seq 31). The result comes back as `feed.fetched` (seq 32–34).\n3. **Release reported to the ledger.** The poller sends `release.observed` (`0dysrg0sx7me4`) to `ReleaseLedger:main` (seq 35). The ledger receives it at attempt 1 (seq 37).\n4. **First attempt fails.** The ledger records `failed` with reason `\"injected fault at after-handler\"` (seq 38). There is no `handled` event for attempt 1, and no `release.significant` was sent from this attempt, so nothing reached `DigestWriter`.\n5. **Retry is scheduled.** `retry.scheduled` for attempt 2 with `delayMs: 1000` (seq 39).\n6. **Retry succeeds.** The ledger receives attempt 2 (seq 40) and handles it (seq 41). It then sends `release.significant` (`1ujlrpsny8uqa`) to `DigestWriter:main` (seq 42).\n7. **Notification sent.** `DigestWriter` receives and handles the message (seq 43–44). It requests `notify.digest` with key `crash-after-3.0.0` (seq 45), and the effect is confirmed at attempt 1 (seq 46).\n8. **Receipts.** Both deliveries are acknowledged as `handled` (seq 47–48).\n\n**Limits of the evidence**\n- **Not the same scenario:** The `FeedPoller:exhausted` run (seq 68–86) is a different correlation (`30yehcpirrrre`) and not the release you asked about. There, `release.significant` to `DigestWriter` failed on all six attempts and ended in `retry.exhausted` (seq 86), so no notification was sent. Nothing in the log shows which release it was.\n- **Missing events:** The log jumps from seq 48 to seq 68, so seq 49–67 are not recorded. They may belong to other scenarios. I can't say anything about them.\n- **Side effects of the failed attempt:** The fault name says \"after-handler\", but the log shows no `handled` for attempt 1. I can't tell from the events whether the ledger's state write from that attempt was kept or rolled back. The attempt-2 `handled` and the single `notify.digest` suggest no duplicate notification, but only the code or state would confirm that.\n- **Timing:** The retry was scheduled with a 1000 ms delay, but attempt 2 was received about 4 ms later (`at` 1792889000238 → 1792889000242). The timestamps look like a test or simulated clock, so this reads as a fault-injection test run rather than production history.\n\nI tried to load the `actors:inspect` skill, but it was denied because it needs a Bash command. This answer comes from reading the log directly."
+                "evidence": "The notification went out once, on the second delivery attempt of `release.observed`. The first attempt failed because of an injected fault, and the retry succeeded.\n\nThe release is identified by `effectKey: \"crash-after-3.0.0\"`. Its whole chain shares `correlationId 300yq8dzupfbp`, and I cite events by `seq`, so each can be looked up in `.actord/events.ndjson`.\n\n1. **Poll fires.** `FeedPoller:crash-after` receives `feed.poll.due` from `@clock` (seq 28) and handles it (seq 29).\n2. **Feed fetched.** It requests the `feed.fetch` effect (seq 30), which is confirmed (seq 31). The result comes back as `feed.fetched` (seq 32–34).\n3. **Release reported to the ledger.** The poller sends `release.observed` (`0dysrg0sx7me4`) to `ReleaseLedger:main` (seq 35). The ledger receives it at attempt 1 (seq 37).\n4. **First attempt fails.** The ledger records `failed` with reason `\"injected fault at after-handler\"` (seq 38). There is no `handled` event for attempt 1, and no `release.significant` was sent from this attempt, so nothing reached `DigestWriter`.\n5. **Retry is scheduled.** `retry.scheduled` for attempt 2 with `delayMs: 1000` (seq 39).\n6. **Retry succeeds.** The ledger receives attempt 2 (seq 40) and handles it (seq 41). It then sends `release.significant` (`1ujlrpsny8uqa`) to `DigestWriter:main` (seq 42).\n7. **Notification sent.** `DigestWriter` receives and handles the message (seq 43–44). It requests `notify.digest` with key `crash-after-3.0.0` (seq 45), and the effect is confirmed at attempt 1 (seq 46).\n8. **Receipts.** Both deliveries are acknowledged as `handled` (seq 47–48).\n\n**Limits of the evidence**\n- **Not the same scenario:** The `FeedPoller:exhausted` run (seq 68–86) is a different correlation (`30yehcpirrrre`) and not the release you asked about. There, `release.significant` to `DigestWriter` failed on all six attempts and ended in `retry.exhausted` (seq 86), so no notification was sent. Nothing in the log shows which release it was.\n- **Missing events:** The log jumps from seq 48 to seq 68, so seq 49–67 are not recorded. They may belong to other scenarios. I can't say anything about them.\n- **Side effects of the failed attempt:** The fault name says \"after-handler\", but the log shows no `handled` for attempt 1. I can't tell from the events whether the ledger's state write from that attempt was kept or rolled back. The attempt-2 `handled` and the single `notify.digest` suggest no duplicate notification, but only the code or state would confirm that.\n- **Timing:** The retry was scheduled with a 1000 ms delay, but attempt 2 was received about 4 ms later (`at` 1792889000238 → 1792889000242). The timestamps look like a test or simulated clock, so this reads as a fault-injection test run rather than production history.\n\nI tried to load the `actord:inspect` skill, but it was denied because it needs a Bash command. This answer comes from reading the log directly."
               },
               {
                 "name": "skill-fired",

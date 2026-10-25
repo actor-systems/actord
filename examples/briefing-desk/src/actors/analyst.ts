@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type Envelope, type HandlerContext } from "actors-toolkit/runtime";
+import { actorRuntime, type Envelope, type HandlerContext } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 import { webhookGateway } from "../gateway.ts";
 import type { BriefingStatus } from "../messages/index.ts";

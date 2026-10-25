@@ -4,8 +4,8 @@
   core convention, versioned by `schemaVersion`)
 
 ## Decisions
-1. **`system.ts` default-exports `defineSystem({...})` from `actors-toolkit/system`.** It declares
-   `messages` (versioned Standard Schema payloads), `actors` (binding, kind, purpose, justification,
+1. **`system.ts` default-exports `defineSystem({...})` from `@actord/toolkit/system`.** It declares
+   `messages` (versioned Standard Schema payloads), `actord` (binding, kind, purpose, justification,
    optional schedule, effects, and budget), `effects` (idempotency, reconcile, approval), and `routes`
    (`from`, `message`, `to`; senders may be `@clock` or `@ingress`). **Routes are the single source of who
    sends and receives what.** Per-actor `receives` and `sends` are derived, never hand-maintained.
@@ -18,17 +18,17 @@
    (Standard JSON Schema), which zod 4.6 implements. Any compliant library works; a library without
    JSON Schema export gives `PAYLOAD_SCHEMA_OPAQUE` and diffs report its changes as "risky".
 4. **The CLI loads `system.ts` with Node's native type stripping** (Node ≥ 22.18; verified on 24.22).
-   Consequences, all checked by `actors doctor` or `actors check`: projects need `"type": "module"`,
+   Consequences, all checked by `actord doctor` or `actord check`: projects need `"type": "module"`,
    relative imports use explicit `.ts` extensions, and `system.ts` uses erasable syntax only
    (`erasableSyntaxOnly`). The declaration must be free of side effects: it's evaluated by every check.
-5. **`actors.manifest.json` is the derived, committed architecture metadata.** It holds sorted arrays and
-   keys and a `$comment` saying it's derived. `actors graph --write` produces it, `actors check` fails
-   with `MANIFEST_STALE` when it drifts, and `actors diff` uses the copy committed at a git ref (default
+5. **`actord.manifest.json` is the derived, committed architecture metadata.** It holds sorted arrays and
+   keys and a `$comment` saying it's derived. `actord graph --write` produces it, `actord check` fails
+   with `MANIFEST_STALE` when it drifts, and `actord diff` uses the copy committed at a git ref (default
    `HEAD`) as its base, so "changes since the last commit" needs no second evaluation of old code.
 6. **Durable Object classes are declared through wrangler's `exports` map, not `migrations`.**
    Cloudflare's docs (updated 2026-09-28) make `exports` the declarative lifecycle flow. `migrations`
    is "legacy" and the two are mutually exclusive. Verified locally on wrangler 4.152: `wrangler types`,
-   `@cloudflare/vitest-plugin` (3/3), and `wrangler dev` all accept `exports`. `actors check` requires a live
+   `@cloudflare/vitest-plugin` (3/3), and `wrangler dev` all accept `exports`. `actord check` requires a live
    `exports.<Actor>` with `storage: "sqlite"`; it accepts legacy migrations with the warning
    `CONFIG_LEGACY_MIGRATIONS`.
 7. **Deploy plans encode platform facts that make changes irreversible:** a `deleted` export destroys data
@@ -40,7 +40,7 @@
 
 ## Rejected
 - A YAML or JSON declaration: a second representation the compiler can't check.
-- Deriving `sends`/`receives` on actors *and* routes: two sources of truth.
+- Deriving `sends`/`receives` on actord *and* routes: two sources of truth.
 - Evaluating `system.ts` with esbuild or the TS compiler API: a native dependency that the single-file
   bundled CLI can't carry, and TS 7 has no stable JS API.
 - Rewriting `wrangler.jsonc` automatically: `check` reports drift with the exact fix instead.

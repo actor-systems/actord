@@ -1,4 +1,4 @@
-// Recorded by scripts/record-room-fixtures.mjs from the actors CLI on examples/release-radar. Do not edit;
+// Recorded by scripts/record-room-fixtures.mjs from the actord CLI on examples/release-radar. Do not edit;
 // re-record instead. `node scripts/record-room-fixtures.mjs --check` fails when the CLI's documents drift.
 export const ROOM = {
   "schemaVersion": 1,
@@ -142,7 +142,7 @@ export const ROOM = {
     }
   },
   "mailboxes": {
-    "file": ".actors/events.ndjson",
+    "file": ".actord/events.ndjson",
     "events": 372,
     "actors": [
       {
@@ -614,8 +614,8 @@ export const ROOM = {
           },
           {
             "id": "production-traces",
-            "statement": "Traces of production traffic in actors trace.",
-            "why": "actors trace reads local test and dev events only; production events go to Workers Logs."
+            "statement": "Traces of production traffic in actord trace.",
+            "why": "actord trace reads local test and dev events only; production events go to Workers Logs."
           }
         ]
       }
@@ -684,7 +684,7 @@ export const TRACE = {
     "children": []
   },
   "coverage": {
-    "file": ".actors/events.ndjson",
+    "file": ".actord/events.ndjson",
     "events": 372,
     "note": "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record."
   }
@@ -704,7 +704,7 @@ export const TRACE_UNKNOWN = {
   "rootCauseUnknown": false,
   "root": null,
   "coverage": {
-    "file": ".actors/events.ndjson",
+    "file": ".actord/events.ndjson",
     "events": 372,
     "note": "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record."
   }
@@ -726,8 +726,8 @@ export const GUARD_HOLD = {
     }
   ],
   "hold": true,
-  "question": "This command would deploy or publish a Worker: npx wrangler deploy\nrelease-radar: no architectural changes against git:HEAD.\nDeploy plan:\n  1. Run `actors check` and `npm run verify`; deploy nothing unless both pass.\n  2. Deploying is a person's decision. After approval, they run `npx wrangler deploy`; the toolkit never deploys.\nClaude Code's own permission check still runs after this. Run it?",
-  "refusal": "The actors Room held `npx wrangler deploy` (deploy or publish a Worker) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (`actors diff`) and let them run it or approve it themselves."
+  "question": "This command would deploy or publish a Worker: npx wrangler deploy\nrelease-radar: no architectural changes against git:HEAD.\nDeploy plan:\n  1. Run `actord check` and `npm run verify`; deploy nothing unless both pass.\n  2. Deploying is a person's decision. After approval, they run `npx wrangler deploy`; the toolkit never deploys.\nClaude Code's own permission check still runs after this. Run it?",
+  "refusal": "The actord Room held `npx wrangler deploy` (deploy or publish a Worker) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (`actord diff`) and let them run it or approve it themselves."
 }
 
 export const GUARD_OUTSIDE_PROJECT = {

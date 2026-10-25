@@ -1,7 +1,7 @@
-# `system.ts` cheat sheet (`actors-toolkit/system`)
+# `system.ts` cheat sheet (`@actord/toolkit/system`)
 
 ```ts
-import { defineSystem } from "actors-toolkit/system";
+import { defineSystem } from "@actord/toolkit/system";
 import { ItemSubmitted, ItemRouted, AnalysisCompleted } from "./src/messages/index.ts"; // explicit .ts
 
 export default defineSystem({
@@ -33,7 +33,7 @@ export default defineSystem({
 Messages, in `src/messages/index.ts` (zod 4 or any Standard Schema library):
 
 ```ts
-import { message } from "actors-toolkit/system";
+import { message } from "@actord/toolkit/system";
 import { z } from "zod";
 export const ItemSubmitted = message({ version: 1, description: "…", payload: z.object({ itemId: z.string().min(1) }) });
 ```
@@ -47,4 +47,4 @@ Conventions the checks enforce:
   must export each class.
 - `package.json` has `"type": "module"`; `system.ts` uses only erasable TypeScript, has no side effects,
   and imports relative files with `.ts`.
-- `actors graph --write` regenerates the derived `actors.manifest.json`; commit it.
+- `actord graph --write` regenerates the derived `actord.manifest.json`; commit it.

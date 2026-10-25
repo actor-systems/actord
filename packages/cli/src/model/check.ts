@@ -1,4 +1,4 @@
-// `actors check`: what the type system can't express. Hard errors fail the check; warnings are advice.
+// `actord check`: what the type system can't express. Hard errors fail the check; warnings are advice.
 // Every diagnostic has a stable code so tests, hooks, and graders can match on it.
 import type { Project } from "./load.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "./manifest.ts";
@@ -93,7 +93,7 @@ export function checkProject(project: Project): Diagnostic[] {
 
 function checkConfig(project: Project, m: Manifest, add: (s: Severity, c: string, subj: string | null, msg: string, fix?: string | null) => void) {
   if (!project.config) {
-    add("error", "CONFIG_MISSING", "wrangler.jsonc", project.configFile ? `${project.configFile} doesn't parse` : "No wrangler.jsonc next to system.ts", "Add one; `actors init --adopt` writes the Durable Object bindings and exports the declaration needs.");
+    add("error", "CONFIG_MISSING", "wrangler.jsonc", project.configFile ? `${project.configFile} doesn't parse` : "No wrangler.jsonc next to system.ts", "Add one; `actord init --adopt` writes the Durable Object bindings and exports the declaration needs.");
     return;
   }
   const cfg = project.config;
@@ -122,9 +122,9 @@ function checkConfig(project: Project, m: Manifest, add: (s: Severity, c: string
 
 function checkManifest(project: Project, m: Manifest, add: (s: Severity, c: string, subj: string | null, msg: string, fix?: string | null) => void) {
   if (project.committedManifestRaw === null) {
-    add("warning", "MANIFEST_MISSING", MANIFEST_FILE, `No ${MANIFEST_FILE}; \`actors diff\` uses the committed copy as its base`, "Run `actors graph --write` and commit it.");
+    add("warning", "MANIFEST_MISSING", MANIFEST_FILE, `No ${MANIFEST_FILE}; \`actord diff\` uses the committed copy as its base`, "Run `actord graph --write` and commit it.");
   } else if (project.committedManifestRaw !== serializeManifest(m)) {
-    add("error", "MANIFEST_STALE", MANIFEST_FILE, `${MANIFEST_FILE} doesn't match system.ts`, "Run `actors graph --write` and commit the result.");
+    add("error", "MANIFEST_STALE", MANIFEST_FILE, `${MANIFEST_FILE} doesn't match system.ts`, "Run `actord graph --write` and commit the result.");
   }
 }
 

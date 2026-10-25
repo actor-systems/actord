@@ -10,10 +10,10 @@ const read = (p) => readFileSync(`${root}${p}`, "utf8");
 const readme = read("README.md");
 
 test("the README has every section a user needs", () => {
-  for (const heading of ["## Install", "## The `actors` CLI", "## The Room", "## Trust and safety", "## Limitations and unverified claims", "## Evaluations", "## Developing this repository"]) {
+  for (const heading of ["## Install", "## The `actord` CLI", "## The Room", "## Trust and safety", "## Limitations and unverified claims", "## Evaluations", "## Developing this repository"]) {
     assert.ok(readme.includes(`\n${heading}\n`), `README lacks ${heading}`);
   }
-  for (const phrase of ["**Update.**", "**Uninstall.**", "claude plugin install actors@actors-toolkit", "claude plugin update actors@actors-toolkit", "/reload-plugins", "docs/architecture.md"]) {
+  for (const phrase of ["**Update.**", "**Uninstall.**", "claude plugin install actord@actord", "claude plugin update actord@actord", "/reload-plugins", "docs/architecture.md"]) {
     assert.ok(readme.includes(phrase), `README lacks ${phrase}`);
   }
 });
@@ -23,7 +23,7 @@ test("every CLI command in the help text has a README row", () => {
   const help = main.slice(main.indexOf("Commands:"), main.indexOf("Options:"));
   const commands = [...help.matchAll(/^ {2}([a-z]+)\b/gm)].map((m) => m[1]);
   assert.ok(commands.length >= 10);
-  for (const c of commands) assert.ok(readme.includes(`| \`actors ${c}`), `README's CLI table lacks actors ${c}`);
+  for (const c of commands) assert.ok(readme.includes(`| \`actord ${c}`), `README's CLI table lacks actord ${c}`);
 });
 
 test("README tables aren't broken by blank lines", () => {

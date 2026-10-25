@@ -19,5 +19,5 @@ Common over-splitting the critic will flag:
   Split it out only to isolate retries or approvals from the main path.
 - One actor per pipeline stage when the stages share state: merge them.
 
-Native escape hatch: a Durable Object may stay outside `system.ts`. `actors check` warns
+Native escape hatch: a Durable Object may stay outside `system.ts`. `actord check` warns
 (`CONFIG_UNDECLARED_DO`), and nothing about it is checked or traced.

@@ -82,7 +82,7 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
 17. **An RPC method can't be named `name`**; the stub's own property shadows it.
 
 18. **A monitor's `when` names one skill.** `on-skill-invoke:<skill>` takes a single skill, so "starts with
-    `inspect` or `reliability`" is two entries running the same follower. `actors events --follow
+    `inspect` or `reliability`" is two entries running the same follower. `actord events --follow
     --exclusive` holds a per-session lock (keyed by the Claude Code process) so a session that runs both
     skills gets one follower (`tests/monitor.test.mjs`).
 19. **A mod's spawned children end when the module reloads**, and a reload re-runs `session.start` while the
@@ -100,7 +100,7 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
 | Assumption | How it will be settled | Gate |
 | --- | --- | --- |
 | Eval runs deny local binding, as the default sandbox does | **Settled: yes** (`listen EPERM` in eval runs); they also refuse to start `npm`/`npx` from a child process and can't start git (decision 0004) | G5 |
-| The plugin's `bin/actors` is on `PATH` inside eval runs | **Settled: not for skill injection** (`!actors … || true` printed `command not found: actors`); agents used `npx actors`. Interactive sessions: unverified | G5 |
+| The plugin's `bin/actord` is on `PATH` inside eval runs | **Settled: not for skill injection** (`!actord … || true` printed `command not found: actord`); agents used `npx actord`. Interactive sessions: unverified | G5 |
 | In `-p`/eval runs the mod's `tool.call` guard runs and `$.ui.ask` cannot be answered | **Settled: yes**: the Room refused every deploy attempt in headless eval runs without asking | G5/G6 |
 | The Desktop app draws the Room's SVG as the desktop-surface test expects | `claude plugin test` validates the desktop tree (settled for the tree); acceptance step A10 in the Desktop app | G6 (owner) |
 | Clean install from the marketplace in a container | G7 clean-container script | G7 |

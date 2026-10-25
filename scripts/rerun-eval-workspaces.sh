@@ -25,10 +25,10 @@ jq -r '.cases[] | .name as $c | (.arms // {}) | to_entries[] | .key as $arm | .v
     fi
     copy="$work/$case-$arm-$index"
     rsync -a --exclude .git "$ws/" "$copy/"
-    sandbox="$(jq -r '.verdict // "none"' "$copy/.actors/evidence.json" 2>/dev/null || echo none)"
-    (cd "$copy" && node node_modules/.bin/actors verify --out .actors/evidence.host.json >/dev/null 2>&1)
-    host="$(jq -c '{verdict, summary, tests: (.steps[] | select(.id == "tests") | .summary)}' "$copy/.actors/evidence.host.json" 2>/dev/null || echo null)"
-    failed="$(jq -c '[.testResults[]?.assertionResults[]? | select(.status == "failed") | .fullName]' "$copy/.actors/vitest-results.json" 2>/dev/null || echo '[]')"
+    sandbox="$(jq -r '.verdict // "none"' "$copy/.actord/evidence.json" 2>/dev/null || echo none)"
+    (cd "$copy" && node node_modules/.bin/actord verify --out .actord/evidence.host.json >/dev/null 2>&1)
+    host="$(jq -c '{verdict, summary, tests: (.steps[] | select(.id == "tests") | .summary)}' "$copy/.actord/evidence.host.json" 2>/dev/null || echo null)"
+    failed="$(jq -c '[.testResults[]?.assertionResults[]? | select(.status == "failed") | .fullName]' "$copy/.actord/vitest-results.json" 2>/dev/null || echo '[]')"
     printf '{"case":"%s","arm":"%s","run":%s,"sandbox":"%s","host":%s,"failedTests":%s}\n' "$case" "$arm" "$index" "$sandbox" "$host" "$failed" >>"$rows"
     printf '%-30s %-8s #%s sandbox=%-8s host=%s\n' "$case" "$arm" "$index" "$sandbox" "$(jq -r '.verdict // "-"' <<<"$host")"
   done

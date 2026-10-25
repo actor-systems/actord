@@ -8,7 +8,7 @@ Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-re
 **Release candidate; one owner step open.** Second eval round done (approved $25, spent $21.44; lane total
 $63.00): release runs D and E plus two deploy-case re-measurements; `g5.evals.run` passes
 (`docs/evidence/evals/README.md`). Open: acceptance A10 (Desktop app), the owner's. Then the local tag
-`actors--v0.1.0` (never pushed without authorization). Watch item: host runtime correctness of plugin runs on
+`actord--v0.1.0` (never pushed without authorization). Watch item: host runtime correctness of plugin runs on
 `add-message-handler` (0/6 vs 4/6). Report: `docs/implementation-report.md`.
 
 ## Done
@@ -16,33 +16,33 @@ $63.00): release runs D and E plus two deploy-case re-measurements; `g5.evals.ru
 - **G0 passed** (verify run 2026-10-24): versions, guardrail rules test, DO messaging spike
   (types, typecheck, workerd runtime), sandbox spike reproduced with srt. Decisions 0002–0005.
 
-- **G1 offline-complete** (verify 2026-10-24): `actors-toolkit` CLI (`doctor`, effect pattern table) bundled
-  to `plugin/dist/actors.mjs`; `bin/actors` launcher (prefers project pin); `start` skill; marketplace
-  `actors-toolkit`; README trust section + test; strict validation; isolated install/uninstall smoke;
+- **G1 offline-complete** (verify 2026-10-24): `@actord/toolkit` CLI (`doctor`, effect pattern table) bundled
+  to `plugin/dist/actord.mjs`; `bin/actord` launcher (prefers project pin); `start` skill; marketplace
+  `@actord/toolkit`; README trust section + test; strict validation; isolated install/uninstall smoke;
   always-on ~66 tok. `g1.start-session` = eval case `start-orients` (blocked until evals approved).
 
-- **G2 passed** (verify 2026-10-24): `actors-toolkit/system` (`defineSystem`, `message`; compile-time route,
-  effect, schedule, payload contracts), normalized `actors.manifest.json`, `check` (stable codes),
+- **G2 passed** (verify 2026-10-24): `@actord/toolkit/system` (`defineSystem`, `message`; compile-time route,
+  effect, schedule, payload contracts), normalized `actord.manifest.json`, `check` (stable codes),
   `graph`, `diff` + deploy plan; DO lifecycle via wrangler `exports` (decision 0006); fixtures 2 valid +
-  12 negative; tests run the shipped `plugin/dist/actors.mjs`.
+  12 negative; tests run the shipped `plugin/dist/actord.mjs`.
 
-- **G3 passed** (verify 2026-10-24): `actors-toolkit/runtime` (transactional handlers, outbox, effects after
+- **G3 passed** (verify 2026-10-24): `@actord/toolkit/runtime` (transactional handlers, outbox, effects after
   commit w/ idempotency/in-doubt/approval/result messages), `/testing`, `/vitest`; Release Radar (3 actors,
-  20 workerd tests, 13 fault tags); `actors events` (+follow/notable/NDJSON), `actors trace`; decision 0007.
+  20 workerd tests, 13 fault tags); `actord events` (+follow/notable/NDJSON), `actord trace`; decision 0007.
 
 - **G4 passed** (verify 2026-10-24): Briefing Desk (Intake, model-assisted Analyst w/ budget + validated
   output + stale-after-cancel, Desk; approval; in-doubt gateway; optional live Anthropic adapter, SDK 1.3.0);
   runtime: background effects (fixed head-of-line blocking), orphan recovery, ctx.approve/deny;
-  `packages/cli/test-runtime` probe tests; `actors.claims.json` per example drives required test tags.
+  `packages/cli/test-runtime` probe tests; `actord.claims.json` per example drives required test tags.
 
 - **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok at G5; ~740 after the eval fixes), 2 read-only critics, hooks
-  (check-on-edit, evidence-gate), userConfig, `actors init/verify/test/hook`, claims classification,
+  (check-on-edit, evidence-gate), userConfig, `actord init/verify/test/hook`, claims classification,
   examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke, verify-blocked.
 
 - **G6 offline-complete** (verify 2026-10-24): the Room (`plugin/hooks/room.tsx`, `types/index.d.ts`):
-  `/actors-room` pane (Topology text/SVG, Mailboxes + trace, Contracts, Evidence; hotkeys 1–4, r), status
-  line, effect guard (prefilter on a generated copy of the pattern table, `actors guard` decides, Refuse
-  default, every failure denies). CLI `actors room [--follow]`, `actors guard`, `events --exclusive`,
+  `/actord-room` pane (Topology text/SVG, Mailboxes + trace, Contracts, Evidence; hotkeys 1–4, r), status
+  line, effect guard (prefilter on a generated copy of the pattern table, `actord guard` decides, Refuse
+  default, every failure denies). CLI `actord room [--follow]`, `actord guard`, `events --exclusive`,
   evidence fingerprint. Monitor (2 entries, one follower per session). 18 mod tests (+ guard mutation
   checks), fixture schema pin, mod typecheck, no-hooks smoke, acceptance run 9/11 recorded. Decision 0009.
 

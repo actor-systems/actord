@@ -1,4 +1,4 @@
-// actors init, the plugin hooks, and claim classification, through the shipped CLI where it matters.
+// actord init, the plugin hooks, and claim classification, through the shipped CLI where it matters.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,8 +8,8 @@ import { classifyClaims } from "../src/model/claims.ts";
 import { askRules } from "../src/patterns.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actors.mjs");
-const tmp = mkdtempSync(join(tmpdir(), "actors-g5-"));
+const cli = join(repo, "plugin/dist/actord.mjs");
+const tmp = mkdtempSync(join(tmpdir(), "actord-g5-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 function run(cwd: string, args: string[], input?: string, env: Record<string, string> = {}) {
@@ -17,13 +17,13 @@ function run(cwd: string, args: string[], input?: string, env: Record<string, st
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
-describe("actors init", () => {
+describe("actord init", () => {
   it("creates a complete starter with the verify skill, ask rules, and a short CLAUDE.md", () => {
     const r = run(tmp, ["init", "fresh", "--name", "Fresh App", "--json", "--toolkit", "0.1.0"]);
     expect(r.code).toBe(0);
     const doc = JSON.parse(r.out);
     expect(doc.mode).toBe("create");
-    for (const f of ["system.ts", "wrangler.jsonc", "tests/greeting.test.ts", "actors.claims.json", ".claude/skills/verify/SKILL.md", ".claude/settings.json", "CLAUDE.md"]) {
+    for (const f of ["system.ts", "wrangler.jsonc", "tests/greeting.test.ts", "actord.claims.json", ".claude/skills/verify/SKILL.md", ".claude/settings.json", "CLAUDE.md"]) {
       expect(doc.created).toContain(f);
     }
     const dir = join(tmp, "fresh");
@@ -55,7 +55,7 @@ describe("actors init", () => {
     const step = (script: string) => {
       writeFileSync(pkgPath, JSON.stringify({ ...pkg, scripts: { ...pkg.scripts, typecheck: script } }));
       run(dir, ["verify", "--json"]);
-      return JSON.parse(readFileSync(join(dir, ".actors/evidence.json"), "utf8")).steps.find((s: { id: string }) => s.id === "typecheck");
+      return JSON.parse(readFileSync(join(dir, ".actord/evidence.json"), "utf8")).steps.find((s: { id: string }) => s.id === "typecheck");
     };
     const blocked = step("echo 'Error: listen EPERM: operation not permitted 127.0.0.1' >&2; exit 1");
     expect(blocked.status).toBe("blocked");
@@ -117,10 +117,10 @@ describe("hooks", () => {
     writeFileSync(join(dir, "system.ts"), `${readFileSync(join(dir, "system.ts"), "utf8")}\n// edited\n`);
     const blocked = JSON.parse(run(dir, ["hook", "evidence-gate"], stop(false), on).out);
     expect(blocked).toMatchObject({ decision: "block" });
-    expect(blocked.reason).toMatch(/run `actors check`/);
+    expect(blocked.reason).toMatch(/run `actord check`/);
     expect(run(dir, ["hook", "evidence-gate"], stop(true), on).out).toBe(""); // already continuing: never twice
     run(dir, ["check"]); // records a passing check for the current files
-    expect(existsSync(join(dir, ".actors/last-check.json"))).toBe(true);
+    expect(existsSync(join(dir, ".actord/last-check.json"))).toBe(true);
     expect(run(dir, ["hook", "evidence-gate"], stop(false), on).out).toBe("");
   });
 });

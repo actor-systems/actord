@@ -1,6 +1,6 @@
 // The outbound gateway for briefings: posts JSON to a webhook. It accepts no idempotency key, so an
 // attempt whose response is lost can't be safely retried; the runtime reports it as in doubt.
-import { type EffectAdapter, EffectNotDelivered, EffectRejected } from "actors-toolkit/runtime";
+import { type EffectAdapter, EffectNotDelivered, EffectRejected } from "@actord/toolkit/runtime";
 
 export interface BriefingRequest {
   itemId: string;

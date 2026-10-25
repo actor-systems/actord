@@ -17,7 +17,7 @@ cd "$work/repo"
 step "npm ci"
 npm ci --no-audit --no-fund --silent
 step "build reproduces plugin/dist"
-npm run --silent build -w actors-toolkit
+npm run --silent build -w @actord/toolkit
 git diff --exit-code --stat -- plugin/dist plugin/hooks/effect-patterns.ts
 step "npm run verify"
 status=0

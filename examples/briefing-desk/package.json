@@ -7,8 +7,8 @@
     "types": "wrangler types",
     "typecheck": "wrangler types >/dev/null && tsc --noEmit",
     "test": "vitest run",
-    "check": "actors check",
-    "verify": "actors verify",
+    "check": "actord check",
+    "verify": "actord verify",
     "dev": "wrangler dev"
   },
   "dependencies": {
@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.7",
-    "actors-toolkit": "0.1.0",
+    "@actord/toolkit": "0.1.0",
     "typescript": "7.0.2",
     "vitest": "5.0.5",
     "wrangler": "4.152.0",

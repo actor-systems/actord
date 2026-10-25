@@ -1,5 +1,5 @@
 ---
 type: tool_used
 tool: Bash
-input_match: 'actors init'
+input_match: 'actord verify'
 ---

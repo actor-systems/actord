@@ -3,7 +3,7 @@
 import { sortKeys } from "../cli/output.ts";
 import { durationMs, type System } from "../system.ts";
 
-export const MANIFEST_FILE = "actors.manifest.json";
+export const MANIFEST_FILE = "actord.manifest.json";
 export const MANIFEST_SCHEMA_VERSION = 1;
 
 export interface ManifestActor {
@@ -88,7 +88,7 @@ export function normalize(system: System): Manifest {
     .sort(byName);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
-    $comment: "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+    $comment: "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
     system: { name: system.name, description: system.description ?? "" },
     actors: sortKeys(actors),
     messages: sortKeys(messages),

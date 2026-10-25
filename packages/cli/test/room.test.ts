@@ -1,4 +1,4 @@
-// `actors room`, `actors guard`, and the monitor's lock, through the shipped CLI where it matters. The Room
+// `actord room`, `actord guard`, and the monitor's lock, through the shipped CLI where it matters. The Room
 // mod draws these documents as printed, so their shapes are pinned here and in plugin/tests/fixtures.ts.
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -9,14 +9,14 @@ import { acquireLock, releaseLock } from "../src/cli/commands/events.ts";
 import { topologySvg, topologyWithChanges } from "../src/model/svg.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actors.mjs");
-const tmp = mkdtempSync(join(tmpdir(), "actors-room-"));
+const cli = join(repo, "plugin/dist/actord.mjs");
+const tmp = mkdtempSync(join(tmpdir(), "actord-room-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 const app = join(tmp, "evolved");
-cpSync(join(repo, "fixtures/valid/evolved"), app, { recursive: true, filter: (src) => !src.includes(".actors") });
+cpSync(join(repo, "fixtures/valid/evolved"), app, { recursive: true, filter: (src) => !src.includes(".actord") });
 symlinkSync(join(repo, "node_modules"), join(app, "node_modules")); // so system.ts loads outside the repo
-const base = join(repo, "fixtures/valid/minimal/actors.manifest.json");
+const base = join(repo, "fixtures/valid/minimal/actord.manifest.json");
 
 function run(cwd: string, args: string[]) {
   const r = spawnSync("node", [cli, ...args], { cwd, encoding: "utf8" });
@@ -30,7 +30,7 @@ const room = () => {
 // Built at run time so this file's text never reads as a deploy command.
 const deploy = ["npx", "wrangler", "deploy"].join(" ");
 
-describe("actors room", () => {
+describe("actord room", () => {
   it("shows the topology with additions against the base, as text and SVG", () => {
     const doc = room();
     expect(doc.schemaVersion).toBe(1);
@@ -60,8 +60,8 @@ describe("actors room", () => {
   });
 
   it("groups recorded messages into one mailbox per actor, each entry naming its instance and outcome", () => {
-    mkdirSync(join(app, ".actors"), { recursive: true });
-    copyFileSync(join(repo, "fixtures/events/release-radar-faults.ndjson"), join(app, ".actors/events.ndjson"));
+    mkdirSync(join(app, ".actord"), { recursive: true });
+    copyFileSync(join(repo, "fixtures/events/release-radar-faults.ndjson"), join(app, ".actord/events.ndjson"));
     const doc = room();
     const names = doc.mailboxes.actors.map((a: { name: string }) => a.name);
     expect(names).toEqual([...names].sort());
@@ -74,21 +74,21 @@ describe("actors room", () => {
   });
 
   it("splits a verify report into claim groups and marks it stale once actor files change", () => {
-    const print = JSON.parse(readFileSync(join(app, ".actors/last-check.json"), "utf8")).fingerprint;
+    const print = JSON.parse(readFileSync(join(app, ".actord/last-check.json"), "utf8")).fingerprint;
     const claims = [
       { id: "a", statement: "proved", status: "proved-locally" },
       { id: "b", statement: "stub", status: "stub-only" },
       { id: "c", statement: "no", status: "not-guaranteed", why: "platform" },
     ];
-    writeFileSync(join(app, ".actors/evidence.json"), JSON.stringify({ verdict: "pass", generatedAt: "2026-01-01T00:00:00Z", profile: "standard", fingerprint: "elsewhere", claims }));
+    writeFileSync(join(app, ".actord/evidence.json"), JSON.stringify({ verdict: "pass", generatedAt: "2026-01-01T00:00:00Z", profile: "standard", fingerprint: "elsewhere", claims }));
     let ev = room().evidence;
     expect(ev.state).toBe("stale");
     expect(ev.groups.map((g: { label: string }) => g.label)).toEqual(["Proved locally", "Stub only", "Not guaranteed"]);
     expect(ev.groups[2].claims[0].why).toBe("platform");
     expect(print).toBeTruthy();
     run(app, ["check"]);
-    const current = JSON.parse(readFileSync(join(app, ".actors/last-check.json"), "utf8")).fingerprint;
-    writeFileSync(join(app, ".actors/evidence.json"), JSON.stringify({ verdict: "blocked", fingerprint: current, claims }));
+    const current = JSON.parse(readFileSync(join(app, ".actord/last-check.json"), "utf8")).fingerprint;
+    writeFileSync(join(app, ".actord/evidence.json"), JSON.stringify({ verdict: "blocked", fingerprint: current, claims }));
     ev = room().evidence;
     expect(ev.state).toBe("blocked");
   });
@@ -119,7 +119,7 @@ describe("actors room", () => {
       await waitFor(1);
       expect(JSON.parse(lines[0]!).schemaVersion).toBe(1);
       const before = JSON.parse(lines[0]!).mailboxes.events;
-      appendFileSync(join(app, ".actors/events.ndjson"), `${JSON.stringify({ $actors: 1, kind: "received", at: 1, actor: "Pinger:x", messageId: "follow-1", type: "ping", from: "@ingress", to: "Pinger:x" })}\n`);
+      appendFileSync(join(app, ".actord/events.ndjson"), `${JSON.stringify({ $actord: 1, kind: "received", at: 1, actor: "Pinger:x", messageId: "follow-1", type: "ping", from: "@ingress", to: "Pinger:x" })}\n`);
       await waitFor(2);
       expect(lines.length).toBeGreaterThanOrEqual(2);
       expect(JSON.parse(lines[1]!).mailboxes.events).toBe(before + 1);
@@ -129,15 +129,15 @@ describe("actors room", () => {
   });
 });
 
-describe("actors diff without git", () => {
+describe("actord diff without git", () => {
   it("compares against the manifest on disk and says why", () => {
     // The copy under the OS temp dir is in no repository, as in a sandbox that can't start git.
     const doc = JSON.parse(run(app, ["diff", "--json"]).out);
-    expect(doc.base.source).toBe("file:actors.manifest.json");
-    expect(doc.notes[0]).toMatch(/^git isn't usable here \(.+\), so this compares against actors\.manifest\.json on disk/);
+    expect(doc.base.source).toBe("file:actord.manifest.json");
+    expect(doc.notes[0]).toMatch(/^git isn't usable here \(.+\), so this compares against actord\.manifest\.json on disk/);
     expect(doc.changes).toEqual([]);
     const r = JSON.parse(run(app, ["room", "--json"]).out);
-    expect(r.topology.base).toBe("file:actors.manifest.json");
+    expect(r.topology.base).toBe("file:actord.manifest.json");
     expect(r.topology.changes).toBe(0);
   });
 });
@@ -152,7 +152,7 @@ describe("--exit-zero", () => {
   });
 });
 
-describe("actors guard", () => {
+describe("actord guard", () => {
   it("holds a deploy inside an actor project with the diff summary and plan, refusing by default", () => {
     const r = run(app, ["guard", "--json", "--", deploy]);
     expect(r.code).toBe(0);

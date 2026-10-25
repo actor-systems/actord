@@ -1,10 +1,10 @@
 ---
 name: start
-description: Orient a developer to the actors toolkit (Actor-Native Cloudflare Toolkit), run `actors doctor`, and point to the reference apps. Use when someone asks how to get started with actors, what this plugin does, or invokes /actors:start. Writes no files.
-allowed-tools: Bash(npx --no-install actors doctor *) Bash(actors doctor *) Bash(actors --version)
+description: Orient a developer to the actord toolkit (Actor-Native Cloudflare Toolkit), run `actord doctor`, and point to the reference apps. Use when someone asks how to get started with actors, what this plugin does, or invokes /actord:start. Writes no files.
+allowed-tools: Bash(npx --no-install actord doctor *) Bash(actord doctor *) Bash(actord --version) Bash("${CLAUDE_PLUGIN_ROOT}/bin/actord" doctor *)
 ---
 
-# Start with the actors toolkit
+# Start with the actord toolkit
 
 Rules that hold for this whole skill:
 - Write no files and run nothing that deploys, signs in, or touches a Cloudflare account.
@@ -13,24 +13,24 @@ Rules that hold for this whole skill:
 
 ## Current environment
 
-!`actors doctor --exit-zero || npx --no-install actors doctor --exit-zero || true`
+!`actord doctor --exit-zero || npx --no-install actord doctor --exit-zero || "${CLAUDE_PLUGIN_ROOT}/bin/actord" doctor --exit-zero || true`
 
 ## What to tell the developer
 
 1. **What the toolkit is.** One typed declaration (`system.ts`) lists the actors (native Durable Objects),
-   the messages they exchange, and the allowed routes. The `actors` CLI checks the declaration against
+   the messages they exchange, and the allowed routes. The `actord` CLI checks the declaration against
    the code, graphs it, diffs it, and reads the structured event log that tests write. Tests run in
    workerd, Cloudflare's real runtime. Claude proposes; the checks and tests decide.
 2. **What the doctor found.** Go through each `error` and `warn` finding and give its `fix:` line. If the
-   doctor output is missing because `actors` isn't on PATH, say the plugin isn't enabled in this session
-   and suggest `/plugin` to enable it.
+   doctor output is missing, say the plugin's CLI didn't run in this session and suggest `/plugin` to
+   check that it's enabled.
 3. **Where to look.** Two reference apps show the conventions end to end:
    - `examples/release-radar`: deterministic actors with scheduling, duplicate input, and a causal trace.
    - `examples/briefing-desk`: an agent actor with a model adapter, approval gateway, and in-doubt effects.
 4. **What to do next.** Offer one step that fits the doctor result:
-   - not in a project → `/actors:setup` to scaffold one, or `/actors:design` to start from an idea;
+   - not in a project → `/actord:setup` to scaffold one, or `/actord:design` to start from an idea;
    - in a project with warnings → the first fix the doctor gave;
-   - in a healthy project → `actors graph` to see the topology, then `/actors:evolve` for a change.
+   - in a healthy project → `actord graph` to see the topology, then `/actord:evolve` for a change.
 
 The other skills: `setup` (scaffold), `design` (topology with a boundary critic), `implement`
 (messages and handlers), `reliability` (fault tests), `inspect` (why did this happen), `evolve` (safe

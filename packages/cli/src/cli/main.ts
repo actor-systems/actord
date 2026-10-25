@@ -9,9 +9,9 @@ import { test, verify } from "./commands/verify.ts";
 import { check, diff, graph } from "./commands/model.ts";
 import { type CommandResult, toJson, UsageError } from "./output.ts";
 
-const HELP = `actors ${VERSION}: conventions, checks, and inspection for actor systems on Cloudflare
+const HELP = `actord ${VERSION}: conventions, checks, and inspection for actor systems on Cloudflare
 
-Usage: actors <command> [options]
+Usage: actord <command> [options]
 
 Commands:
   doctor                       Check the environment, project, pins, and Cloudflare tooling
@@ -19,17 +19,17 @@ Commands:
        [--name N] [--host H]   host guidance (claude, codex, none) to an existing one (never overwrites)
   check [--changed <file>...]  Validate the declaration, routes, schemas, config, and manifest
         [--format brief]       (brief: hard errors only, silent when clean; for hooks)
-  graph [--write]              Print the topology; --write updates actors.manifest.json
+  graph [--write]              Print the topology; --write updates actord.manifest.json
   diff [--base <ref>]          Classify architectural changes against the committed manifest
        [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
-  events [--follow] [--notable] Query or follow local structured events (.actors/events.ndjson);
+  events [--follow] [--notable] Query or follow local structured events (.actord/events.ndjson);
          [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only; --exclusive
          [--correlation C]     (the monitor's) exits quietly if this session already follows
          [--file F] [--exclusive] the project
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
   test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
   verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
-         [--profile extended]  .actors/evidence.json (verdict pass, fail, or blocked)
+         [--profile extended]  .actord/evidence.json (verdict pass, fail, or blocked)
   room [--follow]              The Room's view: topology with changes, mailboxes, contracts, and
        [--base-file <path>]    evidence; --follow --json prints a snapshot whenever they change
   guard -- <command>           Whether the Room's effect guard holds a shell command, and the diff
@@ -67,7 +67,7 @@ const commands: Record<string, Handler> = {
   test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
   room: ({ cwd, values }) => room(cwd, { baseFile: str(values["base-file"]) }),
   guard: ({ cwd, positionals }) => {
-    if (positionals.length === 0) throw new UsageError("guard needs the command to judge: actors guard -- <command>");
+    if (positionals.length === 0) throw new UsageError("guard needs the command to judge: actord guard -- <command>");
     return guard(cwd, positionals.join(" "));
   },
 };
@@ -140,10 +140,10 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
     return values["exit-zero"] === true ? 0 : result.exitCode;
   } catch (err) {
     if (err instanceof UsageError) {
-      io.err.write(`actors: ${err.message}\nRun \`actors --help\` for usage.\n`);
+      io.err.write(`actord: ${err.message}\nRun \`actord --help\` for usage.\n`);
       return 2;
     }
-    io.err.write(`actors: internal error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
+    io.err.write(`actord: internal error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
     return 70;
   }
 }

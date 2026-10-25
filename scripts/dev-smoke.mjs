@@ -2,7 +2,7 @@
 // Run an example as a real local Worker (`wrangler dev`), drive it over HTTP, and trace what happened from
 // the event lines the running Worker printed. The workerd suites reach actors through test seams; this
 // shows the Worker itself boots from its wrangler.jsonc, takes requests at its front door, and leaves a
-// causal log that `actors trace` reads.
+// causal log that `actord trace` reads.
 //   node scripts/dev-smoke.mjs release-radar|briefing-desk
 // Local only: throwaway state and HOME, no .dev.vars or .env (no credentials reach the Worker), and no
 // outbound requests (Release Radar's first poll is 15 minutes out; the desk's model has no API key, so it
@@ -26,7 +26,7 @@ if (credentials.length) {
   process.exit(2);
 }
 
-const temp = mkdtempSync(join(tmpdir(), "actors-dev-smoke-"));
+const temp = mkdtempSync(join(tmpdir(), "actord-dev-smoke-"));
 const failures = [];
 const expect = (ok, what) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${what}`);
@@ -54,20 +54,20 @@ child.stdout.on("data", (d) => (output += d));
 child.stderr.on("data", (d) => (output += d));
 const exited = new Promise((r) => child.on("exit", r));
 
-/** The event lines the Worker printed so far, as written to .actors/events.ndjson by test runs. */
-const events = () => output.split("\n").filter((l) => l.startsWith('{"$actors":1')).map((l) => JSON.parse(l));
+/** The event lines the Worker printed so far, as written to .actord/events.ndjson by test runs. */
+const events = () => output.split("\n").filter((l) => l.startsWith('{"$actord":1')).map((l) => JSON.parse(l));
 async function until(what, test, ms = 20_000) {
   for (const end = Date.now() + ms; Date.now() < end; await sleep(100)) if (await test()) return true;
   expect(false, `${what} (timed out)`);
   return false;
 }
-/** `actors trace <id> --json` over the events the Worker printed, through the CLI the plugin ships. */
+/** `actord trace <id> --json` over the events the Worker printed, through the CLI the plugin ships. */
 function trace(id) {
   const file = join(temp, "events.ndjson");
   writeFileSync(file, events().map((e) => JSON.stringify(e)).join("\n") + "\n");
-  const text = spawnSync(process.execPath, [join(root, "plugin/dist/actors.mjs"), "trace", id, "--file", file], { cwd, encoding: "utf8" }).stdout;
+  const text = spawnSync(process.execPath, [join(root, "plugin/dist/actord.mjs"), "trace", id, "--file", file], { cwd, encoding: "utf8" }).stdout;
   console.log(text.trimEnd().replace(/coverage: \S*events\.ndjson/, "coverage: the dev server's events"));
-  const r = spawnSync(process.execPath, [join(root, "plugin/dist/actors.mjs"), "trace", id, "--file", file, "--json"], { cwd, encoding: "utf8" });
+  const r = spawnSync(process.execPath, [join(root, "plugin/dist/actord.mjs"), "trace", id, "--file", file, "--json"], { cwd, encoding: "utf8" });
   return JSON.parse(r.stdout);
 }
 const walk = (n) => (n ? [n, ...n.children.flatMap(walk), ...n.effects.flatMap((e) => walk(e.result))] : []);

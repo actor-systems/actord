@@ -1,4 +1,4 @@
-import { message } from "actors-toolkit/system";
+import { message } from "@actord/toolkit/system";
 import { z } from "zod";
 
 const ItemId = z.string().min(1).max(128);

@@ -1,5 +1,5 @@
 {
-  "$comment": "What this system claims about delivery, state, and effects, and the tagged tests that establish each claim. `actors verify` classifies every claim from the latest test run. basis: workerd = proved locally in Cloudflare's runtime; stub = shown only against a test double of an external system; not-guaranteed = deliberately not claimed.",
+  "$comment": "What this system claims about delivery, state, and effects, and the tagged tests that establish each claim. `actord verify` classifies every claim from the latest test run. basis: workerd = proved locally in Cloudflare's runtime; stub = shown only against a test double of an external system; not-guaranteed = deliberately not claimed.",
   "claims": [
     { "id": "end-to-end", "basis": "workerd", "tests": ["end-to-end"], "statement": "Items are triaged to filed, dismissed, or awaiting approval, and an approved briefing is sent once." },
     { "id": "dedupe-submission", "basis": "workerd", "tests": ["duplicate-submission"], "statement": "The same item submitted twice is analyzed once." },

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 /** Records submissions and routes each new item, once, to the analyst instance named by its id. */

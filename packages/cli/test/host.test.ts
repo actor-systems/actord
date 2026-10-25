@@ -13,7 +13,7 @@ import { init } from "../src/cli/commands/init.ts";
 import { doctor } from "../src/cli/commands/doctor.ts";
 const dirs: string[] = [];
 function temp() {
-  const d = mkdtempSync(join(tmpdir(), "actors-host-"));
+  const d = mkdtempSync(join(tmpdir(), "actord-host-"));
   dirs.push(d);
   return d;
 }
@@ -64,7 +64,7 @@ it("a host-neutral project carries only shared runtime and evidence files", () =
         f.startsWith(".agents"),
     ),
   ).toBe(false);
-  expect(r.data.created).toContain("actors.claims.json");
+  expect(r.data.created).toContain("actord.claims.json");
   const doc = doctor(join(d, "plain"), {});
   expect(
     doc.data.findings.some(

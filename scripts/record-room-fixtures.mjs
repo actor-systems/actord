@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Records the CLI output the Room's mod tests stub with (plugin/tests/fixtures.ts), from the real CLI run
-// on examples/release-radar. Run after `actors verify` there, so events, the check and evidence exist.
+// on examples/release-radar. Run after `actord verify` there, so events, the check and evidence exist.
 // The base manifest drops DigestWriter and adds a retired Notifier, so the topology shows both highlights.
 // With --check it records nothing and fails when the CLI's documents no longer have the recorded shapes
 // (keys and schemaVersion), which is how a CLI schema change fails the mod's tests.
@@ -21,7 +21,7 @@ const cli = (args, opts = {}) => {
   }
 };
 
-const head = JSON.parse(readFileSync(join(app, "actors.manifest.json"), "utf8"));
+const head = JSON.parse(readFileSync(join(app, "actord.manifest.json"), "utf8"));
 const base = structuredClone(head);
 base.actors = base.actors.filter((a) => a.name !== "DigestWriter");
 base.routes = base.routes.filter((r) => r.to !== "DigestWriter");
@@ -35,7 +35,7 @@ const scrub = (doc) => JSON.parse(JSON.stringify(doc).replaceAll(app, "/work/rel
 const room = scrub(cli(["room", "--json", "--base-file", baseFile]));
 const busiest = room.mailboxes.actors.find((a) => a.name === "ReleaseLedger") ?? room.mailboxes.actors[0];
 const target = busiest?.messages.at(-1)?.messageId;
-if (!target && !process.argv.includes("--check")) throw new Error("no recorded events in examples/release-radar: run `actors verify` there first");
+if (!target && !process.argv.includes("--check")) throw new Error("no recorded events in examples/release-radar: run `actord verify` there first");
 const trace = target ? scrub(cli(["trace", target, "--json"])) : { found: false };
 const unknown = scrub(cli(["trace", "no-such-message", "--json"]));
 const deployCommand = ["npx", "wrangler", "deploy"].join(" ");
@@ -77,7 +77,7 @@ if (process.argv.includes("--check")) {
 }
 
 const out = [
-  "// Recorded by scripts/record-room-fixtures.mjs from the actors CLI on examples/release-radar. Do not edit;",
+  "// Recorded by scripts/record-room-fixtures.mjs from the actord CLI on examples/release-radar. Do not edit;",
   "// re-record instead. `node scripts/record-room-fixtures.mjs --check` fails when the CLI's documents drift.",
   `export const ROOM = ${JSON.stringify(room, null, 2)}`,
   "",

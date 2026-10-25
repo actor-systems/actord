@@ -1,6 +1,6 @@
 # Fault matrix: how to test each fault in workerd
 
-All helpers come from `actors-toolkit/testing` or `cloudflare:test`. Tag each test with its claim.
+All helpers come from `@actord/toolkit/testing` or `cloudflare:test`. Tag each test with its claim.
 
 | Fault | Test technique | Expected guarantee |
 | --- | --- | --- |

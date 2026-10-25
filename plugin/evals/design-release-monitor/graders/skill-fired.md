@@ -1,5 +1,5 @@
 ---
 type: tool_used
 tool: Skill
-input_match: '"skill"\s*:\s*"(?:actors:)?design"'
+input_match: '"skill"\s*:\s*"(?:actord:)?design"'
 ---

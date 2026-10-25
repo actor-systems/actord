@@ -27,7 +27,7 @@ function keep(e: LoggedEvent, f: EventFilter): boolean {
   return true;
 }
 
-const NO_EVENTS = "No local events yet. Run the tests (they record through actors-toolkit/vitest) to produce .actors/events.ndjson. Production history isn't available to this command.";
+const NO_EVENTS = "No local events yet. Run the tests (they record through @actord/toolkit/vitest) to produce .actord/events.ndjson. Production history isn't available to this command.";
 
 export interface EventsData {
   projectRoot: string | null;
@@ -68,7 +68,7 @@ export async function followEvents(cwd: string, opts: EventFilter & { file?: str
         // A new run truncated the log.
         offset = 0;
         partial = "";
-        if (!opts.notable) out.write(opts.json ? `${JSON.stringify({ $actors: 1, kind: "log.reset", at: Date.now(), actor: "actors-cli" })}\n` : "── new run ──\n");
+        if (!opts.notable) out.write(opts.json ? `${JSON.stringify({ $actord: 1, kind: "log.reset", at: Date.now(), actor: "actord-cli" })}\n` : "── new run ──\n");
       }
       if (size > offset) {
         const fd = openSync(path, "r");
@@ -94,7 +94,7 @@ export async function followEvents(cwd: string, opts: EventFilter & { file?: str
 export function claimMonitor(cwd: string): boolean {
   const root = findProjectRoot(cwd);
   if (!root) return true; // followEvents reports the missing project
-  const lock = join(root, ".actors", `monitor-${sessionPid()}.pid`);
+  const lock = join(root, ".actord", `monitor-${sessionPid()}.pid`);
   if (!acquireLock(lock, process.pid)) return false;
   process.on("exit", () => releaseLock(lock, process.pid));
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => process.exit(0));
@@ -156,7 +156,7 @@ export function trace(cwd: string, id: string | undefined, opts: { file?: string
   const { path, root } = eventsPath(cwd, opts.file);
   const note = "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record.";
   const empty = (file: string | null, events: number): TraceData => ({ projectRoot: root, found: false, target: id ?? "", correlationId: null, rootCauseUnknown: false, root: null, coverage: { file, events, note } });
-  if (!id) return { data: empty(null, 0), text: "usage: actors trace <message-id> [--json] [--file <events.ndjson>]", exitCode: 2 };
+  if (!id) return { data: empty(null, 0), text: "usage: actord trace <message-id> [--json] [--file <events.ndjson>]", exitCode: 2 };
   if (!path) return { data: empty(null, 0), text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
   const file = root ? relative(root, path) : path;
   const log = readEvents(path);

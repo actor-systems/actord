@@ -14,7 +14,7 @@ interface HookInput {
   stop_hook_active?: boolean;
 }
 
-const RELEVANT = /(^|\/)(system\.ts|wrangler\.jsonc?|actors\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
+const RELEVANT = /(^|\/)(system\.ts|wrangler\.jsonc?|actord\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
 const BUDGET_MS = 2_000;
 
 export async function hook(name: string | undefined, stdin: string, env: NodeJS.ProcessEnv, out: NodeJS.WritableStream, err: NodeJS.WritableStream): Promise<number> {
@@ -26,7 +26,7 @@ export async function hook(name: string | undefined, stdin: string, env: NodeJS.
   }
   if (name === "check-on-edit") return checkOnEdit(input, env, out, err);
   if (name === "evidence-gate") return evidenceGate(input, env, out);
-  err.write(`actors hook: unknown hook "${name ?? ""}"\n`);
+  err.write(`actord hook: unknown hook "${name ?? ""}"\n`);
   return 0;
 }
 
@@ -39,11 +39,11 @@ async function checkOnEdit(input: HookInput, env: NodeJS.ProcessEnv, out: NodeJS
   const timer = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), BUDGET_MS).unref());
   const result = await Promise.race([check(root, { changed: [file], format: "brief" }), timer]);
   if (result === "timeout") {
-    err.write(`actors: check-on-edit skipped (over its ${BUDGET_MS / 1000}s budget); run \`actors check\`\n`);
+    err.write(`actord: check-on-edit skipped (over its ${BUDGET_MS / 1000}s budget); run \`actord check\`\n`);
     return 0;
   }
   if (result.data.errors === 0) return 0;
-  const context = `${result.text}\nThese are hard errors from \`actors check\` after editing ${relative(root, file)}. Fix them, or explain why the declaration should change.`;
+  const context = `${result.text}\nThese are hard errors from \`actord check\` after editing ${relative(root, file)}. Fix them, or explain why the declaration should change.`;
   out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: context } })}\n`);
   return 0;
 }
@@ -62,7 +62,7 @@ function evidenceGate(input: HookInput, env: NodeJS.ProcessEnv, out: NodeJS.Writ
   if (last?.ok && last.fingerprint === fingerprint(root)) return 0;
   if (!last && !actorFilesModified(root)) return 0; // nothing checked, nothing changed: a read-only session
   out.write(
-    `${JSON.stringify({ decision: "block", reason: "Actor files changed since the last passing check: run `actors check` and the affected tests before reporting." })}\n`,
+    `${JSON.stringify({ decision: "block", reason: "Actor files changed since the last passing check: run `actord check` and the affected tests before reporting." })}\n`,
   );
   return 0;
 }

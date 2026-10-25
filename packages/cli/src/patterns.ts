@@ -1,5 +1,5 @@
 // The one table of commands that deploy, touch secrets, or write to a remote Cloudflare account.
-// Consumers: `actors init` (Claude Code `ask` rules), the Room's effect guard (regex), and eval
+// Consumers: `actord init` (Claude Code `ask` rules), the Room's effect guard (regex), and eval
 // graders (regex). Matching command text is a convenience, not a security boundary: other spellings
 // (`sh -c`, absolute paths) slip past. Cloudflare token scopes are the enforceable layer.
 

@@ -29,7 +29,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
       - name: Build reproduces the committed plugin/dist
-        run: npm run --silent build -w actors-toolkit && git diff --exit-code -- plugin/dist plugin/hooks/effect-patterns.ts
+        run: npm run --silent build -w @actord/toolkit && git diff --exit-code -- plugin/dist plugin/hooks/effect-patterns.ts
       - run: npm run verify
       - if: always()
         uses: actions/upload-artifact@v4

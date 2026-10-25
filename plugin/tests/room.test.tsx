@@ -4,11 +4,11 @@ import { DEPLOY_COMMAND, GUARD_HOLD, GUARD_OUTSIDE_PROJECT, ROOM, TRACE, TRACE_U
 
 // What Claude Code passes a ui.render hook for the Room's pane, apart from the surface.
 const PANE = {
-  plugin: 'actors',
+  plugin: 'actord',
   component: 'Pane',
-  requestId: 'actors-room',
+  requestId: 'actord-room',
   viewport: { columns: 120, rows: 40 },
-  props: { title: 'Actors Room', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 36 }, view: {} },
+  props: { title: 'actord Room', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 36 }, view: {} },
 } as const
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -39,7 +39,7 @@ function engine(on: any, opts: { room?: unknown; roomExit?: number; trace?: unkn
     const [command] = e.argv.slice(1)
     if (command === 'room') return out(opts.room ?? ROOM, opts.roomExit ?? 0)
     if (command === 'trace') return out(opts.trace ?? TRACE, (opts.trace ?? TRACE) === TRACE_UNKNOWN ? 1 : 0)
-    if (command === 'guard') return opts.guardFails ? { deny: 'the actors CLI could not start' } : out(opts.guard ?? GUARD_HOLD)
+    if (command === 'guard') return opts.guardFails ? { deny: 'the actord CLI could not start' } : out(opts.guard ?? GUARD_HOLD)
     return { deny: `unexpected command ${e.argv.join(' ')}` }
   })
   on('process.spawn', async function* (_: unknown, e: { argv: string[] }) {
@@ -64,11 +64,11 @@ const typed = (command: string) => ({ command, args: '', origin: { kind: 'compos
 
 const start = ($: any, isInteractive = true) => $.session.start({ cwd: '/work/release-radar', surface: isInteractive ? 'terminal' : null, isInteractive })
 
-test('/actors-room opens the pane and draws every tab on terminal and desktop', async ($, on) => {
+test('/actord-room opens the pane and draws every tab on terminal and desktop', async ($, on) => {
   const calls = engine(on)
   await start($)
-  const opened = await $.command.run(typed('actors-room'))
-  expect(opened.text).toContain('The actors Room is open')
+  const opened = await $.command.run(typed('actord-room'))
+  expect(opened.text).toContain('The actord Room is open')
   const ledger = ROOM.mailboxes.actors.find(a => a.name === 'ReleaseLedger')!
   const message = ledger.messages[ledger.messages.length - 1]!.messageId
 
@@ -92,7 +92,7 @@ test('/actors-room opens the pane and draws every tab on terminal and desktop', 
     expect(await ui.find({ type: 'Text', text: new RegExp(`Trace ${message}`) })).toBeDefined()
 
     await ui.press({ key: 'tab-contracts' })
-    expect(await ui.find({ type: 'Text', text: /actors check passed/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /actord check passed/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /feed\.watch@1/ })).toBeDefined()
 
     await ui.press({ key: 'tab-evidence' })
@@ -107,11 +107,11 @@ test('the status line summarizes the project in an interactive session', async (
   const calls = engine(on)
   await start($)
   expect(calls.status).toContain(ROOM.status)
-  expect(calls.registered).toEqual(['actors-room'])
+  expect(calls.registered).toEqual(['actord-room'])
 })
 
-test('/actors-room starts one follower, and a reloaded module restarts it only for a pane still up', async ($, on) => {
-  const calls = engine(on, { panes: [{ id: 'actors-room', title: 'Actors Room', isShown: true, isFocused: false, isPlaced: true }] })
+test('/actord-room starts one follower, and a reloaded module restarts it only for a pane still up', async ($, on) => {
+  const calls = engine(on, { panes: [{ id: 'actord-room', title: 'actord Room', isShown: true, isFocused: false, isPlaced: true }] })
   await start($)
   expect(calls.spawned).toEqual([['room', '--follow', '--json']])
 })
@@ -120,7 +120,7 @@ test('a session without the pane open starts no follower', async ($, on) => {
   const calls = engine(on)
   await start($)
   expect(calls.spawned).toEqual([])
-  await $.command.run(typed('actors-room'))
+  await $.command.run(typed('actord-room'))
   expect(calls.spawned).toEqual([['room', '--follow', '--json']])
 })
 
@@ -134,7 +134,7 @@ test('a headless session registers the command but runs nothing at start', async
 test('a selected message nobody recorded is reported unknown', async ($, on) => {
   engine(on, { trace: TRACE_UNKNOWN })
   await start($)
-  await $.command.run(typed('actors-room'))
+  await $.command.run(typed('actord-room'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'tab-mailboxes' })
   const first = ROOM.mailboxes.actors[0]!.messages[0]!.messageId
@@ -158,7 +158,7 @@ test('after /clear the pane reads the project again', async ($, on) => {
 test('outside an actor project the command says so and the pane shows nothing to draw', async ($, on) => {
   engine(on, { room: { schemaVersion: 1, projectRoot: null }, roomExit: 3 })
   await start($)
-  const opened = await $.command.run(typed('actors-room'))
+  const opened = await $.command.run(typed('actord-room'))
   expect(opened.text).toContain('No actor project here')
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /No actor project loaded/ })).toBeDefined()
@@ -167,17 +167,17 @@ test('outside an actor project the command says so and the pane shows nothing to
 test('a CLI document of another schema version is refused, not drawn', async ($, on) => {
   engine(on, { room: { ...ROOM, schemaVersion: 2 } })
   await start($)
-  await $.command.run(typed('actors-room'))
+  await $.command.run(typed('actord-room'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /draws CLI schema 1; the project's actors CLI printed schema 2/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /draws CLI schema 1; the project's actord CLI printed schema 2/ })).toBeDefined()
 })
 
-test('another plugin owning /actors-room moves the Room to /actors-room-view', async ($, on) => {
-  const calls = engine(on, { commands: [{ name: 'actors-room', description: 'theirs', source: 'plugin', plugin: 'someone-else' }] })
+test('another plugin owning /actord-room moves the Room to /actord-room-view', async ($, on) => {
+  const calls = engine(on, { commands: [{ name: 'actord-room', description: 'theirs', source: 'plugin', plugin: 'someone-else' }] })
   await start($)
-  expect(calls.registered).toEqual(['actors-room-view'])
-  const opened = await $.command.run(typed('actors-room-view'))
-  expect(opened.text).toContain('The actors Room is open')
+  expect(calls.registered).toEqual(['actord-room-view'])
+  const opened = await $.command.run(typed('actord-room-view'))
+  expect(opened.text).toContain('The actord Room is open')
 })
 
 test('guard: a matching command is held, and Refuse denies it', async ($, on) => {

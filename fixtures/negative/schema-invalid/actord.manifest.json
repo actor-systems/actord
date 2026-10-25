@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
   "schemaVersion": 1,
   "system": {
     "name": "minimal",
@@ -40,7 +40,9 @@
       "kind": "deterministic",
       "name": "Ponger",
       "purpose": "Records each ping exactly once",
-      "receives": [],
+      "receives": [
+        "ping.sent"
+      ],
       "schedule": null,
       "sends": []
     }
@@ -68,18 +70,7 @@
     {
       "description": "Someone asked for an immediate ping",
       "name": "ping.kicked",
-      "payload": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "properties": {
-          "reason": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "reason"
-        ],
-        "type": "object"
-      },
+      "payload": null,
       "version": 1
     },
     {
@@ -119,7 +110,7 @@
     {
       "from": "Pinger",
       "message": "ping.sent",
-      "to": "Ghost"
+      "to": "Ponger"
     }
   ],
   "effects": []

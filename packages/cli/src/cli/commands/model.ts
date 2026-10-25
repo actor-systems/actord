@@ -20,7 +20,7 @@ function noProject<T extends object>(cwd: string, data: T): CommandResult<T & { 
   };
 }
 
-// Files whose edits can change what `actors check` reports.
+// Files whose edits can change what `actord check` reports.
 const RELEVANT = [/(^|\/)system\.ts$/, /(^|\/)src\/actors\//, /(^|\/)src\/messages\//, /(^|\/)wrangler\.jsonc?$/, /(^|\/)src\/index\.ts$/, new RegExp(`(^|/)${MANIFEST_FILE.replace(".", "\\.")}$`)];
 
 export interface CheckData {
@@ -52,7 +52,7 @@ export async function check(cwd: string, opts: { changed?: string[]; format?: st
     // For the edit-time hook: hard errors only, nothing when clean.
     text = diagnostics
       .filter((d) => d.severity === "error")
-      .map((d) => `actors check: ${d.code} ${d.subject ?? ""}: ${d.message}${d.fix ? ` (fix: ${d.fix})` : ""}`)
+      .map((d) => `actord check: ${d.code} ${d.subject ?? ""}: ${d.message}${d.fix ? ` (fix: ${d.fix})` : ""}`)
       .join("\n");
   } else {
     const lines = diagnostics.map((d) => `${d.severity === "error" ? "✗" : "!"} ${d.code}${d.subject ? ` ${d.subject}` : ""}: ${d.message}${d.fix ? `\n    fix: ${d.fix}` : ""}`);
@@ -62,12 +62,12 @@ export async function check(cwd: string, opts: { changed?: string[]; format?: st
   return { data, text, exitCode: errors === 0 ? 0 : 1 };
 }
 
-export const LAST_CHECK_FILE = ".actors/last-check.json";
+export const LAST_CHECK_FILE = ".actord/last-check.json";
 
 /** Local evidence for the evidence gate and the Room: the outcome of the latest full check. */
 function recordCheck(root: string, data: { ok: boolean; errors: number; warnings: number; diagnostics: Diagnostic[] }): void {
   try {
-    mkdirSync(join(root, ".actors"), { recursive: true });
+    mkdirSync(join(root, ".actord"), { recursive: true });
     const record = {
       schemaVersion: 1,
       ok: data.ok,
@@ -154,12 +154,12 @@ export async function diff(cwd: string, opts: { base?: string; baseFile?: string
       source = `git:${ref}`;
     } else if (!fromGit.usable && existsSync(onDisk)) {
       // Without git (a sandbox that can't start it, or no repository), the manifest on disk is the
-      // architecture last recorded by `actors graph --write`: the best base there is, said plainly.
+      // architecture last recorded by `actord graph --write`: the best base there is, said plainly.
       base = JSON.parse(readFileSync(onDisk, "utf8")) as Manifest;
       source = `file:${MANIFEST_FILE}`;
-      notes.push(`git isn't usable here (${fromGit.why}), so this compares against ${MANIFEST_FILE} on disk, the architecture last recorded by \`actors graph --write\`. Run \`actors diff\` before regenerating it, or pass --base-file.`);
+      notes.push(`git isn't usable here (${fromGit.why}), so this compares against ${MANIFEST_FILE} on disk, the architecture last recorded by \`actord graph --write\`. Run \`actord diff\` before regenerating it, or pass --base-file.`);
     } else {
-      notes.push(`No ${MANIFEST_FILE} at ${ref}; the whole system is shown as added. Commit the manifest (\`actors graph --write\`) to diff against it.`);
+      notes.push(`No ${MANIFEST_FILE} at ${ref}; the whole system is shown as added. Commit the manifest (\`actord graph --write\`) to diff against it.`);
     }
   }
   const result = diffManifests(base, project.manifest);
@@ -180,7 +180,7 @@ function gitShow(root: string, ref: string, file: string): { text: string | null
 
 function renderDiff(d: DiffData): string {
   const sign = (k: string) => (k.endsWith(".added") ? "+" : k.endsWith(".removed") ? "-" : "~");
-  const lines = [`actors diff: ${d.head.system} against ${d.base.source}`, ...d.notes.map((n) => `  note: ${n}`), ""];
+  const lines = [`actord diff: ${d.head.system} against ${d.base.source}`, ...d.notes.map((n) => `  note: ${n}`), ""];
   if (d.changes.length === 0) lines.push("  No architectural changes.");
   for (const c of d.changes) {
     const flags = [c.compatibility, c.requiresApproval ? "needs approval" : null, c.irreversible ? "IRREVERSIBLE" : null].filter(Boolean).join(", ");

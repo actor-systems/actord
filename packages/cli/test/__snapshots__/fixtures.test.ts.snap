@@ -3,7 +3,7 @@
 exports[`valid fixtures > diff classifies evolved against minimal, with a plan and no deploy > diff evolved vs minimal 1`] = `
 {
   "base": {
-    "source": "file:../minimal/actors.manifest.json",
+    "source": "file:../minimal/actord.manifest.json",
     "system": "minimal",
   },
   "changes": [
@@ -48,11 +48,11 @@ exports[`valid fixtures > diff classifies evolved against minimal, with a plan a
   "plan": [
     {
       "kind": "verify",
-      "text": "Run \`actors check\` and \`npm run verify\`; deploy nothing unless both pass.",
+      "text": "Run \`actord check\` and \`npm run verify\`; deploy nothing unless both pass.",
     },
     {
       "kind": "config",
-      "text": "Declare Auditor in wrangler.jsonc: binding { "name": "AUDITOR", "class_name": "Auditor" } and exports.Auditor = { "type": "durable-object", "storage": "sqlite" } (\`actors check\` confirms both).",
+      "text": "Declare Auditor in wrangler.jsonc: binding { "name": "AUDITOR", "class_name": "Auditor" } and exports.Auditor = { "type": "durable-object", "storage": "sqlite" } (\`actord check\` confirms both).",
     },
     {
       "kind": "drain",
@@ -106,7 +106,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
 {
   "command": "graph",
   "manifest": {
-    "$comment": "Derived from system.ts by \`actors graph --write\`. Do not edit; \`actors check\` fails when it is stale.",
+    "$comment": "Derived from system.ts by \`actord graph --write\`. Do not edit; \`actord check\` fails when it is stale.",
     "actors": [
       {
         "binding": "AUDITOR",
@@ -323,7 +323,7 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
 {
   "command": "graph",
   "manifest": {
-    "$comment": "Derived from system.ts by \`actors graph --write\`. Do not edit; \`actors check\` fails when it is stale.",
+    "$comment": "Derived from system.ts by \`actord graph --write\`. Do not edit; \`actord check\` fails when it is stale.",
     "actors": [
       {
         "binding": "PINGER",

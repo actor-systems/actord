@@ -1,4 +1,4 @@
-import { defineSystem } from "actors-toolkit/system";
+import { defineSystem } from "@actord/toolkit/system";
 import {
   AnalysisCompleted,
   BriefingDecided,

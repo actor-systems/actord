@@ -1,0 +1,27 @@
+#!/bin/sh
+# actors: on the Bash tool's PATH while the plugin is enabled.
+# Prefers a project's pinned CLI (node_modules/.bin/actord), so Claude and CI run the same version;
+# otherwise runs the bundled single-file build. Never contacts the network.
+plugin_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+bundle="$plugin_root/dist/actord.mjs"
+ACTORD_PLUGIN_VERSION=$(cat "$plugin_root/dist/VERSION" 2>/dev/null || echo unknown)
+ACTORD_PLUGIN_DIST="$plugin_root/dist"
+ACTORD_HOST=claude
+export ACTORD_PLUGIN_VERSION ACTORD_PLUGIN_DIST ACTORD_HOST
+dir=$(pwd)
+while :; do
+  if [ -x "$dir/node_modules/.bin/actord" ]; then
+    ACTORD_LAUNCHER=project-pin
+    export ACTORD_LAUNCHER
+    exec "$dir/node_modules/.bin/actord" "$@"
+  fi
+  [ "$dir" = "/" ] && break
+  dir=$(dirname -- "$dir")
+done
+if ! command -v node >/dev/null 2>&1; then
+  echo "actord: Node.js 22.18 or later is required (node was not found on PATH)" >&2
+  exit 127
+fi
+ACTORD_LAUNCHER=plugin-bundle
+export ACTORD_LAUNCHER
+exec node "$bundle" "$@"

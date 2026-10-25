@@ -1,5 +1,5 @@
 ---
 type: tool_used
 tool: Bash
-input_match: 'actors diff'
+input_match: 'actord verify'
 ---

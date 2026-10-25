@@ -18,7 +18,7 @@ describe("effect pattern table", () => {
     "wrangler d1 execute DB --local --command 'select 1'",
     "npm test",
     "npm run verify",
-    "actors check --json",
+    "actord check --json",
     "git commit -m 'describe the deploy plan'",
     "cat docs/deploy-plan.md",
   ])("does not flag local, read-only, or descriptive commands: %s", (cmd) => {

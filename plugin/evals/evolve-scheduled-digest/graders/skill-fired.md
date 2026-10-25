@@ -1,5 +1,5 @@
 ---
 type: tool_used
 tool: Skill
-input_match: '"skill"\s*:\s*"(?:actors:)?evolve"'
+input_match: '"skill"\s*:\s*"(?:actord:)?evolve"'
 ---

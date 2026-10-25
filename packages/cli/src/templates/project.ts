@@ -1,4 +1,4 @@
-// Files `actors init` writes. The starter is a complete, tested two-actor system; the `.claude/` files
+// Files `actord init` writes. The starter is a complete, tested two-actor system; the `.claude/` files
 // and CLAUDE.md keep the project self-describing to sessions that don't have the plugin.
 import { hostFiles, type AgentHost } from "./host.ts";
 export { claudeMd, settingsJson, verifySkill } from "./claude.ts";
@@ -17,23 +17,23 @@ export function starterFiles(name: string, toolkitSpec: string, host: AgentHost 
       {
         name,
         private: true,
-        actors: { host },
+        actord: { host },
         type: "module",
         scripts: {
           types: "wrangler types",
           typecheck: "wrangler types >/dev/null && tsc --noEmit",
           test: "vitest run",
-          check: "actors check",
-          verify: "actors verify",
+          check: "actord check",
+          verify: "actord verify",
           dev: "wrangler dev",
         },
-        devDependencies: { "actors-toolkit": toolkitSpec, ...PINNED },
+        devDependencies: { "@actord/toolkit": toolkitSpec, ...PINNED },
       },
       null,
       2,
     )}\n`,
-    ".gitignore": "node_modules/\n.wrangler/\n.actors/\nworker-configuration.d.ts\n.dev.vars\n.env\n",
-    "system.ts": `import { defineSystem } from "actors-toolkit/system";
+    ".gitignore": "node_modules/\n.wrangler/\n.actord/\nworker-configuration.d.ts\n.dev.vars\n.env\n",
+    "system.ts": `import { defineSystem } from "@actord/toolkit/system";
 import { GreetingRecorded, GreetingRequested } from "./src/messages/index.ts";
 
 export default defineSystem({
@@ -63,7 +63,7 @@ export default defineSystem({
   ],
 });
 `,
-    "src/messages/index.ts": `import { message } from "actors-toolkit/system";
+    "src/messages/index.ts": `import { message } from "@actord/toolkit/system";
 import { z } from "zod";
 
 export const GreetingRequested = message({
@@ -79,7 +79,7 @@ export const GreetingRecorded = message({
 });
 `,
     "src/actors/greeter.ts": `import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 export class Greeter extends DurableObject<Env> {
@@ -99,7 +99,7 @@ export class Greeter extends DurableObject<Env> {
 }
 `,
     "src/actors/guestbook.ts": `import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 export class Guestbook extends DurableObject<Env> {
@@ -127,7 +127,7 @@ export class Guestbook extends DurableObject<Env> {
   }
 }
 `,
-    "src/index.ts": `import { ingress } from "actors-toolkit/runtime";
+    "src/index.ts": `import { ingress } from "@actord/toolkit/runtime";
 import system from "../system.ts";
 
 export { Greeter } from "./actors/greeter.ts";
@@ -184,7 +184,7 @@ export default {
       2,
     )}\n`,
     "vitest.config.ts": `import { cloudflareTest } from "@cloudflare/vitest-plugin";
-import { actorEvents } from "actors-toolkit/vitest";
+import { actorEvents } from "@actord/toolkit/vitest";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -192,8 +192,8 @@ export default defineConfig({
 });
 `,
     "tests/greeting.test.ts": `import { env } from "cloudflare:workers";
-import { type Envelope, ingress } from "actors-toolkit/runtime";
-import { settle } from "actors-toolkit/testing";
+import { type Envelope, ingress } from "@actord/toolkit/runtime";
+import { settle } from "@actord/toolkit/testing";
 import { expect, it } from "vitest";
 import system from "../system.ts";
 
@@ -218,9 +218,9 @@ it("[refuse-invalid] an empty name is refused before any handler runs", async ()
   expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "" })).toMatchObject({ status: "rejected", reason: "invalid_payload" });
 });
 `,
-    "actors.claims.json": `${JSON.stringify(
+    "actord.claims.json": `${JSON.stringify(
       {
-        $comment: "Reliability claims and the tagged tests that establish them. `actors verify` classifies each from the latest run.",
+        $comment: "Reliability claims and the tagged tests that establish them. `actord verify` classifies each from the latest run.",
         claims: [
           { id: "end-to-end", basis: "workerd", tests: ["end-to-end"], statement: "A greeting request reaches the guestbook." },
           { id: "dedupe-delivery", basis: "workerd", tests: ["duplicate-delivery"], statement: "A redelivered message is recorded once." },

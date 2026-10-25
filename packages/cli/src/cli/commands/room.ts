@@ -1,4 +1,4 @@
-// `actors room` and `actors guard`: the view model the Room mod draws and the decision its effect guard
+// `actord room` and `actord guard`: the view model the Room mod draws and the decision its effect guard
 // shows. The mod computes nothing; everything it renders or asks comes from here, so the same answers are
 // available as text with mods turned off.
 import { spawnSync } from "node:child_process";
@@ -14,7 +14,7 @@ import type { CommandResult } from "../output.ts";
 import { findProjectRoot, readJson } from "../project.ts";
 import { diff, EXIT_NO_PROJECT, LAST_CHECK_FILE } from "./model.ts";
 
-const EVIDENCE_FILE = ".actors/evidence.json";
+const EVIDENCE_FILE = ".actord/evidence.json";
 const MAILBOX_DEPTH = 12;
 
 export type Freshness = "pass" | "fail" | "stale" | "none";
@@ -147,7 +147,7 @@ function baseManifest(root: string, source: string, cwd: string): Manifest | nul
   if (!source.startsWith("git:")) return null;
   const top = spawnSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (top.status !== 0) return null;
-  const rel = join(root, "actors.manifest.json").slice(top.stdout.trim().length + 1);
+  const rel = join(root, "actord.manifest.json").slice(top.stdout.trim().length + 1);
   const r = spawnSync("git", ["-C", root, "show", `${source.slice(4)}:${rel}`], { encoding: "utf8" });
   try {
     return r.status === 0 ? (JSON.parse(r.stdout) as Manifest) : null;
@@ -224,12 +224,12 @@ export function roomSignature(root: string): string {
     const p = join(root, f);
     return existsSync(p) ? `${statSync(p).size}:${statSync(p).mtimeMs}` : "-";
   };
-  return [fingerprint(root), stamp(EVENTS_FILE), stamp(LAST_CHECK_FILE), stamp(EVIDENCE_FILE), stamp("actors.manifest.json")].join("|");
+  return [fingerprint(root), stamp(EVENTS_FILE), stamp(LAST_CHECK_FILE), stamp(EVIDENCE_FILE), stamp("actord.manifest.json")].join("|");
 }
 
 /**
  * Print a compact Room snapshot as one NDJSON line now and again whenever its inputs change. Each
- * snapshot comes from a fresh `actors room --json` process, so edits to system.ts are seen (an ES module,
+ * snapshot comes from a fresh `actord room --json` process, so edits to system.ts are seen (an ES module,
  * once imported, can't be reloaded in place). Never returns.
  */
 export async function followRoom(cwd: string, out: NodeJS.WritableStream, entry: string): Promise<number> {
@@ -247,7 +247,7 @@ export async function followRoom(cwd: string, out: NodeJS.WritableStream, entry:
       try {
         out.write(`${JSON.stringify(JSON.parse(r.stdout))}\n`);
       } catch {
-        out.write(`${JSON.stringify({ projectRoot: root, error: (r.stderr || "actors room failed").trim().slice(0, 500) })}\n`);
+        out.write(`${JSON.stringify({ projectRoot: root, error: (r.stderr || "actord room failed").trim().slice(0, 500) })}\n`);
       }
     }
     await new Promise((res) => setTimeout(res, 500));
@@ -291,6 +291,6 @@ export async function guard(cwd: string, command: string): Promise<CommandResult
     ...(plan.length ? ["Deploy plan:", ...plan] : []),
     "Claude Code's own permission check still runs after this. Run it?",
   ].join("\n");
-  const refusal = `The actors Room held \`${command}\` (${what}) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (\`actors diff\`) and let them run it or approve it themselves.`;
+  const refusal = `The actord Room held \`${command}\` (${what}) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (\`actord diff\`) and let them run it or approve it themselves.`;
   return { data: { ...none, hold: true, question, refusal }, text: question, exitCode: 0 };
 }

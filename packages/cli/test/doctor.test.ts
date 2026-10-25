@@ -7,7 +7,7 @@ import { askRules } from "../src/patterns.ts";
 
 const dirs: string[] = [];
 function tmp(): string {
-  const d = mkdtempSync(join(tmpdir(), "actors-doctor-"));
+  const d = mkdtempSync(join(tmpdir(), "actord-doctor-"));
   dirs.push(d);
   return d;
 }
@@ -16,7 +16,7 @@ afterEach(() => {
 });
 const byId = (r: ReturnType<typeof doctor>, id: string) => r.data.findings.find((f) => f.id === id);
 
-describe("actors doctor", () => {
+describe("actord doctor", () => {
   it("outside a project reports info, not errors, and exits 0", () => {
     const r = doctor(tmp(), {});
     expect(r.exitCode).toBe(0);
@@ -39,7 +39,7 @@ describe("actors doctor", () => {
   it("in a complete project finds the pin, config, verify skill, and every ask rule", () => {
     const d = tmp();
     writeFileSync(join(d, "system.ts"), "export default {}\n");
-    writeFileSync(join(d, "package.json"), JSON.stringify({ devDependencies: { "actors-toolkit": "0.1.0" } }));
+    writeFileSync(join(d, "package.json"), JSON.stringify({ devDependencies: { "@actord/toolkit": "0.1.0" } }));
     writeFileSync(join(d, "wrangler.jsonc"), "{}");
     mkdirSync(join(d, ".claude/skills/verify"), { recursive: true });
     writeFileSync(join(d, ".claude/skills/verify/SKILL.md"), "---\nname: verify\n---\n");
@@ -53,7 +53,7 @@ describe("actors doctor", () => {
   });
 
   it("warns when the plugin bundles a different version than the project pins", () => {
-    const r = doctor(tmp(), { ACTORS_PLUGIN_VERSION: "9.9.9", ACTORS_LAUNCHER: "project-pin" });
+    const r = doctor(tmp(), { ACTORD_PLUGIN_VERSION: "9.9.9", ACTORD_LAUNCHER: "project-pin" });
     expect(byId(r, "cli.pin-mismatch")?.status).toBe("warn");
     expect(byId(r, "cli")?.message).toMatch(/project pin/);
   });

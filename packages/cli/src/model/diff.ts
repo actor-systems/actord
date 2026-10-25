@@ -1,4 +1,4 @@
-// `actors diff`: compare two normalized models and classify every architectural change, then produce a
+// `actord diff`: compare two normalized models and classify every architectural change, then produce a
 // deploy plan. All actors in one Worker deploy atomically, so the compatibility question for messages is
 // whether the new code accepts what is already in flight (outboxes, alarms) when the deploy lands.
 import type { Manifest, ManifestActor, ManifestEffect, ManifestMessage } from "./manifest.ts";
@@ -305,12 +305,12 @@ function constraintKeys(s: Record<string, unknown>): string[] {
 }
 
 function plan(changes: Change[], head: Manifest): PlanStep[] {
-  const steps: PlanStep[] = [{ kind: "verify", text: "Run `actors check` and `npm run verify`; deploy nothing unless both pass." }];
+  const steps: PlanStep[] = [{ kind: "verify", text: "Run `actord check` and `npm run verify`; deploy nothing unless both pass." }];
   for (const c of changes.filter((c) => c.kind === "actor.added")) {
     const a = head.actors.find((x) => x.name === c.subject);
     steps.push({
       kind: "config",
-      text: `Declare ${c.subject} in wrangler.jsonc: binding { "name": "${a?.binding}", "class_name": "${c.subject}" } and exports.${c.subject} = { "type": "durable-object", "storage": "sqlite" } (\`actors check\` confirms both).`,
+      text: `Declare ${c.subject} in wrangler.jsonc: binding { "name": "${a?.binding}", "class_name": "${c.subject}" } and exports.${c.subject} = { "type": "durable-object", "storage": "sqlite" } (\`actord check\` confirms both).`,
     });
   }
   for (const c of changes.filter((c) => c.kind === "actor.removed")) {

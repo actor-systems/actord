@@ -1,6 +1,6 @@
-// The Room: a pane that draws the actors CLI's view of this project, and a guard that holds deployment and
+// The Room: a pane that draws the actord CLI's view of this project, and a guard that holds deployment and
 // remote-write commands for a person. It computes nothing: every snapshot, trace, question and refusal is
-// CLI JSON (`actors room`, `actors trace`, `actors guard`), so the same answers exist as text without it.
+// CLI JSON (`actord room`, `actord trace`, `actord guard`), so the same answers exist as text without it.
 // It calls no model and approves nothing: an approved command goes on to Claude Code's own permission check.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
@@ -8,11 +8,11 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { RoomSnapshot, RoomTab, RoomTrace, RoomTraceNode } from '../types'
 import { EFFECT_PATTERNS } from './effect-patterns.ts'
 
-const PANE = 'actors-room'
-const COMMAND = 'actors-room'
-// Used only when another plugin already owns /actors-room.
-const FALLBACK_COMMAND = 'actors-room-view'
-const ROOM_DESCRIPTION = 'Open the actors Room: topology, mailboxes, contracts, and evidence for this actor project'
+const PANE = 'actord-room'
+const COMMAND = 'actord-room'
+// Used only when another plugin already owns /actord-room.
+const FALLBACK_COMMAND = 'actord-room-view'
+const ROOM_DESCRIPTION = 'Open the actord Room: topology, mailboxes, contracts, and evidence for this actor project'
 const SCHEMA = 1
 const TABS: ReadonlyArray<[RoomTab, string]> = [
   ['topology', 'Topology'],
@@ -23,17 +23,17 @@ const TABS: ReadonlyArray<[RoomTab, string]> = [
 const EFFECTS = EFFECT_PATTERNS.map(p => new RegExp(p.source, p.flags))
 
 // Change a tag when the CLI's document changes shape: a reload then declines what an older version stored.
-const snapshot = atom({ plugin: 'actors', key: 'snapshot' } as const, null, { shape: 'room-1' })
-const tab = atom({ plugin: 'actors', key: 'tab' } as const, 'topology')
-const selected = atom({ plugin: 'actors', key: 'selected' } as const, null)
-const trace = atom({ plugin: 'actors', key: 'trace' } as const, null, { shape: 'trace-1' })
+const snapshot = atom({ plugin: 'actord', key: 'snapshot' } as const, null, { shape: 'room-1' })
+const tab = atom({ plugin: 'actord', key: 'tab' } as const, 'topology')
+const selected = atom({ plugin: 'actord', key: 'selected' } as const, null)
+const trace = atom({ plugin: 'actord', key: 'trace' } as const, null, { shape: 'trace-1' })
 
-const actors = ($: EngineInterface, args: string[]) =>
-  $.process.run([`${$.plugin.root}/bin/actors`, ...args], { timeoutMs: 8000 })
+const actord = ($: EngineInterface, args: string[]) =>
+  $.process.run([`${$.plugin.root}/bin/actord`, ...args], { timeoutMs: 8000 })
 
-/** One `actors room --json`: the snapshot the pane draws and the status line. */
+/** One `actord room --json`: the snapshot the pane draws and the status line. */
 async function refresh($: EngineInterface): Promise<RoomSnapshot | null> {
-  const run = await actors($, ['room', '--json'])
+  const run = await actord($, ['room', '--json'])
   if (run.exitCode === 3) {
     await update($, snapshot, () => null)
     $.ui.status(undefined)
@@ -46,7 +46,7 @@ async function refresh($: EngineInterface): Promise<RoomSnapshot | null> {
 
 async function show($: EngineInterface, snap: RoomSnapshot) {
   await update($, snapshot, () => snap)
-  $.ui.status(snap.schemaVersion !== SCHEMA ? `actors · the Room expects CLI schema ${SCHEMA}, got ${snap.schemaVersion}` : (snap.status ?? undefined))
+  $.ui.status(snap.schemaVersion !== SCHEMA ? `actord · the Room expects CLI schema ${SCHEMA}, got ${snap.schemaVersion}` : (snap.status ?? undefined))
 }
 
 // The follower is the child behind the open pane; a reload or the pane's close ends it.
@@ -54,7 +54,7 @@ let follower: AsyncGenerator<unknown, unknown> | null = null
 
 function follow($: EngineInterface) {
   if (follower) return
-  const stream = $.process.spawn({ argv: [`${$.plugin.root}/bin/actors`, 'room', '--follow', '--json'] })
+  const stream = $.process.spawn({ argv: [`${$.plugin.root}/bin/actord`, 'room', '--follow', '--json'] })
   follower = stream
   void (async () => {
     let pending = ''
@@ -70,7 +70,7 @@ function follow($: EngineInterface) {
         }
       }
     } catch (err) {
-      $.ui.log(`actors room --follow stopped: ${String(err)}`, { to: 'debug' })
+      $.ui.log(`actord room --follow stopped: ${String(err)}`, { to: 'debug' })
     } finally {
       if (follower === stream) follower = null
     }
@@ -78,21 +78,21 @@ function follow($: EngineInterface) {
 }
 
 async function openRoom($: EngineInterface) {
-  const { isPlaced } = await $.ui.open({ id: PANE, title: 'Actors Room' })
+  const { isPlaced } = await $.ui.open({ id: PANE, title: 'actord Room' })
   const snap = await refresh($)
   if (!snap) return { text: 'No actor project here (no system.ts with a package.json at or above this directory), so the Room has nothing to show.' }
   follow($)
-  return { text: isPlaced ? `The actors Room is open: ${snap.status ?? ''}` : 'The actors Room is open; it shows once the window is wide enough.' }
+  return { text: isPlaced ? `The actord Room is open: ${snap.status ?? ''}` : 'The actord Room is open; it shows once the window is wide enough.' }
 }
 
 async function selectMessage($: EngineInterface, id: string) {
   await update($, selected, () => id)
-  const run = await actors($, ['trace', id, '--json'])
+  const run = await actord($, ['trace', id, '--json'])
   await update($, trace, () => JSON.parse(run.stdout) as RoomTrace)
 }
 
 // A Room that can't open still answers, pointing at the same view as text.
-const unopened = () => ({ text: 'The actors Room could not open. `actors room` prints the same view as text.' })
+const unopened = () => ({ text: 'The actord Room could not open. `actord room` prints the same view as text.' })
 
 const changeColor = (change: string | null) => (change === 'added' ? 'success' : change === 'removed' ? 'error' : undefined)
 const outcomeColor = (outcome: string) =>
@@ -102,8 +102,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     const taken = (await $.command.list()).some(c => c.name === COMMAND && c.plugin !== undefined && c.plugin !== $.plugin.name)
-    if (taken) await $.command.register({ name: 'actors-room-view', description: ROOM_DESCRIPTION })
-    else await $.command.register({ name: 'actors-room', description: ROOM_DESCRIPTION })
+    if (taken) await $.command.register({ name: 'actord-room-view', description: ROOM_DESCRIPTION })
+    else await $.command.register({ name: 'actord-room', description: ROOM_DESCRIPTION })
     // The status line is for people; a headless run (-p, the SDK, evals) has nowhere to show it.
     if (e.isInteractive) {
       await refresh($).catch(() => $.ui.status(undefined))
@@ -131,14 +131,14 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // The effect guard. Most Bash calls fail the in-process pattern test and pass untouched; a match asks
-  // `actors guard` whether to hold it (inside an actor project) and what to show.
+  // `actord guard` whether to hold it (inside an actor project) and what to show.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const command = String(e.command ?? '')
     if (!EFFECTS.some(re => re.test(command))) return next(e)
-    const run = await actors($, ['guard', '--json', '--', command])
+    const run = await actord($, ['guard', '--json', '--', command])
     const decision = JSON.parse(run.stdout) as { hold: boolean; question: string | null; refusal: string | null }
     if (!decision.hold) return next(e)
-    const refusal = decision.refusal ?? `The actors Room held \`${command}\`.`
+    const refusal = decision.refusal ?? `The actord Room held \`${command}\`.`
     if ((await $.session.surfaces()).length === 0) return { deny: `${refusal} This session has no one to ask (non-interactive), so the Room refused it.` }
     let answer: string
     try {
@@ -148,7 +148,7 @@ export const register: Register = on => {
     }
     return answer === 'Run it' ? next(e) : { deny: refusal }
   }).catch(($, e, next) =>
-    next.called ? next(e) : { deny: 'The actors Room could not judge this deployment or remote-write command, so it refused it. Ask the user to run it themselves.' },
+    next.called ? next(e) : { deny: 'The actord Room could not judge this deployment or remote-write command, so it refused it. Ask the user to run it themselves.' },
   )
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -177,7 +177,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {header}
-          <Text color="error">This Room draws CLI schema {SCHEMA}; the project's actors CLI printed schema {snap.schemaVersion}. Update the plugin or the project's actors-toolkit pin.</Text>
+          <Text color="error">This Room draws CLI schema {SCHEMA}; the project's actord CLI printed schema {snap.schemaVersion}. Update the plugin or the project's @actord/toolkit pin.</Text>
         </Box>
       )
     }
@@ -242,12 +242,12 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Text color={check?.state === 'pass' ? 'success' : check?.state === 'fail' ? 'error' : 'warning'}>
             {check?.state === 'pass'
-              ? `✓ actors check passed (${check.warnings} warning(s)) at ${check.checkedAt}`
+              ? `✓ actord check passed (${check.warnings} warning(s)) at ${check.checkedAt}`
               : check?.state === 'fail'
-                ? `✗ actors check: ${check.errors} error(s): ${check.codes.join(', ')}`
+                ? `✗ actord check: ${check.errors} error(s): ${check.codes.join(', ')}`
                 : check?.state === 'stale'
-                  ? `Stale: actor files changed since the last check (${check.checkedAt}). Run actors check.`
-                  : 'No check recorded yet. Run actors check.'}
+                  ? `Stale: actor files changed since the last check (${check.checkedAt}). Run actord check.`
+                  : 'No check recorded yet. Run actord check.'}
           </Text>
           {c.messages.map(msg => (
             <Box flexDirection="column" key={`contract-${msg.name}`}>
@@ -265,8 +265,8 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Text color={ev.state === 'pass' ? 'success' : ev.state === 'fail' ? 'error' : 'warning'}>
             {ev.state === 'none'
-              ? 'No verify report yet. Run actors verify.'
-              : `actors verify: ${ev.state}${ev.state === 'stale' ? ' (actor files changed since; run actors verify again)' : ''} · ${ev.profile ?? ''} · ${ev.generatedAt ?? ''}`}
+              ? 'No verify report yet. Run actord verify.'
+              : `actord verify: ${ev.state}${ev.state === 'stale' ? ' (actor files changed since; run actord verify again)' : ''} · ${ev.profile ?? ''} · ${ev.generatedAt ?? ''}`}
           </Text>
           {ev.groups.map(group => (
             <Box flexDirection="column" key={`group-${group.status}`}>
@@ -294,7 +294,7 @@ export const register: Register = on => {
   })
 }
 
-/** The causal path of the selected message, as `actors trace --json` printed it; unknown where coverage ends. */
+/** The causal path of the selected message, as `actord trace --json` printed it; unknown where coverage ends. */
 function tracePath($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0], t: RoomTrace) {
   const { Box, Text } = $.ui.resolve(e)
   if (!t.found || !t.root) {

@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
   "schemaVersion": 1,
   "system": {
     "name": "minimal",
@@ -19,7 +19,7 @@
       "purpose": "Sends a numbered ping on a schedule or on request",
       "receives": [
         "ping.due",
-        "ping.vanished"
+        "ping.kicked"
       ],
       "schedule": {
         "every": "5m",
@@ -37,7 +37,7 @@
       "justification": [
         "state"
       ],
-      "kind": "deterministic",
+      "kind": "agent",
       "name": "Ponger",
       "purpose": "Records each ping exactly once",
       "receives": [
@@ -115,7 +115,7 @@
     },
     {
       "from": "@ingress",
-      "message": "ping.vanished",
+      "message": "ping.kicked",
       "to": "Pinger"
     },
     {

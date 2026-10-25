@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { EffectNotDelivered, type EffectAdapter, ingress } from "actors-toolkit/runtime";
-import { overrideEffect } from "actors-toolkit/testing";
+import { EffectNotDelivered, type EffectAdapter, ingress } from "@actord/toolkit/runtime";
+import { overrideEffect } from "@actord/toolkit/testing";
 import system from "../system.ts";
 import type { Analysis, AnalyzeInput } from "../src/model.ts";
 

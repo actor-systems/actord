@@ -1,11 +1,11 @@
-// actors-toolkit/vitest: a Vitest plugin that records the runtime's structured events.
-// Each `{"$actors":1,...}` console line from workerd becomes one line of .actors/events.ndjson.
+// @actord/toolkit/vitest: a Vitest plugin that records the runtime's structured events.
+// Each `{"$actord":1,...}` console line from workerd becomes one line of .actord/events.ndjson.
 // The file starts empty for every Vitest run, so it is the evidence of the latest run only.
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export interface ActorEventsOptions {
-  /** Where to write events, relative to the Vitest root (default .actors/events.ndjson). */
+  /** Where to write events, relative to the Vitest root (default .actord/events.ndjson). */
   file?: string;
   /** Also print event lines to the terminal (default false). */
   echo?: boolean;
@@ -15,9 +15,9 @@ export function actorEvents(options: ActorEventsOptions = {}) {
   let file = "";
   let seq = 0;
   return {
-    name: "actors-toolkit:events",
+    name: "@actord/toolkit:events",
     config(config: { root?: string }) {
-      file = resolve(config.root ?? process.cwd(), options.file ?? ".actors/events.ndjson");
+      file = resolve(config.root ?? process.cwd(), options.file ?? ".actord/events.ndjson");
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, "");
       return {
@@ -27,7 +27,7 @@ export function actorEvents(options: ActorEventsOptions = {}) {
           onConsoleLog(log: string): boolean | undefined {
             let kept = false;
             for (const line of log.split("\n")) {
-              if (!line.startsWith('{"$actors":1')) continue;
+              if (!line.startsWith('{"$actord":1')) continue;
               try {
                 const event = JSON.parse(line) as Record<string, unknown>;
                 appendFileSync(file, `${JSON.stringify({ seq: ++seq, ...event })}\n`);

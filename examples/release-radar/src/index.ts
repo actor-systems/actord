@@ -1,5 +1,5 @@
 // Worker entry: an HTTP front door into the actor system, plus the actor class exports.
-import { ingress } from "actors-toolkit/runtime";
+import { ingress } from "@actord/toolkit/runtime";
 import system from "../system.ts";
 
 export { DigestWriter } from "./actors/digest-writer.ts";

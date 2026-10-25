@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
   "schemaVersion": 1,
   "system": {
     "name": "minimal",
@@ -34,10 +34,8 @@
       "binding": "PONGER",
       "budget": null,
       "effects": [],
-      "justification": [
-        "state"
-      ],
-      "kind": "agent",
+      "justification": [],
+      "kind": "deterministic",
       "name": "Ponger",
       "purpose": "Records each ping exactly once",
       "receives": [

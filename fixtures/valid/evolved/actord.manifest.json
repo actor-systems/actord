@@ -1,11 +1,30 @@
 {
-  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
   "schemaVersion": 1,
   "system": {
     "name": "minimal",
     "description": "Two actors: a scheduled pinger and a ponger that records pings"
   },
   "actors": [
+    {
+      "binding": "AUDITOR",
+      "budget": null,
+      "effects": [
+        "notify.operator"
+      ],
+      "justification": [
+        "isolation",
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Auditor",
+      "purpose": "Reports gaps in the ping sequence to an operator",
+      "receives": [
+        "ping.sent"
+      ],
+      "schedule": null,
+      "sends": []
+    },
     {
       "binding": "PINGER",
       "budget": null,
@@ -44,7 +63,9 @@
         "ping.sent"
       ],
       "schedule": null,
-      "sends": []
+      "sends": [
+        "ping.sent"
+      ]
     }
   ],
   "messages": [
@@ -93,6 +114,9 @@
           "note": {
             "type": "string"
           },
+          "origin": {
+            "type": "string"
+          },
           "seq": {
             "maximum": 9007199254740991,
             "minimum": 0,
@@ -100,7 +124,8 @@
           }
         },
         "required": [
-          "seq"
+          "seq",
+          "origin"
         ],
         "type": "object"
       },
@@ -122,7 +147,21 @@
       "from": "Pinger",
       "message": "ping.sent",
       "to": "Ponger"
+    },
+    {
+      "from": "Ponger",
+      "message": "ping.sent",
+      "to": "Auditor"
     }
   ],
-  "effects": []
+  "effects": [
+    {
+      "approval": "none",
+      "description": "Message the operator about a sequence gap",
+      "idempotency": "key",
+      "name": "notify.operator",
+      "reconcile": false,
+      "result": null
+    }
+  ]
 }

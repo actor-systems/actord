@@ -2,7 +2,7 @@
 // every answer must pass. Model output is untrusted input: the analyst validates it before acting.
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { type EffectAdapter, EffectNotDelivered, EffectRejected } from "actors-toolkit/runtime";
+import { type EffectAdapter, EffectNotDelivered, EffectRejected } from "@actord/toolkit/runtime";
 import { z } from "zod";
 
 export const Analysis = z.object({

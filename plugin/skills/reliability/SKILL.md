@@ -1,13 +1,13 @@
 ---
 name: reliability
 description: Establish what an actor system on Cloudflare Durable Objects actually guarantees. Write and run workerd fault tests (duplicates, crashes before and after writes, retries, restarts, reentrancy at await points, lost acknowledgments), then classify each claim as proved locally, stub only, or not guaranteed. Has the delivery-auditor review handlers.
-allowed-tools: Bash(actors test *) Bash(actors verify *) Bash(actors events *) Bash(actors trace *) Bash(actors check *)
+allowed-tools: Bash(actord test *) Bash(actord verify *) Bash(actord events *) Bash(actord trace *) Bash(actord check *)
 ---
 
 # Verify reliability
 
 Rules that hold for this whole skill:
-- **Evidence is a passing test in workerd**, recorded by `actors verify` in `.actors/evidence.json`. An
+- **Evidence is a passing test in workerd**, recorded by `actord verify` in `.actord/evidence.json`. An
   explanation, a review, or a critic's opinion is not evidence.
 - **Never claim exactly-once external effects**, unrestricted sandboxing of generated code, global ordering,
   or cross-actor transactions. If asked to promise exactly-once, decline. Explain what the system does
@@ -18,7 +18,7 @@ Rules that hold for this whole skill:
 
 ## Steps
 
-1. **Read the claims:** `actors.claims.json` (create it if missing). Each claim has an `id`, a `statement`,
+1. **Read the claims:** `actord.claims.json` (create it if missing). Each claim has an `id`, a `statement`,
    a `basis` (`workerd`, `stub`, or `not-guaranteed`), tagged `tests`, and for not-guaranteed claims a `why`.
 2. **Have the auditor look:** launch the `delivery-auditor` subagent on the handlers and effect adapters.
    Turn each finding into a fault test or a code fix, never into an unverified claim.
@@ -27,11 +27,11 @@ Rules that hold for this whole skill:
    delivery retry; a scheduled wake and a restart; simultaneous messages around an external await; an
    unavailable model or tool; gateway acceptance followed by a lost acknowledgment; a denied capability.
    Skip only what the system can't exhibit, and say why.
-4. **Run them:** `actors test --profile ${user_config.fault_profile}`, then `actors verify`.
-5. **When something fails,** find out why with `actors events --notable` and `actors trace <id>`.
+4. **Run them:** `actord test --profile ${user_config.fault_profile}`, then `actord verify`.
+5. **When something fails,** find out why with `actord events --notable` and `actord trace <id>`.
 
 ## Report (done when shown)
 
-A table of every claim with its status from `.actors/evidence.json`: **proved locally**, **stub only**,
+A table of every claim with its status from `.actord/evidence.json`: **proved locally**, **stub only**,
 **not guaranteed** (with why), **blocked** (with why), **failing**, or **untested**. List the tests behind each
-proved claim, and end with the verdict exactly as `actors verify` gave it.
+proved claim, and end with the verdict exactly as `actord verify` gave it.

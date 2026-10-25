@@ -13,13 +13,13 @@ them.
                      │ implement · reliability ·     delivery-auditor          │
                      │ inspect · evolve                                        │
                      ▼                                                         │
-   system.ts ──(import)──▶ normalized model ──▶ actors check · graph · diff     │ views of the
-   (typed declaration)      actors.manifest.json   room · guard               │ same two
+   system.ts ──(import)──▶ normalized model ──▶ actord check · graph · diff     │ views of the
+   (typed declaration)      actord.manifest.json   room · guard               │ same two
         │                                                                      │ sources of
         │  native Durable Object classes compose actorRuntime(...)             │ truth
         ▼                                                                      │
-   workerd tests (Cloudflare Vitest) ──▶ .actors/events.ndjson ──▶ events · trace · room
-                                     └─▶ .actors/evidence.json ──▶ verify · the Room · eval graders
+   workerd tests (Cloudflare Vitest) ──▶ .actord/events.ndjson ──▶ events · trace · room
+                                     └─▶ .actord/evidence.json ──▶ verify · the Room · eval graders
                                                                                │
    deterministic machinery, no model calls: CLI · hooks · the Room (mod) · monitor ┘
 ```
@@ -29,8 +29,8 @@ them.
 **One model, many views.** There are exactly two sources of truth: the normalized system model (derived from
 `system.ts`) and the structured event log (written by tests and local runs). `check`, `graph`, `diff`,
 `room`, `guard`, the hooks, the Room, the monitor, and the eval graders all read them; none computes its own
-answer. That's why the Room is a thin renderer over `actors room --json`, and why the guard's question comes
-from `actors guard` (decision 0009).
+answer. That's why the Room is a thin renderer over `actord room --json`, and why the guard's question comes
+from `actord guard` (decision 0009).
 
 **TypeScript is the declaration language.** `system.ts` declares actors, messages (Standard Schema payloads
 with versions), routes, schedules, effects, and budgets, typed so that undeclared routes, mismatched payloads,
@@ -47,20 +47,20 @@ transaction (writes, inbox mark, outgoing messages, effect intents commit togeth
 with an inbox for dedupe and an outbox drained by alarms with bounded retries and a dead letter; effects run
 after commit, retried only with an idempotency key and otherwise reported `in_doubt`. Exactly-once external
 effects, global ordering, and cross-actor transactions are not offered. Each guarantee rests on a probe of
-platform behavior (decision 0007), and each app lists its claims in `actors.claims.json`, classified by
-`actors verify` as proved locally, stub only, or not guaranteed.
+platform behavior (decision 0007), and each app lists its claims in `actord.claims.json`, classified by
+`actord verify` as proved locally, stub only, or not guaranteed.
 
 **Deterministic machinery, visible judgment.** The CLI, hooks, mod, and monitor never call a model and never
 approve anything. Judgment lives in skills and the two critics, where it shows in the transcript and is
 measured by `claude plugin eval` with and without the plugin (decision 0008).
 
-**Evidence flows through files.** `actors check` records `.actors/last-check.json` with a fingerprint of the
-actor files; `actors verify` writes `.actors/evidence.json`. The edit-time hook, the evidence gate, the
+**Evidence flows through files.** `actord check` records `.actord/last-check.json` with a fingerprint of the
+actor files; `actord verify` writes `.actord/evidence.json`. The edit-time hook, the evidence gate, the
 Room's Contracts and Evidence tabs, CI, and the eval graders all read those files, so every consumer agrees
 on what was established and when it went stale.
 
 **Enforcement over instruction, honestly labeled.** Permission rules are the enforceable layer inside Claude
-Code (`actors init` generates `ask` rules from the same pattern table the Room's guard uses); Cloudflare token
+Code (`actord init` generates `ask` rules from the same pattern table the Room's guard uses); Cloudflare token
 scopes are the enforceable layer outside it. The guard and the rules match command text, so they're
 conveniences against mistakes, not a security boundary (decisions 0001, 0009).
 
@@ -70,7 +70,7 @@ conveniences against mistakes, not a security boundary (decisions 0001, 0009).
 | --- | --- | --- |
 | Skills | The authoring loop (`docs/workflow.md`); rules first, injected CLI evidence | Judgment that should be visible and measurable |
 | Critics | Argue for fewer actors; audit idempotency and in-doubt honesty | Isolated context, read-only tools |
-| `bin/actors` | The machine interface, preferring the project's pinned version | One deterministic binary for Claude, hooks, the Room, CI |
+| `bin/actord` | The machine interface, preferring the project's pinned version | One deterministic binary for Claude, hooks, the Room, CI |
 | Hooks | `check-on-edit` (contract errors at edit time), `evidence-gate` (opt-in) | Feedback at the moment of change, never blocking edits |
 | The Room (mod) | Pane, status line, effect guard | Only a mod can draw a pane or hold a tool call for a decision |
 | Monitor | Notable local events as notifications | Faults reach Claude without polling |
@@ -105,4 +105,4 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 
 ## Coding-host adapters
 
-The core in `packages/cli` is shared with the sibling Codex adapter in `../actors/`. Host profiles select project guidance only; native runtime, type contracts and evidence are the same. Claude integration stays in `plugin/`; Codex keeps its portable manifest, skills and launcher in its own distribution. See [decision 0012](decisions/0012-shared-core-host-adapters.md).
+The core in `packages/cli` is shared with the sibling Codex adapter in `../actord/`. Host profiles select project guidance only; native runtime, type contracts and evidence are the same. Claude integration stays in `plugin/`; Codex keeps its portable manifest, skills and launcher in its own distribution. See [decision 0012](decisions/0012-shared-core-host-adapters.md).

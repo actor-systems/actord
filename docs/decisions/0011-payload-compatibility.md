@@ -3,7 +3,7 @@
 - **Date:** 2026-10-26 · **Gate:** G2 · **Status:** accepted · **Reversibility:** easy
 
 ## Context
-A review of `actors diff` (from the Codex implementation of the same charter) found two unsafe answers in
+A review of `actord diff` (from the Codex implementation of the same charter) found two unsafe answers in
 `comparePayload`: removing a field from a strict object (`z.strictObject`, `additionalProperties: false`)
 was "compatible", though the new schema refuses every old copy carrying the field; and limiting a free
 string to an enum was "compatible", because a missing old enum read as an empty one. Both are confirmed

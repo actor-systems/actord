@@ -6,7 +6,7 @@
   "costUsd": 0.1275232,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "root": "/Users/jaredmcfarland/Developer/actord-plugin/plugin",
     "ablation": "with-without",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -15,9 +15,9 @@
     "concurrency": 1,
     "plugins": [
       {
-        "name": "actors",
+        "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+        "path": "/Users/jaredmcfarland/Developer/actord-plugin/plugin"
       }
     ]
   },
@@ -46,12 +46,12 @@
           }
         },
         {
-          "name": "no-actors-skill",
+          "name": "no-actord-skill",
           "type": "tool_used",
           "weight": 1,
           "config": {
             "tool": "Skill",
-            "input_match": "actors:",
+            "input_match": "actord:",
             "min": 0,
             "max": 0,
             "arm": "both"
@@ -81,7 +81,7 @@
                 "scored": true
               },
               {
-                "name": "no-actors-skill",
+                "name": "no-actord-skill",
                 "passed": true,
                 "weight": 1,
                 "explanation": "Skill called 0x (expected 0..0)",
@@ -113,7 +113,7 @@
                 "scored": true
               },
               {
-                "name": "no-actors-skill",
+                "name": "no-actord-skill",
                 "passed": true,
                 "weight": 1,
                 "explanation": "Skill called 0x (expected 0..0)",

@@ -6,7 +6,7 @@
   "costUsd": 0.2405212,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "root": "/Users/jaredmcfarland/Developer/actord-plugin/plugin",
     "ablation": "none",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -15,9 +15,9 @@
     "concurrency": 1,
     "plugins": [
       {
-        "name": "actors",
+        "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+        "path": "/Users/jaredmcfarland/Developer/actord-plugin/plugin"
       }
     ]
   },
@@ -26,7 +26,7 @@
       "name": "add-message-handler",
       "dir": "evals/add-message-handler",
       "source": "mixed",
-      "promptMarkdown": "In this release monitor, add support for retracted releases: a feed item can now come with `retracted: true`. The ledger should mark that release retracted, and the digest writer must not send a notification for a retracted release that hasn't been notified yet. Add a test for it. When you're done, run `npx actors verify --json --out .actors/evidence.json` and report its verdict.",
+      "promptMarkdown": "In this release monitor, add support for retracted releases: a feed item can now come with `retracted: true`. The ledger should mark that release retracted, and the digest writer must not send a notification for a retracted release that hasn't been notified yet. Add a test for it. When you're done, run `npx actord verify --json --out .actord/evidence.json` and report its verdict.",
       "runsPerCase": 3,
       "timeoutSeconds": 1200,
       "maxTurns": 60,
@@ -52,7 +52,7 @@
           "config": {
             "target": {
               "source": "file",
-              "path": ".actors/evidence.json"
+              "path": ".actord/evidence.json"
             },
             "pattern": "\"id\": \"check\",\\s*\"status\": \"pass\"",
             "flags": "",
@@ -66,7 +66,7 @@
           "config": {
             "target": {
               "source": "file",
-              "path": ".actors/evidence.json"
+              "path": ".actord/evidence.json"
             },
             "pattern": "\"id\": \"typecheck\",\\s*\"status\": \"pass\"",
             "flags": "",
@@ -80,7 +80,7 @@
           "config": {
             "target": {
               "source": "file",
-              "path": ".actors/evidence.json"
+              "path": ".actord/evidence.json"
             },
             "pattern": "\"verdict\": \"(pass|blocked)\"",
             "flags": "",
@@ -102,12 +102,12 @@
           }
         },
         {
-          "name": "ran-actors-verify",
+          "name": "ran-actord-verify",
           "type": "tool_used",
           "weight": 1,
           "config": {
             "tool": "Bash",
-            "input_match": "actors verify"
+            "input_match": "actord verify"
           }
         }
       ],
@@ -137,7 +137,7 @@
                 "name": "evidence-check-passes",
                 "passed": false,
                 "weight": 1,
-                "explanation": "grader threw: case \"add-message-handler\" grader focus file \".actors/evidence.json\": path \".actors/evidence.json\" does not exist",
+                "explanation": "grader threw: case \"add-message-handler\" grader focus file \".actord/evidence.json\": path \".actord/evidence.json\" does not exist",
                 "withOnly": false,
                 "scored": true
               },
@@ -145,7 +145,7 @@
                 "name": "evidence-typecheck-passes",
                 "passed": false,
                 "weight": 1,
-                "explanation": "grader threw: case \"add-message-handler\" grader focus file \".actors/evidence.json\": path \".actors/evidence.json\" does not exist",
+                "explanation": "grader threw: case \"add-message-handler\" grader focus file \".actord/evidence.json\": path \".actord/evidence.json\" does not exist",
                 "withOnly": false,
                 "scored": true
               },
@@ -153,7 +153,7 @@
                 "name": "evidence-verdict-not-fail",
                 "passed": false,
                 "weight": 1,
-                "explanation": "grader threw: case \"add-message-handler\" grader focus file \".actors/evidence.json\": path \".actors/evidence.json\" does not exist",
+                "explanation": "grader threw: case \"add-message-handler\" grader focus file \".actord/evidence.json\": path \".actord/evidence.json\" does not exist",
                 "withOnly": false,
                 "scored": true
               },
@@ -166,7 +166,7 @@
                 "scored": true
               },
               {
-                "name": "ran-actors-verify",
+                "name": "ran-actord-verify",
                 "passed": false,
                 "weight": 1,
                 "explanation": "Bash called 0x (expected 1..∞)",

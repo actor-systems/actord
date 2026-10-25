@@ -1,10 +1,10 @@
-# `actors-toolkit/runtime` and `actors-toolkit/testing`
+# `@actord/toolkit/runtime` and `@actord/toolkit/testing`
 
 ## An actor class
 
 ```ts
 import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 export class Ledger extends DurableObject<Env> {
@@ -59,7 +59,7 @@ the cancel can arrive while the model call is in flight.
 ```ts
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { injectFault, overrideBudget, overrideEffect, resetSeams, settle, tick } from "actors-toolkit/testing";
+import { injectFault, overrideBudget, overrideEffect, resetSeams, settle, tick } from "@actord/toolkit/testing";
 ```
 
 - `settle(env, system)` delivers everything pending and waits for running effects, fast-forwarding backoff.
@@ -67,7 +67,7 @@ import { injectFault, overrideBudget, overrideEffect, resetSeams, settle, tick }
 - `injectFault({ actor, type, at: "before-handler" | "after-handler" | "deliver", times })`.
 - `overrideEffect(name, adapter)` and `overrideBudget(actor, { timeoutMs, maxAttempts })`; call `resetSeams()`
   in `afterEach`.
-- `vitest.config.ts` adds `actorEvents()` from `actors-toolkit/vitest`, so events land in
-  `.actors/events.ndjson` for `actors trace`.
+- `vitest.config.ts` adds `actorEvents()` from `@actord/toolkit/vitest`, so events land in
+  `.actord/events.ndjson` for `actord trace`.
 - Name tests with claim tags (`it("[crash-after-mutation] …")`). Tests tagged `[extended]` run only under
-  `actors test --profile extended`.
+  `actord test --profile extended`.

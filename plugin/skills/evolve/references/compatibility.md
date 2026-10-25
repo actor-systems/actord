@@ -1,4 +1,4 @@
-# What `actors diff` classes mean on Cloudflare
+# What `actord diff` classes mean on Cloudflare
 
 | Change | Class | What to do |
 | --- | --- | --- |
@@ -8,7 +8,7 @@
 | Removed route or message | breaking | Queued copies are refused after the deploy: drain first |
 | Payload: new optional field; field removed from a `z.object` or `z.looseObject`; enum widened or lifted; type widened (`.nullable()`, integer → number); bound relaxed; format or pattern dropped | compatible | Every payload the old schema accepted still validates |
 | Payload: new required field; field removed from a `z.strictObject`; type narrowed; enum narrowed, or a free value limited to an enum or literal; bound tightened; format or pattern added | breaking | Old copies are refused. Keep accepting the old shape, or add a new message beside the old one and retire the old one in a later deploy; otherwise drain first |
-| Payload: anything `actors diff` can't decide (a changed union or pattern, a `z.object` made strict, a new field on a `z.looseObject`) | risky | Drain as if breaking, unless a test shows old copies still pass |
+| Payload: anything `actord diff` can't decide (a changed union or pattern, a `z.object` made strict, a new field on a `z.looseObject`) | risky | Drain as if breaking, unless a test shows old copies still pass |
 | Message version bump | risky | A receiver accepts one version at a time, so every queued copy of the old version is refused (`version_mismatch`): drain first |
 | New external effect, or an actor gaining one | risky, needs approval | A person approves the new capability |
 | Effect loses its idempotency key | risky | Lost acknowledgments become `in_doubt` |

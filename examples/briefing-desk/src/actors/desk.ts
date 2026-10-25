@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 export interface BoardRow {

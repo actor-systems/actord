@@ -1,5 +1,5 @@
 ---
 type: tool_used
 tool: Bash
-input_match: 'actors (trace|events)'
+input_match: 'actord (trace|events)'
 ---

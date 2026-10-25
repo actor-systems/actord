@@ -2,11 +2,11 @@
 // (tests, wrangler dev); nothing here can see production, and nothing here invents history.
 import { existsSync, readFileSync } from "node:fs";
 
-export const EVENTS_FILE = ".actors/events.ndjson";
+export const EVENTS_FILE = ".actord/events.ndjson";
 
 export interface LoggedEvent {
   seq?: number;
-  $actors: 1;
+  $actord: 1;
   kind: string;
   at: number;
   actor: string;
@@ -43,7 +43,7 @@ export function parseEvents(text: string): EventLog {
     if (!line.trim()) continue;
     try {
       const e = JSON.parse(line) as LoggedEvent;
-      if (e.$actors === 1 && typeof e.kind === "string") events.push(e);
+      if (e.$actord === 1 && typeof e.kind === "string") events.push(e);
       else unparseable++;
     } catch {
       unparseable++;

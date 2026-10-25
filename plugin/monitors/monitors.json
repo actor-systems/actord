@@ -1,13 +1,13 @@
 [
   {
     "name": "actor-events",
-    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/actors events --follow --notable --exclusive",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/actord events --follow --notable --exclusive",
     "description": "Notable local actor events: rejected or undeliverable messages, handler failures, exhausted retries, in-doubt or failed effects",
     "when": "on-skill-invoke:inspect"
   },
   {
     "name": "actor-events-reliability",
-    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/actors events --follow --notable --exclusive",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/actord events --follow --notable --exclusive",
     "description": "Notable local actor events: rejected or undeliverable messages, handler failures, exhausted retries, in-doubt or failed effects",
     "when": "on-skill-invoke:reliability"
   }

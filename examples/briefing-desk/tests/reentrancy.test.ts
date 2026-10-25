@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { ingress } from "actors-toolkit/runtime";
-import { resetSeams, settle } from "actors-toolkit/testing";
+import { ingress } from "@actord/toolkit/runtime";
+import { resetSeams, settle } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "../system.ts";
 import { analysis, deferredModel, gateway, status, submit } from "./helpers.ts";

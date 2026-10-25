@@ -189,17 +189,17 @@ export const checks = [
         : { status: "fail", reason: "sandbox behavior differs from decision 0004; revisit it" };
     },
   }),
-  command("g1.cli.typecheck", "G1", "CLI typechecks (TypeScript 7)", "npm run --silent typecheck -w actors-toolkit"),
+  command("g1.cli.typecheck", "G1", "CLI typechecks (TypeScript 7)", "npm run --silent typecheck -w @actord/toolkit"),
   command("g1.cli.unit", "G1", "CLI unit tests (doctor, effect pattern table)", "npx --no-install vitest run test/doctor.test.ts test/patterns.test.ts", { cwd: "packages/cli" }),
   {
     id: "g1.dist.fresh",
     gate: "G1",
     title: "Shipped plugin/dist matches a fresh build of packages/cli",
-    command: "npm run --silent build -w actors-toolkit",
+    command: "npm run --silent build -w @actord/toolkit",
     async run({ sh, root }) {
-      const files = ["plugin/dist/actors.mjs", "plugin/dist/VERSION", "plugin/hooks/effect-patterns.ts"].map((f) => join(root, f));
+      const files = ["plugin/dist/actord.mjs", "plugin/dist/VERSION", "plugin/hooks/effect-patterns.ts"].map((f) => join(root, f));
       const before = files.map(hash);
-      const r = sh("npm run --silent build -w actors-toolkit");
+      const r = sh("npm run --silent build -w @actord/toolkit");
       if (r.code !== 0) return { ...r, status: "fail", reason: "build failed" };
       const after = files.map(hash);
       return before.every((h, i) => h === after[i])
@@ -207,7 +207,7 @@ export const checks = [
         : { ...r, status: "fail", reason: "plugin/dist was stale; it has been rebuilt, commit it" };
     },
   },
-  command("g1.launcher", "G1", "bin/actors prefers the project pin, else the bundle", "node --test tests/launcher.test.mjs"),
+  command("g1.launcher", "G1", "bin/actord prefers the project pin, else the bundle", "node --test tests/launcher.test.mjs"),
   command("g1.validate.plugin", "G1", "claude plugin validate --strict plugin", "claude plugin validate --strict plugin"),
   command("g1.validate.marketplace", "G1", "claude plugin validate --strict (marketplace)", "claude plugin validate --strict ."),
   command("g1.install", "G1", "Clean install from the repo marketplace, use, uninstall (isolated config)", "scripts/install-smoke.sh"),
@@ -239,13 +239,13 @@ export const checks = [
   command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes", "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts", { cwd: "packages/cli" }),
   command("g2.negative.unchanged", "G2", "No file under fixtures/negative differs from the last commit", "git diff --exit-code --stat HEAD -- fixtures/negative && test -z \"$(git status --porcelain -- fixtures/negative)\""),
   command("g3.radar.typecheck", "G3", "Release Radar typechecks (wrangler types + tsc)", "npm run --silent typecheck -w release-radar"),
-  command("g3.radar.check", "G3", "actors check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugin/dist/actors.mjs check", { cwd: "examples/release-radar" }),
+  command("g3.radar.check", "G3", "actord check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugin/dist/actord.mjs check", { cwd: "examples/release-radar" }),
   command("g3.radar.runtime", "G3", "Release Radar fault matrix passes in workerd", "node scripts/run-example-tests.mjs examples/release-radar"),
   command("g3.radar.trace", "G3", "A real significant release traces from @clock to a confirmed notification", "scripts/trace-smoke.sh"),
   command("g3.radar.dev", "G3", "Release Radar runs under wrangler dev: front door, rejection, and a traced watch from the live log", "node scripts/dev-smoke.mjs release-radar", devSmoke),
-  command("g3.cli.events", "G3", "actors events/trace on recorded logs: known, unknown, truncated, retries, follow", "npx --no-install vitest run test/events.test.ts", { cwd: "packages/cli" }),
+  command("g3.cli.events", "G3", "actord events/trace on recorded logs: known, unknown, truncated, retries, follow", "npx --no-install vitest run test/events.test.ts", { cwd: "packages/cli" }),
   command("g4.desk.typecheck", "G4", "Briefing Desk typechecks, including the live Anthropic adapter", "npm run --silent typecheck -w briefing-desk"),
-  command("g4.desk.check", "G4", "actors check passes on Briefing Desk", "node ../../plugin/dist/actors.mjs check", { cwd: "examples/briefing-desk" }),
+  command("g4.desk.check", "G4", "actord check passes on Briefing Desk", "node ../../plugin/dist/actord.mjs check", { cwd: "examples/briefing-desk" }),
   command("g4.desk.runtime", "G4", "Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt)", "node scripts/run-example-tests.mjs examples/briefing-desk"),
   command("g4.desk.trace", "G4", "The stale model result traces to its cancelled item", "scripts/trace-stale-smoke.sh"),
   command("g4.desk.dev", "G4", "Briefing Desk runs under wrangler dev: an item travels Intake → Analyst → Desk, traced from the live log", "node scripts/dev-smoke.mjs briefing-desk", devSmoke),
@@ -266,9 +266,9 @@ export const checks = [
       return { ...r, status: ok ? "pass" : "fail", reason: m ? `always-on ~${JSON.parse(m[0]).max} tokens` : "could not measure" };
     },
   },
-  command("g5.starter.smoke", "G5", "A fresh starter from actors init verifies PASS offline; regenerating changes nothing", "scripts/starter-smoke.sh"),
-  command("g5.verify.blocked", "G5", "actors verify inside the default sandbox reports BLOCKED, static evidence passing", "scripts/verify-blocked.sh"),
-  command("g5.examples.verify", "G5", "actors verify passes on both reference apps", "cd examples/release-radar && node ../../plugin/dist/actors.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actors.mjs verify"),
+  command("g5.starter.smoke", "G5", "A fresh starter from actord init verifies PASS offline; regenerating changes nothing", "scripts/starter-smoke.sh"),
+  command("g5.verify.blocked", "G5", "actord verify inside the default sandbox reports BLOCKED, static evidence passing", "scripts/verify-blocked.sh"),
+  command("g5.examples.verify", "G5", "actord verify passes on both reference apps", "cd examples/release-radar && node ../../plugin/dist/actord.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actord.mjs verify"),
   {
     id: "g5.evals.run",
     gate: "G5",
@@ -314,7 +314,7 @@ export const checks = [
         : { status: "fail", reason: `plugin arm trails the baseline by more than one run: ${cases.filter((c) => !c.ok).map(show).join(", ")}. ${reason}`, evidenceSource: "eval-run" };
     },
   },
-  command("g6.cli.room", "G6", "actors room, guard, and the monitor lock (CLI unit tests)", "cd packages/cli && NO_COLOR=1 npx vitest run test/room.test.ts"),
+  command("g6.cli.room", "G6", "actord room, guard, and the monitor lock (CLI unit tests)", "cd packages/cli && NO_COLOR=1 npx vitest run test/room.test.ts"),
   command("g6.fixtures", "G6", "The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin)", "node scripts/record-room-fixtures.mjs --check"),
   command("g6.mod.validate", "G6", "claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch", "claude plugin validate plugin", {
     classify: (r) => {
@@ -375,7 +375,7 @@ export const checks = [
     },
   },
   command("g7.tag", "G7", "claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag", "claude plugin tag plugin --dry-run", {
-    classify: (r) => (r.code === 0 && /would create tag actors--v\d+\.\d+\.\d+/.test(r.output) ? { status: "pass", reason: /tag (actors--v[\d.]+)/.exec(r.output)[1] } : { status: "fail", reason: `exit ${r.code}` }),
+    classify: (r) => (r.code === 0 && /would create tag actord--v\d+\.\d+\.\d+/.test(r.output) ? { status: "pass", reason: /tag (actord--v[\d.]+)/.exec(r.output)[1] } : { status: "fail", reason: `exit ${r.code}` }),
   }),
   {
     id: "g7.clean-checkout",
@@ -383,8 +383,8 @@ export const checks = [
     title: "A clean clone installs from the lockfile, rebuilds plugin/dist byte-for-byte, and passes npm run verify",
     command: "scripts/clean-checkout.sh",
     async run({ sh }) {
-      if (process.env.ACTORS_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };
-      const r = sh("ACTORS_NESTED_VERIFY=1 scripts/clean-checkout.sh", { timeoutMs: 1_200_000 });
+      if (process.env.ACTORD_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };
+      const r = sh("ACTORD_NESTED_VERIFY=1 scripts/clean-checkout.sh", { timeoutMs: 1_200_000 });
       return r.code === 0 ? { ...r, status: "pass" } : { ...r, status: "fail", reason: `exit ${r.code}` };
     },
   },
@@ -394,7 +394,7 @@ export const checks = [
     title: "Clean-container install from the marketplace: install, starter verifies in workerd, uninstall",
     command: "scripts/container-install.sh",
     async run({ sh }) {
-      if (process.env.ACTORS_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };
+      if (process.env.ACTORD_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };
       if (sh("docker info >/dev/null 2>&1").code !== 0) return { status: "blocked", reason: "Docker isn't available here" };
       const r = sh("scripts/container-install.sh", { timeoutMs: 900_000 });
       return r.code === 0 ? { ...r, status: "pass" } : r.code === 4 ? { ...r, status: "blocked", reason: "the container image isn't available locally" } : { ...r, status: "fail", reason: `exit ${r.code}` };

@@ -1,7 +1,7 @@
 ---
 name: evolve
-description: Use when someone asks to deploy, ship, or release an actor system on Cloudflare Durable Objects, or to change a running one (add, remove, or revise actors, messages, routes, effects, schedules). Produces the semantic diff, compatibility risks, passing tests, and the deploy plan a person runs, never a deploy. Starts from `actors diff`; has both critics review a change.
-allowed-tools: Bash(npx --no-install actors diff *) Bash(actors diff *) Bash(actors check *) Bash(actors graph *) Bash(actors test *) Bash(actors verify *)
+description: Use when someone asks to deploy, ship, or release an actor system on Cloudflare Durable Objects, or to change a running one (add, remove, or revise actors, messages, routes, effects, schedules). Produces the semantic diff, compatibility risks, passing tests, and the deploy plan a person runs, never a deploy. Starts from `actord diff`; has both critics review a change.
+allowed-tools: Bash(npx --no-install actord diff *) Bash(actord diff *) Bash(actord check *) Bash(actord graph *) Bash(actord test *) Bash(actord verify *)
 ---
 
 # Evolve a running actor system
@@ -16,12 +16,12 @@ Rules that hold for this whole skill:
   permission rules (and the Room's guard, where it's active) will ask anyway.
 - **Never imply a deploy can be undone automatically.** Deleting an actor class destroys its data; a
   rollback can't cross a Durable Object lifecycle change.
-- Flag every change that is breaking, needs approval, or is irreversible, as `actors diff` classifies it.
+- Flag every change that is breaking, needs approval, or is irreversible, as `actord diff` classifies it.
 - Keep in-flight messages in mind: anything already queued must still be accepted after the deploy.
 
 ## Changes since the last commit
 
-!`actors diff --json --exit-zero || npx --no-install actors diff --json --exit-zero || true`
+!`actord diff --json --exit-zero || npx --no-install actord diff --json --exit-zero || true`
 
 ## Steps
 
@@ -33,11 +33,11 @@ Rules that hold for this whole skill:
    the plan drains outboxes first.
 3. **Ask the critics:** `boundary-critic` for new or removed actors and routes, and `delivery-auditor` for
    changed handlers and effects. Resolve each objection with code or a test.
-4. **Implement and test:** follow `/actors:implement`, and add tests for the new behavior and for what must
-   not break. Run `actors test`. `actors check` reports the manifest as stale until step 5; that's expected.
-5. **Classify, then record:** run `actors diff` first. It compares against the manifest committed at `HEAD`,
-   or, where git isn't usable, against `actors.manifest.json` on disk, which the next command overwrites.
-   Then run `actors graph --write` and `actors verify`. Read `references/compatibility.md` for what each
+4. **Implement and test:** follow `/actord:implement`, and add tests for the new behavior and for what must
+   not break. Run `actord test`. `actord check` reports the manifest as stale until step 5; that's expected.
+5. **Classify, then record:** run `actord diff` first. It compares against the manifest committed at `HEAD`,
+   or, where git isn't usable, against `actord.manifest.json` on disk, which the next command overwrites.
+   Then run `actord graph --write` and `actord verify`. Read `references/compatibility.md` for what each
    class means on Cloudflare.
 
 ## Output (done when shown)
@@ -46,5 +46,5 @@ Rules that hold for this whole skill:
   irreversible.
 - **Compatibility analysis:** in-flight messages, stored data, schedules, and external effects.
 - **Tests and verify verdict:** what was run, with the real result.
-- The **deploy plan** from `actors diff`: config steps, drains, approvals, then "a person runs
+- The **deploy plan** from `actord diff`: config steps, drains, approvals, then "a person runs
   `npx wrangler deploy`". State plainly that nothing was deployed.

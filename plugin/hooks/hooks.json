@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/actors",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/actord",
             "args": [
               "hook",
               "check-on-edit"
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/actors",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/actord",
             "args": [
               "hook",
               "evidence-gate"

@@ -36,12 +36,12 @@
    not an exception. One drain runs at a time per instance.
 6. **Ids are derived from causal position** (FNV-1a of parent id, index, type, target), so a re-executed
    handler produces the same outgoing ids and traces are reproducible.
-7. **Events are one JSON `console.log` line each** (`{"$actors":1,…}`), which is what Workers Logs ingests in
-   production. Locally, `actors-toolkit/vitest` appends them to `.actors/events.ndjson`, emptied at the start
+7. **Events are one JSON `console.log` line each** (`{"$actord":1,…}`), which is what Workers Logs ingests in
+   production. Locally, `@actord/toolkit/vitest` appends them to `.actord/events.ndjson`, emptied at the start
    of each run. Payloads aren't logged, only their top-level keys.
 8. **Test seams are explicit and inert in production.** `injectFault` (before-handler, after-handler,
    deliver), `overrideEffect`, `settle` (deliver everything, fast-forwarding backoff) and `tick` (a
-   distinct scheduled wake) live in `actors-toolkit/testing` and use a global that only tests set.
+   distinct scheduled wake) live in `@actord/toolkit/testing` and use a global that only tests set.
 
 ## Not guaranteed (and documented as such)
 Exactly-once external effects; global or cross-sender ordering; ordering across retries; cross-actor
@@ -58,7 +58,7 @@ with the binding can call `receive`).
   activity it's retried if the effect has an idempotency key, and otherwise recorded as `in_doubt`
   ("interrupted: the actor restarted while the attempt was in flight"), delivering the declared result
   message. Tested in `packages/cli/test-runtime` with `abortAllDurableObjects()`.
-- `actors-toolkit/testing`'s `settle()` waits for running effects; `settle({ deliver: false })` waits without
+- `@actord/toolkit/testing`'s `settle()` waits for running effects; `settle({ deliver: false })` waits without
   forcing deliveries.
 - Approval decisions can arrive as messages: `ctx.approve(effect, key)` and `ctx.deny(effect, key, reason)`
   change the parked effect inside the handler's transaction; the approved effect runs after commit.

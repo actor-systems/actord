@@ -1,5 +1,5 @@
-// `actors verify`: a project's full, noninteractive evidence workflow, and `actors test`, its test step.
-// Writes machine-readable evidence (default .actors/evidence.json) that people, CI, the Room, and eval
+// `actord verify`: a project's full, noninteractive evidence workflow, and `actord test`, its test step.
+// Writes machine-readable evidence (default .actord/evidence.json) that people, CI, the Room, and eval
 // graders all read. It never deploys and never contacts Cloudflare.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,13 +39,13 @@ export interface Evidence {
 }
 
 const SANDBOX_BLOCK = /listen EPERM|operation not permitted.*(listen|bind)|EPERM.*127\.0\.0\.1/i;
-const TEST_RESULTS = ".actors/vitest-results.json";
+const TEST_RESULTS = ".actord/vitest-results.json";
 
 function run(cmd: string, args: string[], cwd: string, extraEnv: Record<string, string> = {}) {
   const started = Date.now();
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
   // A child that never started (or was killed) leaves no output of its own; say why instead of nothing.
-  const why = r.error ? `actors verify couldn't run \`${cmd} ${args.join(" ")}\`: ${r.error.message}\n` : r.signal ? `\`${cmd}\` was killed by ${r.signal}\n` : "";
+  const why = r.error ? `actord verify couldn't run \`${cmd} ${args.join(" ")}\`: ${r.error.message}\n` : r.signal ? `\`${cmd}\` was killed by ${r.signal}\n` : "";
   // A sandbox that refuses to start the child is the environment's limit, not the project's failure.
   const spawnBlocked = (r.error as NodeJS.ErrnoException | undefined)?.code === "EPERM";
   return { code: r.status ?? 1, output: `${why}${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started, spawnBlocked };
@@ -89,7 +89,7 @@ export function runTests(root: string, profile: string): { step: Step; tests: Te
   // The standard profile leaves out tests tagged [extended]; the extended profile runs everything.
   const args = ["run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
   if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
-  const r = runBin(root, "vitest", "vitest", args, { ACTORS_FAULT_PROFILE: profile });
+  const r = runBin(root, "vitest", "vitest", args, { ACTORD_FAULT_PROFILE: profile });
   const command = `vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
   if (SANDBOX_BLOCK.test(r.output) || r.spawnBlocked) {
     const summary = r.spawnBlocked
@@ -154,7 +154,7 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   steps.push({
     id: "check",
     status: c.data.ok ? "pass" : "fail",
-    command: "actors check",
+    command: "actord check",
     durationMs: Date.now() - started,
     summary: `${c.data.errors} error(s), ${c.data.warnings} warning(s)`,
     detail: { errors: c.data.errors, warnings: c.data.warnings, codes: c.data.diagnostics.map((d) => `${d.severity}:${d.code}`) },
@@ -178,17 +178,17 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   const reasons = verdictReasons(steps, claims, error);
   const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, verdictReasons: reasons, fingerprint: fingerprint(root) };
 
-  const outPath = resolve(cwd, opts.out ?? join(root, ".actors/evidence.json"));
+  const outPath = resolve(cwd, opts.out ?? join(root, ".actord/evidence.json"));
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(
     outPath,
     `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "verify", toolkitVersion: VERSION, volatile: ["projectRoot", "generatedAt", "steps[].durationMs"], ...evidence }, null, 2)}\n`,
   );
   const lines = [
-    `actors verify: ${evidence.system ?? "system"} · ${verdict.toUpperCase()} · evidence in ${relative(cwd, outPath) || outPath}`,
+    `actord verify: ${evidence.system ?? "system"} · ${verdict.toUpperCase()} · evidence in ${relative(cwd, outPath) || outPath}`,
     ...steps.map((s) => `  ${s.status === "pass" ? "✓" : s.status === "blocked" ? "⊘" : "✗"} ${s.id.padEnd(9)} ${s.summary}`),
     ...(error ? [`  ✗ claims    ${error}`] : []),
-    claims.length ? "" : "  (no actors.claims.json: nothing is claimed about delivery or effects)",
+    claims.length ? "" : "  (no actord.claims.json: nothing is claimed about delivery or effects)",
     ...(claims.length
       ? [
           `Claims: ${summary.provedLocally} proved locally · ${summary.stubOnly} stub only · ${summary.notGuaranteed} not guaranteed · ${summary.blocked} blocked · ${summary.failing} failing · ${summary.untested} untested`,
@@ -199,7 +199,7 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   // Readers often see only the end of the output, so it repeats the verdict and why.
   lines.push("", `Verdict: ${verdict.toUpperCase()}${reasons.length ? `: ${reasons.join("; ")}` : ""}`);
   // The step after verify is never a deploy: say where the plan comes from.
-  lines.push("Before any deploy: `actors diff` shows what changed and the deploy plan. A person runs the deploy.");
+  lines.push("Before any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.");
   return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
 }
 
@@ -221,7 +221,7 @@ function statusMark(s: string): string {
 }
 
 async function systemName(root: string): Promise<string | null> {
-  const m = readJson<{ system?: { name?: string } }>(join(root, "actors.manifest.json"));
+  const m = readJson<{ system?: { name?: string } }>(join(root, "actord.manifest.json"));
   return m?.system?.name ?? (await loadProject(root)).manifest?.system.name ?? null;
 }
 
@@ -229,7 +229,7 @@ export function test(cwd: string, opts: { profile?: string }): CommandResult<{ p
   const root = findProjectRoot(cwd);
   if (!root) return { data: { projectRoot: null, step: null }, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const t = runTests(root, opts.profile === "extended" ? "extended" : "standard");
-  const text = `actors test: ${t.step.status} · ${t.step.summary}${t.step.detail?.output ? `\n${String(t.step.detail.output)}` : ""}`;
+  const text = `actord test: ${t.step.status} · ${t.step.summary}${t.step.detail?.output ? `\n${String(t.step.detail.output)}` : ""}`;
   return { data: { projectRoot: root, step: t.step }, text, exitCode: t.step.status === "pass" ? 0 : t.step.status === "blocked" ? 0 : 1 };
 }
 

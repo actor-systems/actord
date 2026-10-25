@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { Envelope } from "actors-toolkit/runtime";
+import type { Envelope } from "@actord/toolkit/runtime";
 import { expect, it } from "vitest";
 
 const base: Envelope = {

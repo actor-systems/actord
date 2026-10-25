@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { EffectNotDelivered } from "actors-toolkit/runtime";
-import { overrideBudget, overrideEffect, resetSeams, settle } from "actors-toolkit/testing";
+import { EffectNotDelivered } from "@actord/toolkit/runtime";
+import { overrideBudget, overrideEffect, resetSeams, settle } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "../system.ts";
 import { board, gateway, scriptedModel, status, submit } from "./helpers.ts";

@@ -1,8 +1,8 @@
-// Reliability claims (actors.claims.json) classified against a test run.
+// Reliability claims (actord.claims.json) classified against a test run.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const CLAIMS_FILE = "actors.claims.json";
+export const CLAIMS_FILE = "actord.claims.json";
 
 export type Basis = "workerd" | "stub" | "not-guaranteed";
 export type ClaimStatus = "proved-locally" | "stub-only" | "not-guaranteed" | "failing" | "untested" | "blocked";

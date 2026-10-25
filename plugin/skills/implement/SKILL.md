@@ -1,8 +1,8 @@
 ---
 name: implement
-description: Write or change actor code to match system.ts (message contracts, handlers, state, schedules, effects, model calls) in a Cloudflare Durable Objects actor project, starting from the current `actors check` output. Has the delivery-auditor review handlers that cause effects.
+description: Write or change actor code to match system.ts (message contracts, handlers, state, schedules, effects, model calls) in a Cloudflare Durable Objects actor project, starting from the current `actord check` output. Has the delivery-auditor review handlers that cause effects.
 paths: ["system.ts", "src/actors/**", "src/messages/**"]
-allowed-tools: Bash(npx --no-install actors check *) Bash(actors check *) Bash(actors graph *) Bash(actors test *)
+allowed-tools: Bash(npx --no-install actord check *) Bash(actord check *) Bash(actord graph *) Bash(actord test *)
 ---
 
 # Implement actor behavior
@@ -10,10 +10,10 @@ allowed-tools: Bash(npx --no-install actors check *) Bash(actors check *) Bash(a
 Rules that hold for this whole skill:
 - **Keep what already works.** Preserve existing public read methods and their return shapes. Keep
   existing tests, and add a focused test that proves the requested change. An incompatible contract change
-  follows `/actors:evolve`: a version bump alone refuses every queued copy.
+  follows `/actord:evolve`: a version bump alone refuses every queued copy.
 - **Run the tests before reporting.** Run the affected workerd tests. If the host blocks them, report the
   change as unverified and give the exact command to run on the host.
-- **Change the declaration first.** Edit `system.ts`, then let the compiler and `actors check` show every
+- **Change the declaration first.** Edit `system.ts`, then let the compiler and `actord check` show every
   handler and send that no longer fits.
 - **Handlers are storage-only.** Each handler runs inside one storage transaction, so its writes, outgoing
   messages, and effect intents commit together. Don't `await` network, model, or other slow work inside a
@@ -31,24 +31,24 @@ Rules that hold for this whole skill:
 
 ## Current state
 
-!`actors check --json --exit-zero || npx --no-install actors check --json --exit-zero || true`
+!`actord check --json --exit-zero || npx --no-install actord check --json --exit-zero || true`
 
 ## Steps
 
 1. Read the diagnostics above. Fix every `error` before adding anything.
 2. Update `system.ts` and `src/messages/` for the change: new messages start at version 1, and a changed
-   contract stays backward compatible (`actors diff` checks), or follow `/actors:evolve`.
+   contract stays backward compatible (`actord diff` checks), or follow `/actord:evolve`.
 3. Implement handlers with `actorRuntime(...)` (API: `references/runtime.md`). The class keeps a public
    `receive(envelope)` and forwards `alarm()`. Add the binding and `exports` entry to `wrangler.jsonc`, and
    export the class from the Worker entry.
 4. For every handler that requests an effect or calls a model, launch the `delivery-auditor` subagent on
    those files and resolve its findings, by changing code or by adding the fault test it proposes.
 5. Write tests in workerd (`references/runtime.md`, Testing). Tag each with the claim it establishes,
-   such as `[duplicate-delivery]`, and add or update the claim in `actors.claims.json`.
-6. Run `actors check`, `actors graph --write`, and `actors test`, and fix what fails.
+   such as `[duplicate-delivery]`, and add or update the claim in `actord.claims.json`.
+6. Run `actord check`, `actord graph --write`, and `actord test`, and fix what fails.
 
 Done when: the code builds; valid messages reach only declared handlers; malformed or unauthorized messages
-fail with a clear `rejected` reason (tested); `actors check` and the tests pass.
+fail with a clear `rejected` reason (tested); `actord check` and the tests pass.
 
 Stop and ask before removing an actor that has stored data, or when a change relies on an external system's
 guarantee you can't verify.

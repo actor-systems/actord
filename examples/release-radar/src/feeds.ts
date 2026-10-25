@@ -1,6 +1,6 @@
 // The feed.fetch effect adapter: reads a JSON feed ({ "items": [...] }) over HTTP.
-// Tests replace it with fixtures through actors-toolkit/testing's overrideEffect().
-import { type EffectAdapter, EffectNotDelivered } from "actors-toolkit/runtime";
+// Tests replace it with fixtures through @actord/toolkit/testing's overrideEffect().
+import { type EffectAdapter, EffectNotDelivered } from "@actord/toolkit/runtime";
 import type { FeedItem } from "./messages/index.ts";
 
 export const httpFeedSource: EffectAdapter<{ url: string }, { items: FeedItem[] }> = {

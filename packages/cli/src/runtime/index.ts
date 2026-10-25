@@ -1,4 +1,4 @@
-// actors-toolkit/runtime: a small helper that a native Durable Object class composes (no base class).
+// @actord/toolkit/runtime: a small helper that a native Durable Object class composes (no base class).
 //
 // What it guarantees, and how (each is exercised by tests that run in workerd):
 // - Validation: an envelope is refused unless it is well formed, travels a declared route, carries the
@@ -110,7 +110,7 @@ export type EventKind =
 
 /** One structured event, written as a single JSON console line (Workers Logs in production). */
 export interface ActorEvent {
-  $actors: 1;
+  $actord: 1;
   kind: EventKind;
   at: number;
   actor: string;
@@ -128,7 +128,7 @@ export interface ActorEvent {
   detail?: Record<string, unknown>;
 }
 
-/** Kinds that the monitor and `actors events --notable` surface. */
+/** Kinds that the monitor and `actord events --notable` surface. */
 export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"];
 
 // ---- Effects ----
@@ -198,7 +198,7 @@ export type Handlers<S extends AnySystem, A extends ActorName<S>> = {
 };
 
 export interface RuntimeOptions<S extends AnySystem> {
-  /** Effect adapters by effect name. Tests can override them with actors-toolkit/testing. */
+  /** Effect adapters by effect name. Tests can override them with @actord/toolkit/testing. */
   effects?: Partial<Record<EffectName<S>, EffectAdapter>>;
   /** Delivery attempts before a message is dead-lettered (default 6). */
   maxAttempts?: number;
@@ -224,7 +224,7 @@ export interface ActorRuntime {
   outbox(): Array<{ id: string; kind: string; target: string; status: string; attempts: number; lastError: string | null }>;
 }
 
-// ---- Test seams (used only by actors-toolkit/testing, inert otherwise) ----
+// ---- Test seams (used only by @actord/toolkit/testing, inert otherwise) ----
 
 export type FaultPoint = "before-handler" | "after-handler" | "deliver";
 interface TestSeams {
@@ -262,8 +262,8 @@ export function deriveId(...parts: Array<string | number>): string {
   return h.toString(36).padStart(13, "0");
 }
 
-export function emit(event: Omit<ActorEvent, "$actors">): void {
-  console.log(JSON.stringify({ $actors: 1, ...event }));
+export function emit(event: Omit<ActorEvent, "$actord">): void {
+  console.log(JSON.stringify({ $actord: 1, ...event }));
 }
 
 interface Pending {
@@ -271,7 +271,7 @@ interface Pending {
   id: string;
   target: string;
   body: string;
-  event: Omit<ActorEvent, "$actors">;
+  event: Omit<ActorEvent, "$actord">;
 }
 
 export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
@@ -284,7 +284,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const { ctx } = host;
   const env = host.env as Record<string, NamespaceLike>;
   const spec = system.actors[actorName] as ActorSpec | undefined as ActorSpec;
-  if (!spec) throw new Error(`actors: ${actorName} is not declared in system ${system.name}`);
+  if (!spec) throw new Error(`actord: ${actorName} is not declared in system ${system.name}`);
   const now = options.now ?? (() => Date.now());
   const maxAttempts = options.maxAttempts ?? 6;
   const backoff = options.backoffMs ?? ((n: number) => Math.min(300_000, 1_000 * 2 ** (n - 1)));
@@ -353,7 +353,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     emit({ kind: "received", at: now(), actor: self, ...ids(envelope), detail: { payloadKeys: Object.keys((validated.value as object) ?? {}).sort() } });
 
     const pending: Pending[] = [];
-    const notes: Array<Omit<ActorEvent, "$actors">> = [];
+    const notes: Array<Omit<ActorEvent, "$actord">> = [];
     const handler = (handlers as Record<string, (m: unknown, c: unknown) => void | Promise<void>>)[envelope.type];
     try {
       if (!handler) throw new Error(`${actorName} has no handler for ${envelope.type}`);
@@ -392,7 +392,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     return { messageId: e.id, type: e.type, version: e.version, from: e.from, to: e.to, correlationId: e.correlationId, causationId: e.causationId, attempt: e.attempt };
   }
 
-  function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actors">>): HandlerContext<S, A> {
+  function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>): HandlerContext<S, A> {
     let n = 0;
     return {
       self,
@@ -524,7 +524,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (orphans.length > 0) await armAlarm();
   }
 
-  function retryOrExhaust(row: { id: string; attempts: number }, error: string, event: Omit<ActorEvent, "$actors" | "kind" | "at" | "actor">, overloaded = false): void {
+  function retryOrExhaust(row: { id: string; attempts: number }, error: string, event: Omit<ActorEvent, "$actord" | "kind" | "at" | "actor">, overloaded = false): void {
     const attempts = row.attempts + 1;
     if (attempts >= maxAttempts) {
       sql.exec("UPDATE _actors_outbox SET status = 'dead', attempts = ?, last_error = ? WHERE id = ?", attempts, error, row.id);
@@ -742,9 +742,9 @@ export async function ingress<S extends AnySystem, A extends ActorName<S>, M ext
   options: { key?: string; id?: string } = {},
 ): Promise<Receipt> {
   const spec = system.actors[to];
-  if (!spec) throw new Error(`actors: ${to} is not declared`);
+  if (!spec) throw new Error(`actord: ${to} is not declared`);
   const ns = (env as Record<string, NamespaceLike>)[spec.binding];
-  if (!ns) throw new Error(`actors: no binding ${spec.binding} in env`);
+  if (!ns) throw new Error(`actord: no binding ${spec.binding} in env`);
   const key = options.key ?? "main";
   const id = options.id ?? crypto.randomUUID();
   return ns.getByName(key).receive({

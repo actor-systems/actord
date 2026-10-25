@@ -1,11 +1,11 @@
 {
-  "name": "actors-toolkit",
+  "name": "@actord/toolkit",
   "version": "0.1.0",
   "description": "Conventions, checks, and inspection for small systems of communicating actors on Cloudflare Durable Objects",
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
-    "actors": "./dist/cli.mjs"
+    "actord": "./dist/cli.mjs"
   },
   "exports": {
     "./system": {

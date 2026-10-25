@@ -21,13 +21,13 @@ test("one monitor entry per starting skill, each a strict entry naming an existi
 });
 
 test("the monitor prints each notable event once, and a second start in the same session exits quietly", () => {
-  const project = mkdtempSync(join(tmpdir(), "actors-monitor-"));
+  const project = mkdtempSync(join(tmpdir(), "actord-monitor-"));
   try {
     writeFileSync(join(project, "system.ts"), "export default {}\n");
     writeFileSync(join(project, "package.json"), "{}\n");
-    mkdirSync(join(project, ".actors"));
+    mkdirSync(join(project, ".actord"));
     const log = join(root, "fixtures/events/release-radar-faults.ndjson");
-    copyFileSync(log, join(project, ".actors/events.ndjson"));
+    copyFileSync(log, join(project, ".actord/events.ndjson"));
     const command = monitors[0].command.replaceAll("${CLAUDE_PLUGIN_ROOT}", join(root, "plugin"));
     // Both starts share a parent, as two monitors of one session do.
     const script = `${command} & first=$!; sleep 1.5; ${command}; echo "second-exit=$?"; sleep 0.5; kill $first`;

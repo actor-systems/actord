@@ -45,7 +45,7 @@ export async function loadProject(root: string): Promise<Project> {
     const mod = (await import(pathToFileURL(join(root, DECLARATION_FILE)).href)) as { default?: unknown; system?: unknown };
     const candidate = mod.default ?? mod.system;
     if (!isSystem(candidate)) {
-      project.loadError = "system.ts must `export default defineSystem({...})` from actors-toolkit/system";
+      project.loadError = "system.ts must `export default defineSystem({...})` from @actord/toolkit/system";
     } else {
       project.system = candidate;
       project.manifest = normalize(candidate);

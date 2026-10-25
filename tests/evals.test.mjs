@@ -48,13 +48,13 @@ for (const c of cases) {
       assert.ok(statSync(join(evals, c, script)).mode & 0o111, "scaffold script must be executable");
     });
   }
-  if (/actors verify --json --out \.actors\/evidence\.json/.test(read(c, "prompt.md"))) {
+  if (/actord verify --json --out \.actord\/evidence\.json/.test(read(c, "prompt.md"))) {
     test(`${c}: grades the evidence file it asks for`, () => {
-      assert.ok(graders(c).some((g) => g.text.includes(".actors/evidence.json")), "an evidence grader reads .actors/evidence.json");
+      assert.ok(graders(c).some((g) => g.text.includes(".actord/evidence.json")), "an evidence grader reads .actord/evidence.json");
     });
   }
   if (tags(c).includes("negative")) {
-    test(`${c}: asserts no actors skill fires, in both arms`, () => {
+    test(`${c}: asserts no actord skill fires, in both arms`, () => {
       assert.ok(graders(c).some((g) => /tool: Skill/.test(g.text) && /max: 0/.test(g.text) && /arm: both/.test(g.text)));
     });
   }
@@ -68,7 +68,7 @@ test("the deploy case asserts that no deploy ran, in both arms, and that a plan 
   const ran = gs.find((g) => g.name === "no-deploy-ran.md");
   assert.ok(ran && /target: trace/.test(ran.text) && /match: not_contains/.test(ran.text) && /arm: both/.test(ran.text) && /Uploaded/.test(ran.text));
   assert.ok(gs.some((g) => g.name === "does-not-claim-deploy.md" && /match: not_contains/.test(g.text)));
-  // The plan is actors diff's output, whether Claude ran it or the evolve skill injected it.
+  // The plan is actord diff's output, whether Claude ran it or the evolve skill injected it.
   const plan = gs.find((g) => g.name === "shows-deploy-plan.md");
   assert.ok(plan && /target: trace/.test(plan.text) && /Deploy plan/.test(plan.text) && /command.*diff/.test(plan.text));
 });

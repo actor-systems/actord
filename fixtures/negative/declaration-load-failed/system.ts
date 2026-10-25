@@ -1,4 +1,4 @@
-import { defineSystem } from "actors-toolkit/system";
+import { defineSystem } from "@actord/toolkit/system";
 import { Kick, Ping, PingDue } from "./src/messages/missing.ts";
 
 export default defineSystem({

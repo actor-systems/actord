@@ -7,10 +7,10 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cfg="$(mktemp -d)"
 trap 'rm -rf "$cfg"' EXIT
 tokens() { grep -Eo 'Always-on:[[:space:]]+[~<]?[[:space:]]*[0-9,]+' | grep -Eo '[0-9,]+' | tr -d ,; }
-dir_tok="$(cd "$cfg" && CLAUDE_CONFIG_DIR="$cfg" claude --plugin-dir "$root/plugin" plugin details actors | tokens)"
+dir_tok="$(cd "$cfg" && CLAUDE_CONFIG_DIR="$cfg" claude --plugin-dir "$root/plugin" plugin details actord | tokens)"
 CLAUDE_CONFIG_DIR="$cfg" claude plugin marketplace add "$root" >/dev/null
-CLAUDE_CONFIG_DIR="$cfg" claude plugin install actors@actors-toolkit >/dev/null
-details="$(CLAUDE_CONFIG_DIR="$cfg" claude plugin details actors)"
+CLAUDE_CONFIG_DIR="$cfg" claude plugin install actord@actord >/dev/null
+details="$(CLAUDE_CONFIG_DIR="$cfg" claude plugin details actord)"
 inst_tok="$(tokens <<<"$details")"
 max=$(( dir_tok > inst_tok ? dir_tok : inst_tok ))
 mkdir -p "$root/docs/evidence"

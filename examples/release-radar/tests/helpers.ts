@@ -1,4 +1,4 @@
-import { overrideEffect } from "actors-toolkit/testing";
+import { overrideEffect } from "@actord/toolkit/testing";
 import feed from "../fixtures/feeds/workers-sdk.json";
 import type { FeedItem } from "../src/messages/index.ts";
 

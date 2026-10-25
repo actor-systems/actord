@@ -1,5 +1,5 @@
 // Bundles the CLI into one dependency-free ESM file for npm (dist/cli.mjs) and for the plugin
-// (plugin/dist/actors.mjs). The plugin copy is what ships; tests run against it.
+// (plugin/dist/actord.mjs). The plugin copy is what ships; tests run against it.
 import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ await build({
   format: "esm",
   target: "node22",
   banner: { js: "#!/usr/bin/env node" },
-  define: { __ACTORS_VERSION__: JSON.stringify(pkg.version) },
+  define: { __ACTORD_VERSION__: JSON.stringify(pkg.version) },
   legalComments: "none",
   logLevel: "warning",
 });
@@ -40,7 +40,7 @@ for (const file of readdirSync(join(here, "dist/types"), { recursive: true })) {
   writeFileSync(path, readFileSync(path, "utf8").replace(/(from\s+["']\.{1,2}\/[^"']+)\.ts(["'])/g, "$1.js$2"));
 }
 // The Room's effect guard matches the same table in-process (a node process per Bash call would cost
-// every session), so it gets a generated copy; `actors guard` makes the decision once one matches.
+// every session), so it gets a generated copy; `actord guard` makes the decision once one matches.
 const patterns = EFFECT_PATTERNS.map((p) => ({ id: p.id, kind: p.kind, description: p.description, source: p.regex.source, flags: p.regex.flags }));
 writeFileSync(
   join(here, "..", "..", "plugin", "hooks", "effect-patterns.ts"),
@@ -49,9 +49,9 @@ writeFileSync(
     `export const EFFECT_PATTERNS: readonly EffectPatternSource[] = ${JSON.stringify(patterns, null, 2)}\n`,
 );
 mkdirSync(pluginDist, { recursive: true });
-copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actors.mjs"));
-chmodSync(join(pluginDist, "actors.mjs"), 0o755);
+copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actord.mjs"));
+chmodSync(join(pluginDist, "actord.mjs"), 0o755);
 writeFileSync(join(pluginDist, "VERSION"), `${pkg.version}\n`);
-// Until actors-toolkit is on npm, the plugin carries its package so `actors init` can pin it offline.
+// Until @actord/toolkit is on npm, the plugin carries its package so `actord init` can pin it offline.
 execFileSync("npm", ["pack", "--silent", "--pack-destination", pluginDist], { cwd: here, stdio: ["ignore", "ignore", "inherit"] });
-console.log(`built actors-toolkit ${pkg.version} → dist/cli.mjs, plugin/dist/actors.mjs`);
+console.log(`built @actord/toolkit ${pkg.version} → dist/cli.mjs, plugin/dist/actord.mjs`);

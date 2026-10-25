@@ -1,5 +1,5 @@
 {
-  "name": "actors",
+  "name": "actord",
   "displayName": "Actor-Native Cloudflare Toolkit",
   "version": "0.1.0",
   "description": "Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.",
@@ -18,13 +18,13 @@
     "check_on_edit": {
       "type": "boolean",
       "title": "Check actor files on edit",
-      "description": "After Claude edits system.ts, an actor, or a message contract, run actors check and report hard errors to Claude. Silent when clean.",
+      "description": "After Claude edits system.ts, an actor, or a message contract, run actord check and report hard errors to Claude. Silent when clean.",
       "default": true
     },
     "strict_evidence": {
       "type": "boolean",
       "title": "Require evidence before stopping",
-      "description": "If actor files changed since the last passing actors check, ask Claude once to run the check and affected tests before it reports.",
+      "description": "If actor files changed since the last passing actord check, ask Claude once to run the check and affected tests before it reports.",
       "default": false
     },
     "fault_profile": {

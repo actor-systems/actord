@@ -1,4 +1,4 @@
-import { message } from "actors-toolkit/system";
+import { message } from "@actord/toolkit/system";
 import { z } from "zod";
 
 export const PingDue = message({

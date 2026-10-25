@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { resetSeams, settle } from "actors-toolkit/testing";
+import { resetSeams, settle } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "../system.ts";
 import { analysis, board, decide, gateway, scriptedModel, submit } from "./helpers.ts";

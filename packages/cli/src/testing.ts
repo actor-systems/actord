@@ -1,4 +1,4 @@
-// actors-toolkit/testing: helpers for tests that run in workerd with @cloudflare/vitest-plugin.
+// @actord/toolkit/testing: helpers for tests that run in workerd with @cloudflare/vitest-plugin.
 // Import only from test files: it depends on the `cloudflare:test` module.
 import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import type { EffectAdapter, FaultPoint } from "./runtime/index.ts";

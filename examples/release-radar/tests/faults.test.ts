@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { ingress } from "actors-toolkit/runtime";
-import { injectFault, overrideEffect, resetSeams, settle, tick } from "actors-toolkit/testing";
+import { ingress } from "@actord/toolkit/runtime";
+import { injectFault, overrideEffect, resetSeams, settle, tick } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "../system.ts";
 import type { FeedItem } from "../src/messages/index.ts";

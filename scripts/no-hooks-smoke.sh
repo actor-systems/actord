@@ -14,22 +14,22 @@ step() { printf '%s\n' "== $*"; }
 
 step "install with disableAllHooks"
 claude plugin marketplace add "$root" >/dev/null
-claude plugin install actors@actors-toolkit >/dev/null
+claude plugin install actord@actord >/dev/null
 jq -e '.disableAllHooks == true' "$CLAUDE_CONFIG_DIR/settings.json" >/dev/null
 listed="$(claude plugin list --json)"
-jq -e '.[] | select(.id == "actors@actors-toolkit" and .enabled == true)' <<<"$listed" >/dev/null
-details="$(claude plugin details actors@actors-toolkit)"
+jq -e '.[] | select(.id == "actord@actord" and .enabled == true)' <<<"$listed" >/dev/null
+details="$(claude plugin details actord@actord)"
 grep -E 'Skills \(7\)' <<<"$details"
 grep -E 'Agents \(2\)' <<<"$details"
-dir="$(jq -r '.[] | select(.id == "actors@actors-toolkit") | .installPath // empty' <<<"$listed")"
+dir="$(jq -r '.[] | select(.id == "actord@actord") | .installPath // empty' <<<"$listed")"
 [ -d "$dir/bin" ] || dir="$root/plugin"
-launcher="$dir/bin/actors"
+launcher="$dir/bin/actord"
 
 step "starter project verifies through the installed launcher"
 "$root/scripts/scaffold-project.sh" "$work/starter" starter >/dev/null
 cd "$work/starter"
 "$launcher" verify | head -5
-jq -e '.verdict == "pass"' .actors/evidence.json >/dev/null
+jq -e '.verdict == "pass"' .actord/evidence.json >/dev/null
 
 step "the Room's view as text"
 "$launcher" room | head -12
@@ -40,6 +40,6 @@ w="wrang""ler"
 "$launcher" guard -- "npx $w deploy" | head -3
 "$launcher" guard --json -- "npx $w deploy" | jq -e '.hold == true' >/dev/null
 
-claude plugin uninstall actors@actors-toolkit >/dev/null
-claude plugin marketplace remove actors-toolkit >/dev/null
+claude plugin uninstall actord@actord >/dev/null
+claude plugin marketplace remove actord >/dev/null
 echo "no-hooks-smoke: ok"

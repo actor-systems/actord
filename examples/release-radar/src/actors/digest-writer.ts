@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { actorRuntime, type EffectAdapter, type Envelope } from "actors-toolkit/runtime";
+import { actorRuntime, type EffectAdapter, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 /** Stand-in notification gateway: logs instead of sending. A real one must honor the idempotency key. */

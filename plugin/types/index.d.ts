@@ -1,5 +1,5 @@
-// The Room's state contract: what its pane draws from, all of it CLI JSON (`actors room --json`,
-// `actors trace --json`) kept as printed. Schema version 1 of the CLI's documents.
+// The Room's state contract: what its pane draws from, all of it CLI JSON (`actord room --json`,
+// `actord trace --json`) kept as printed. Schema version 1 of the CLI's documents.
 
 export type RoomTab = 'topology' | 'mailboxes' | 'contracts' | 'evidence'
 
@@ -68,7 +68,7 @@ export type RoomTrace = {
 
 declare module 'claude-code' {
   interface PluginState {
-    actors: {
+    actord: {
       snapshot: Shaped<RoomSnapshot | null>
       tab: RoomTab
       selected: string | null

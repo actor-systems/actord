@@ -1,7 +1,7 @@
 ---
 name: design
 description: Turn an application idea into a minimal actor topology on Cloudflare Durable Objects. Decide what deserves to be an actor rather than a function, Workflow, or Queue, then write the typed system.ts declaration. Has the boundary-critic subagent challenge every proposed actor. Use when designing or redesigning an actor system.
-allowed-tools: Bash(actors check *) Bash(actors graph *)
+allowed-tools: Bash(actord check *) Bash(actord graph *)
 ---
 
 # Design an actor system
@@ -13,7 +13,7 @@ Rules that hold for this whole skill:
 - **Programs before agents.** Use a model only where interpretation or judgment is needed. Mark such actors
   `model-assisted` (fixed control flow calling a model) or `agent`, and give them a `budget`.
 - **The compiler and tests decide.** A critic's objection is a hypothesis until a check or test settles it.
-- Write no code beyond `system.ts` and `src/messages/`; implementation is `/actors:implement`.
+- Write no code beyond `system.ts` and `src/messages/`; implementation is `/actord:implement`.
 - Never promise exactly-once external effects, global ordering, or cross-actor transactions.
 
 ## Steps
@@ -29,13 +29,13 @@ Rules that hold for this whole skill:
    justifications) and the intent. It argues for fewer actors.
 5. **Resolve every objection:** merge or drop the actor, or keep it and name the check or test that would
    prove the critic wrong. Record both sides.
-6. **Write the declaration** with `actors-toolkit/system` (cheat sheet: `references/declaration.md`):
-   `system.ts` plus `src/messages/index.ts`. If the project doesn't exist yet, run `/actors:setup` first.
-7. **Check it:** `actors check` (fix every error), then `actors graph --write`.
+6. **Write the declaration** with `@actord/toolkit/system` (cheat sheet: `references/declaration.md`):
+   `system.ts` plus `src/messages/index.ts`. If the project doesn't exist yet, run `/actord:setup` first.
+7. **Check it:** `actord check` (fix every error), then `actord graph --write`.
 
 ## Output (the design is done when all of this is shown)
 
-- The typed declaration (files written) and `actors graph` output.
+- The typed declaration (files written) and `actord graph` output.
 - A route map: who sends what to whom, and why each message is asynchronous or a request/reply.
 - **Assumptions** that could be wrong, such as volumes, latency, or what an external API guarantees.
 - **Rejected actors**, each with the justification it failed and what it became.

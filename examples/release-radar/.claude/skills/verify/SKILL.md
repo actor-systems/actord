@@ -1,12 +1,12 @@
 ---
 name: verify
-description: Run this actor project's evidence workflow (typecheck, actors check, workerd tests, reliability claims) before committing or before reporting work as done.
-allowed-tools: Bash(npm run verify) Bash(npx actors verify *)
+description: Run this actor project's evidence workflow (typecheck, actord check, workerd tests, reliability claims) before committing or before reporting work as done.
+allowed-tools: Bash(npm run verify) Bash(npx actord verify *)
 ---
 
 # Verify
 
-1. Run `npm run verify`. It runs `actors verify`, which writes `.actors/evidence.json`.
+1. Run `npm run verify`. It runs `actord verify`, which writes `.actord/evidence.json`.
 2. Report the verdict exactly: `pass`, `fail`, or `blocked`, with each failing step and claim.
    `blocked` means a check couldn't run (for example, the sandbox denies the local port workerd needs).
    It is not a pass.

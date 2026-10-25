@@ -25,7 +25,7 @@ publishing, tag pushes and force pushes, plus `ask` rules for plain `git push`, 
 - `git push --force origin main` → denied
 - `git -C . push --tags` → denied
 - `FOO=1 echo ok; echo wrangler secret put X` → denied (second subcommand)
-- `git push origin actors--v0.1.0` → denied (plugin tag format `{name}--v{version}`)
+- `git push origin actord--v0.1.0` → denied (plugin tag format `{name}--v{version}`)
 - Control: `git status --short` → ran.
 - The Cloudflare Developer Platform MCP `*_create/_delete/_update/_edit`, `d1_database_query`, and
   `mcp__plugin_cloudflare_cloudflare__execute` tools were removed from the session on load.

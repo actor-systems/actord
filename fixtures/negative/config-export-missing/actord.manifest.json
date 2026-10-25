@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
   "schemaVersion": 1,
   "system": {
     "name": "minimal",
@@ -70,7 +70,18 @@
     {
       "description": "Someone asked for an immediate ping",
       "name": "ping.kicked",
-      "payload": null,
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
       "version": 1
     },
     {

@@ -42,18 +42,18 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
         },
   );
 
-  const source = env.ACTORS_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORS_LAUNCHER === "project-pin" ? "project pin" : "direct";
-  add({ id: "cli", status: "ok", message: `actors-toolkit ${VERSION} (${source})` });
-  if (env.ACTORS_PLUGIN_VERSION && env.ACTORS_PLUGIN_VERSION !== VERSION) {
+  const source = env.ACTORD_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORD_LAUNCHER === "project-pin" ? "project pin" : "direct";
+  add({ id: "cli", status: "ok", message: `@actord/toolkit ${VERSION} (${source})` });
+  if (env.ACTORD_PLUGIN_VERSION && env.ACTORD_PLUGIN_VERSION !== VERSION) {
     add({
       id: "cli.pin-mismatch",
       status: "warn",
-      message: `The plugin bundles actors-toolkit ${env.ACTORS_PLUGIN_VERSION}; this project pins ${VERSION}, which is the one running`,
-      fix: `Align them: update the plugin, or run \`npm install -D actors-toolkit@${env.ACTORS_PLUGIN_VERSION}\` in the project.`,
+      message: `The plugin bundles @actord/toolkit ${env.ACTORD_PLUGIN_VERSION}; this project pins ${VERSION}, which is the one running`,
+      fix: `Align them: update the plugin, or run \`npm install -D @actord/toolkit@${env.ACTORD_PLUGIN_VERSION}\` in the project.`,
     });
   }
 
-  const host = env.ACTORS_HOST ?? projectHost(findProjectRoot(cwd) ?? cwd);
+  const host = env.ACTORD_HOST ?? projectHost(findProjectRoot(cwd) ?? cwd);
   if (host === "codex") {
     const codex = run("codex", ["--version"]);
     add({ id: "codex", status: "info", message: codex?.trim() ?? "Codex not found on PATH; the CLI works without it" });
@@ -79,7 +79,7 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
   add({
     id: "credentials",
     status: "info",
-    message: "Cloudflare credentials not checked: actors never reads them; wrangler owns authentication and deploys",
+    message: "Cloudflare credentials not checked: actord never reads them; wrangler owns authentication and deploys",
   });
 
   const root = findProjectRoot(cwd);
@@ -88,7 +88,7 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
       id: "project",
       status: "info",
       message: "No actor project here (no system.ts with a package.json in this directory or above)",
-      fix: "Create one with `actors init <dir>`, or study examples/release-radar and examples/briefing-desk.",
+      fix: "Create one with `actord init <dir>`, or study examples/release-radar and examples/briefing-desk.",
     });
   } else {
     projectFindings(root, add, host);
@@ -107,18 +107,18 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
 function projectFindings(root: string, add: (f: Finding) => void, host: string): void {
   add({ id: "project", status: "ok", message: `Actor project at ${root}` });
   const pkg = readJson<{ devDependencies?: Record<string, string>; dependencies?: Record<string, string> }>(join(root, "package.json"));
-  const pin = pkg?.devDependencies?.["actors-toolkit"] ?? pkg?.dependencies?.["actors-toolkit"];
+  const pin = pkg?.devDependencies?.["@actord/toolkit"] ?? pkg?.dependencies?.["@actord/toolkit"];
   if (!pin) {
     add({
       id: "project.pin",
       status: "warn",
-      message: "package.json doesn't pin actors-toolkit, so CI and the coding agent may run different versions",
-      fix: `Run \`npm install -D -E actors-toolkit@${VERSION}\`.`,
+      message: "package.json doesn't pin @actord/toolkit, so CI and the coding agent may run different versions",
+      fix: `Run \`npm install -D -E @actord/toolkit@${VERSION}\`.`,
     });
   } else if (/^[\^~>=<*]|^latest$/.test(pin)) {
-    add({ id: "project.pin", status: "warn", message: `actors-toolkit is a range (${pin}), not a pin`, fix: "Use an exact version." });
+    add({ id: "project.pin", status: "warn", message: `@actord/toolkit is a range (${pin}), not a pin`, fix: "Use an exact version." });
   } else {
-    add({ id: "project.pin", status: "ok", message: `actors-toolkit pinned at ${pin}` });
+    add({ id: "project.pin", status: "ok", message: `@actord/toolkit pinned at ${pin}` });
   }
   const installed = existsSync(join(root, "node_modules"));
   add(
@@ -136,13 +136,13 @@ function projectFindings(root: string, add: (f: Finding) => void, host: string):
   add(
     config
       ? { id: "project.config", status: "ok", message: `Worker config ${config}` }
-      : { id: "project.config", status: "error", message: "No wrangler.jsonc", fix: "Run `actors init --adopt` or add one." },
+      : { id: "project.config", status: "error", message: "No wrangler.jsonc", fix: "Run `actord init --adopt` or add one." },
   );
   if (host === "codex") {
     for (const rel of ["AGENTS.md", ".agents/skills/verify/SKILL.md"]) {
       add(existsSync(join(root, rel))
         ? { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "ok", message: `${rel} present` }
-        : { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "warn", message: `${rel} missing`, fix: "Run `actors init --adopt --host codex` (existing files are preserved)." });
+        : { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "warn", message: `${rel} missing`, fix: "Run `actord init --adopt --host codex` (existing files are preserved)." });
     }
   }
   if (host === "claude") {
@@ -153,7 +153,7 @@ function projectFindings(root: string, add: (f: Finding) => void, host: string):
             id: "project.verify-skill",
             status: "warn",
             message: "No .claude/skills/verify/SKILL.md, so sessions without the plugin won't run `npm run verify` before commits",
-            fix: "Run `actors init --adopt` to add it (existing .claude/ files are never overwritten).",
+            fix: "Run `actord init --adopt` to add it (existing .claude/ files are never overwritten).",
           },
     );
     const settingsPath = join(root, ".claude", "settings.json");
@@ -164,14 +164,14 @@ function projectFindings(root: string, add: (f: Finding) => void, host: string):
         id: "project.permissions",
         status: "warn",
         message: "No .claude/settings.json: deploy and remote-write commands won't prompt",
-        fix: "Run `actors init --adopt` to create it.",
+        fix: "Run `actord init --adopt` to create it.",
       });
     } else if (missing.length > 0) {
       add({
         id: "project.permissions",
         status: "warn",
         message: `.claude/settings.json lacks ${missing.length} ask rule(s): ${missing.join(", ")}`,
-        fix: "Add them to permissions.ask; `actors init --adopt` prints the full list.",
+        fix: "Add them to permissions.ask; `actord init --adopt` prints the full list.",
       });
     } else {
       add({ id: "project.permissions", status: "ok", message: "Deploy and remote-write commands require approval" });

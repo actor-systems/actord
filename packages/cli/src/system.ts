@@ -1,4 +1,4 @@
-// actors-toolkit/system: the typed system declaration (system.ts) and the types derived from it.
+// @actord/toolkit/system: the typed system declaration (system.ts) and the types derived from it.
 //
 // A system declares its messages (versioned, schema-validated contracts), its actors (native Durable
 // Object classes), the external effects they may perform, and the routes that say which actor may send
@@ -106,7 +106,7 @@ export interface SystemSpec<
   readonly routes: Routes;
 }
 
-export const SYSTEM_BRAND = "actors-toolkit/system@1";
+export const SYSTEM_BRAND = "@actord/toolkit/system@1";
 
 export interface System<
   Msgs extends Record<string, MessageSpec> = Record<string, MessageSpec>,
@@ -124,7 +124,7 @@ export function message<const S extends StandardSchemaV1>(spec: MessageSpec<S>):
 
 /**
  * Declare the system. Routes are checked against the declared actors and messages at compile time;
- * `actors check` covers what the type system can't express.
+ * `actord check` covers what the type system can't express.
  */
 export function defineSystem<
   const Msgs extends Record<string, MessageSpec>,

@@ -5,7 +5,7 @@ A Claude Code plugin and companion CLI for designing, building, testing, inspect
 
 The promise isn't "generate apps from prompts". It's this: turn intent into an explicit, inspectable
 system; keep that system understandable as it runs; change it without silently violating its
-contracts. Claude proposes designs and changes. The TypeScript compiler, `actors check`, and tests that
+contracts. Claude proposes designs and changes. The TypeScript compiler, `actord check`, and tests that
 run in workerd (Cloudflare's runtime) decide what holds.
 
 > **Status: v0.1 release candidate.** Every gate's evidence is in
@@ -22,11 +22,11 @@ run in workerd (Cloudflare's runtime) decide what holds.
 From your shell:
 
 ```sh
-claude plugin marketplace add <org>/<repo>     # or a local clone: claude plugin marketplace add ./actors-plugin
-claude plugin install actors@actors-toolkit
+claude plugin marketplace add <org>/<repo>     # or a local clone: claude plugin marketplace add ./actord-plugin
+claude plugin install actord@actord
 ```
 
-Or inside a Claude Code session: `/plugin marketplace add <org>/<repo>`, then `/plugin install actors@actors-toolkit`.
+Or inside a Claude Code session: `/plugin marketplace add <org>/<repo>`, then `/plugin install actord@actord`.
 
 Requirements: Claude Code 2.1.287+ (2.1.269+ without the Room) and Node.js 22.18+. Works in the terminal,
 the Desktop app's Code tab, and the VS Code extension. claude.ai and Cowork don't install plugins that
@@ -40,67 +40,67 @@ Recommended companions, not dependencies:
 **Update.** Refresh the marketplace, update the plugin, then reload it in a running session:
 
 ```sh
-claude plugin marketplace update actors-toolkit
-claude plugin update actors@actors-toolkit
+claude plugin marketplace update actord
+claude plugin update actord@actord
 ```
 
-In a session, run `/reload-plugins`. A project created by `actors init` pins its own `actors-toolkit`, so
-Claude and CI keep running that version until you change the pin; `actors doctor` reports when the plugin
+In a session, run `/reload-plugins`. A project created by `actord init` pins its own `@actord/toolkit`, so
+Claude and CI keep running that version until you change the pin; `actord doctor` reports when the plugin
 bundles a different version than the project pins.
 
-**Uninstall.** `claude plugin uninstall actors@actors-toolkit` (add `--keep-data` to keep caches), then
-`claude plugin marketplace remove actors-toolkit`. Projects keep working without the plugin: their tests,
-`actors` CLI pin, verify skill, and permission rules live in the project.
+**Uninstall.** `claude plugin uninstall actord@actord` (add `--keep-data` to keep caches), then
+`claude plugin marketplace remove actord`. Projects keep working without the plugin: their tests,
+`actord` CLI pin, verify skill, and permission rules live in the project.
 
 ## First steps
 
-Run `/actors:start` in a session. It runs `actors doctor`, explains what it found, and offers one next step.
+Run `/actord:start` in a session. It runs `actord doctor`, explains what it found, and offers one next step.
 
 ## What's in the plugin
 
 | Component | Job |
 | --- | --- |
-| Skills `start`, `setup`, `design`, `implement`, `reliability`, `inspect`, `evolve` | The workflow in [`docs/workflow.md`](docs/workflow.md), namespaced `/actors:<name>` |
+| Skills `start`, `setup`, `design`, `implement`, `reliability`, `inspect`, `evolve` | The workflow in [`docs/workflow.md`](docs/workflow.md), namespaced `/actord:<name>` |
 | Subagents `boundary-critic`, `delivery-auditor` | Read-only critics: one argues for fewer actors, the other audits idempotency, reentrancy, and in-doubt honesty. Each objection comes with the test that would settle it |
 | Hooks | Edit-time contract feedback (`check_on_edit`, on by default); an opt-in evidence gate before stopping (`strict_evidence`) |
-| The Room (a mod) | `/actors-room`: a pane with the topology, mailboxes, contracts, and evidence; a status line; a guard that asks before deploy and remote-write commands run (see [The Room](#the-room)) |
+| The Room (a mod) | `/actord-room`: a pane with the topology, mailboxes, contracts, and evidence; a status line; a guard that asks before deploy and remote-write commands run (see [The Room](#the-room)) |
 | Monitor | While `inspect` or `reliability` is in use, notable local events (rejections, failures, exhausted retries, in-doubt effects) reach Claude as notifications, one line each |
 | Options (`userConfig`) | `check_on_edit` (true), `strict_evidence` (false), `fault_profile` (`standard` or `extended`); no credentials |
-| `bin/actors` | The deterministic machine interface, on `PATH` while the plugin is enabled. It prefers a project's pinned `actors-toolkit` (`node_modules/.bin/actors`), so Claude and CI run the same version; otherwise it runs the bundled single-file build in `dist/` |
+| `bin/actord` | The deterministic machine interface, on `PATH` while the plugin is enabled. It prefers a project's pinned `@actord/toolkit` (`node_modules/.bin/actord`), so Claude and CI run the same version; otherwise it runs the bundled single-file build in `dist/` |
 
 ## Shared core and host adapters
 
-`packages/cli` is also the single core used by the sibling Codex adapter in `../actors/`.
+`packages/cli` is also the single core used by the sibling Codex adapter in `../actord/`.
 That adapter bundles the same CLI/runtime with recorded provenance and keeps its portable manifest,
 skills and launcher separate. Refresh it from the owning source with `npm run core:sync` in that repository.
 
-`actors init --host codex` writes `AGENTS.md` and `.agents/skills/verify/SKILL.md`;
+`actord init --host codex` writes `AGENTS.md` and `.agents/skills/verify/SKILL.md`;
 `--host claude` writes this plugin's original guidance and permission rules; `--host none` writes neither.
-Adoption preserves existing files. The host launchers select their profiles through `ACTORS_HOST`.
+Adoption preserves existing files. The host launchers select their profiles through `ACTORD_HOST`.
 Runtime, type contracts, checks, events and reliability claims are shared across hosts.
 See [decision 0012](docs/decisions/0012-shared-core-host-adapters.md).
 
-## The `actors` CLI
+## The `actord` CLI
 
 | Command | What it does |
 | --- | --- |
-| `actors init [dir] [--adopt]` | Creates a tested starter project (or adds the verify skill, `ask` rules, and CLAUDE.md to an existing one); never overwrites |
-| `actors doctor [--json]` | Checks Node, Claude Code, the project, CLI version pinning, Worker config, the verify skill, and permission rules, and reports actionable fixes |
-| `actors check [--changed <file>...] [--format brief] [--json]` | Validates what the compiler can't: routes, schemas, schedules, effects, budgets, `wrangler.jsonc` bindings and `exports`, Worker entry exports, and manifest freshness. Hard errors exit 1; warnings advise |
-| `actors graph [--write] [--json]` | Prints the topology; `--write` updates the derived `actors.manifest.json` |
-| `actors diff [--base <ref>] [--base-file <path>] [--json]` | Classifies architectural changes against the manifest committed at `<ref>` (default `HEAD`): compatible, breaking, or risky; approval-required; irreversible. Ends with a deploy plan, never a deploy |
-| `actors events [--follow] [--notable] [--json]` | Queries or follows the local structured event log (`.actors/events.ndjson`, written by tests); `--json` prints NDJSON, `--notable` keeps faults only |
-| `actors test [--profile extended]` | Runs the workerd tests (the standard profile skips `[extended]` tests) |
-| `actors verify [--out F] [--json]` | Typecheck, `actors check`, workerd tests, and claim classification; writes `.actors/evidence.json` with verdict `pass`, `fail`, or `blocked` (for example, a sandbox that denies the local port workerd needs) |
-| `actors trace <message-id> [--json]` | Follows a message's causes and consequences, with outcomes, retries, and effects; says *unknown* where recorded coverage ends and never invents production history |
-| `actors room [--follow] [--json]` | The Room's view as one document: topology with changes against the last commit (text and SVG), mailboxes per actor, contracts with the last check, and the verify report by claim status. `--follow --json` prints a new snapshot whenever those inputs change |
-| `actors guard -- <command> [--json]` | Whether the Room's effect guard holds a shell command (a deploy, secret, or remote-write command inside an actor project), with the diff summary and deploy plan it shows |
+| `actord init [dir] [--adopt]` | Creates a tested starter project (or adds the verify skill, `ask` rules, and CLAUDE.md to an existing one); never overwrites |
+| `actord doctor [--json]` | Checks Node, Claude Code, the project, CLI version pinning, Worker config, the verify skill, and permission rules, and reports actionable fixes |
+| `actord check [--changed <file>...] [--format brief] [--json]` | Validates what the compiler can't: routes, schemas, schedules, effects, budgets, `wrangler.jsonc` bindings and `exports`, Worker entry exports, and manifest freshness. Hard errors exit 1; warnings advise |
+| `actord graph [--write] [--json]` | Prints the topology; `--write` updates the derived `actord.manifest.json` |
+| `actord diff [--base <ref>] [--base-file <path>] [--json]` | Classifies architectural changes against the manifest committed at `<ref>` (default `HEAD`): compatible, breaking, or risky; approval-required; irreversible. Ends with a deploy plan, never a deploy |
+| `actord events [--follow] [--notable] [--json]` | Queries or follows the local structured event log (`.actord/events.ndjson`, written by tests); `--json` prints NDJSON, `--notable` keeps faults only |
+| `actord test [--profile extended]` | Runs the workerd tests (the standard profile skips `[extended]` tests) |
+| `actord verify [--out F] [--json]` | Typecheck, `actord check`, workerd tests, and claim classification; writes `.actord/evidence.json` with verdict `pass`, `fail`, or `blocked` (for example, a sandbox that denies the local port workerd needs) |
+| `actord trace <message-id> [--json]` | Follows a message's causes and consequences, with outcomes, retries, and effects; says *unknown* where recorded coverage ends and never invents production history |
+| `actord room [--follow] [--json]` | The Room's view as one document: topology with changes against the last commit (text and SVG), mailboxes per actor, contracts with the last check, and the verify report by claim status. `--follow --json` prints a new snapshot whenever those inputs change |
+| `actord guard -- <command> [--json]` | Whether the Room's effect guard holds a shell command (a deploy, secret, or remote-write command inside an actor project), with the diff summary and deploy plan it shows |
 
 Every command offers `--json` with a `schemaVersion` and a `volatile` list naming the machine-dependent
 fields. Exit status: 0 ok, 1 hard errors, 2 usage, 3 not in an actor project. Read-only commands never
 contact Cloudflare.
 
-## The runtime helper (`actors-toolkit/runtime`)
+## The runtime helper (`@actord/toolkit/runtime`)
 
 Actors stay native Durable Object classes that compose `actorRuntime(...)`. What it guarantees, each
 backed by tests in workerd (see `examples/release-radar/tests/`):
@@ -118,23 +118,23 @@ security boundary. Decision 0007 has the details and the platform behavior they 
 
 ## The Room
 
-`/actors-room` opens a pane beside the transcript (or above the prompt in a narrow terminal) with four tabs,
+`/actord-room` opens a pane beside the transcript (or above the prompt in a narrow terminal) with four tabs,
 pressed with the mouse or, once the pane has the keyboard (ctrl+x, then Tab), with `1`–`4`; `r` refreshes:
 
 - **Topology:** actors and routes, with additions (green, `+`) and removals (red, `-`) against the last
   commit. The Desktop app and VS Code draw an SVG diagram; the terminal draws text.
 - **Mailboxes:** each actor's latest messages with their outcomes, refreshed while tests run. Selecting a
-  message shows its causal path from `actors trace`, including *unknown* where recorded coverage ends.
-- **Contracts:** every message with its version and routes, and whether the last `actors check` passed or
+  message shows its causal path from `actord trace`, including *unknown* where recorded coverage ends.
+- **Contracts:** every message with its version and routes, and whether the last `actord check` passed or
   is stale.
-- **Evidence:** the latest `actors verify` report: proved locally, stub only, not guaranteed, blocked.
+- **Evidence:** the latest `actord verify` report: proved locally, stub only, not guaranteed, blocked.
 
 In an actor project a status line under the prompt summarizes the system, for example
 `3 actors · 5 routes · check ✓`. The Room also holds deploy, secret, and remote-write commands Claude tries
 to run in an actor project and asks you first, showing the semantic diff and deploy plan; the default is
 Refuse, and approving hands the command to Claude Code's normal permission check. It draws only what the
-CLI prints, calls no model, and is optional: everything it shows is available as `actors room`, `actors
-trace`, and `actors guard`, and the plugin's skills and hooks don't depend on it.
+CLI prints, calls no model, and is optional: everything it shows is available as `actord room`, `actord
+trace`, and `actord guard`, and the plugin's skills and hooks don't depend on it.
 
 ## Reference applications
 
@@ -143,7 +143,7 @@ trace`, and `actors guard`, and the plugin's skills and hooks don't depend on it
 | [`examples/release-radar`](examples/release-radar) | Deterministic-first: a scheduled poller (one actor per feed), a state-owning ledger that deduplicates and classifies by rule, a digest writer that notifies once per finding | 20, across duplicates, crashes before and after writes, eviction, retry exhaustion, ordering, schedule, lost acknowledgment |
 | [`examples/briefing-desk`](examples/briefing-desk) | Judgment-capable: intake, a model-assisted analyst per item (bounded budget, validated model output, cancellation while the model call is in flight), and human approval before a briefing leaves through a gateway with no idempotency key | 11, across reentrancy, model unavailable or slow, invalid model output, approval, denial, in-doubt delivery |
 
-Each app states its reliability claims in `actors.claims.json`: what is proved locally in workerd, what is
+Each app states its reliability claims in `actord.claims.json`: what is proved locally in workerd, what is
 shown only against a stub of an external system, and what is deliberately not guaranteed. Every claimed
 property must have a passing tagged test (`npm run verify` enforces this). Neither app needs a model API
 key: tests use deterministic doubles, and Briefing Desk's live Anthropic adapter is optional.
@@ -154,55 +154,55 @@ Everything this plugin runs on your machine is listed here. `tests/trust-section
 if a hook, mod event, mod call, or monitor command exists in `plugin/` without appearing in this section.
 
 **Hooks (settings-style command hooks; deterministic, no model calls):**
-- `PostToolUse` on `Write|Edit`: runs `bin/actors hook check-on-edit` (5 s timeout). It reads the edited path
-  from stdin and exits at once unless the file is `system.ts`, `wrangler.jsonc`, `actors.manifest.json`,
-  `src/index.ts`, or under `src/actors/` or `src/messages/` in an actor project. Otherwise it runs `actors check`
+- `PostToolUse` on `Write|Edit`: runs `bin/actord hook check-on-edit` (5 s timeout). It reads the edited path
+  from stdin and exits at once unless the file is `system.ts`, `wrangler.jsonc`, `actord.manifest.json`,
+  `src/index.ts`, or under `src/actors/` or `src/messages/` in an actor project. Otherwise it runs `actord check`
   within a 2-second budget and returns hard errors to Claude as context. It never blocks an edit, says
   nothing when clean, and logs one line if it runs out of time. Turn it off with the `check_on_edit` option.
-- `Stop`: runs `bin/actors hook evidence-gate` (10 s timeout). It does nothing unless you turn on the
-  `strict_evidence` option. Then, if actor files changed since the last passing `actors check` (recorded in
-  `.actors/last-check.json`), it blocks the stop once with "run `actors check` and the affected tests before
+- `Stop`: runs `bin/actord hook evidence-gate` (10 s timeout). It does nothing unless you turn on the
+  `strict_evidence` option. Then, if actor files changed since the last passing `actord check` (recorded in
+  `.actord/last-check.json`), it blocks the stop once with "run `actord check` and the affected tests before
   reporting". It never blocks twice in a turn.
 
 **The Room (a mod, `hooks/room.tsx`; deterministic, no model calls, approves nothing).** Its events, as
 `claude plugin validate plugin` lists them:
-- `session.start`: registers `/actors-room` (or `/actors-room-view` when another plugin owns the name). In an
-  interactive session it runs `actors room --json` once for the status line, for example
+- `session.start`: registers `/actord-room` (or `/actord-room-view` when another plugin owns the name). In an
+  interactive session it runs `actord room --json` once for the status line, for example
   `3 actors · 5 routes · check ✓`. Headless runs (`-p`, the SDK, evals) run nothing.
-- `classic.SessionStart`: after `/clear`, runs `actors room --json` again so the pane isn't empty.
-- `command.run{command=actors-room}` and `command.run{command=actors-room-view}`: open the pane (only when you
-  run the command) and start `actors room --follow --json`, which prints a new snapshot when the project's
-  files or `.actors/` evidence change.
-- `ui.close{id=actors-room}`: stops that follower.
-- `ui.render{component=Pane, requestId=actors-room}`: draws the Topology, Mailboxes, Contracts, and Evidence
-  tabs from the snapshot. Selecting a message runs `actors trace <id> --json`.
+- `classic.SessionStart`: after `/clear`, runs `actord room --json` again so the pane isn't empty.
+- `command.run{command=actord-room}` and `command.run{command=actord-room-view}`: open the pane (only when you
+  run the command) and start `actord room --follow --json`, which prints a new snapshot when the project's
+  files or `.actord/` evidence change.
+- `ui.close{id=actord-room}`: stops that follower.
+- `ui.render{component=Pane, requestId=actord-room}`: draws the Topology, Mailboxes, Contracts, and Evidence
+  tabs from the snapshot. Selecting a message runs `actord trace <id> --json`.
 - `tool.call{tool=Bash}`: the effect guard. A Bash command that matches the deploy, secret, or remote-write
   patterns (the table in `packages/cli/src/patterns.ts`, copied into `hooks/effect-patterns.ts` at build) is
-  passed to `actors guard --json`. Inside an actor project the guard holds it and asks you, showing the
+  passed to `actord guard --json`. Inside an actor project the guard holds it and asks you, showing the
   semantic diff summary and deploy plan; the default answer is Refuse. Refusing, dismissing, any failure (the
   hook's `.catch`), or a session with nobody to ask denies the command. "Run it" passes the command on
   unchanged, so Claude Code's own permission rules still apply. Other commands pass untouched.
 
-Its calls: `$.process.run` and `$.process.spawn` (only `bin/actors`: `room`, `trace`, `guard`),
+Its calls: `$.process.run` and `$.process.spawn` (only `bin/actord`: `room`, `trace`, `guard`),
 `$.command.list`, `$.command.register`, `$.session.surfaces`, `$.state.get`, `$.state.set`, `$.ui.ask`,
 `$.ui.log`, `$.ui.open`, `$.ui.panes` (after a reload, to restart the follower for a pane still up), `$.ui.resolve`, `$.ui.status`. It never uses `$.model`, `$.http`, `$.fs`,
 `$.prompt.submit`, `$.session.send`, or `tool.check`. Pane state lives in `$.state`; it stores nothing across
 sessions.
 
-**Monitor commands:** `bin/actors events --follow --notable --exclusive`, declared twice (`actor-events` and
+**Monitor commands:** `bin/actord events --follow --notable --exclusive`, declared twice (`actor-events` and
 `actor-events-reliability`) because each starts the first time its skill runs (`inspect`, `reliability`).
 It prints one line per notable local event (rejected or undeliverable message, handler failure, exhausted
 retry, in-doubt or failed effect), never one per message. `--exclusive` keeps it to one follower per session
 and project: a second start exits quietly. Monitors run only in interactive sessions.
 
-**Executables:** `bin/actors`, a POSIX `sh` launcher that runs `node dist/actors.mjs` or the project's
-pinned `node_modules/.bin/actors`. It never contacts the network.
+**Executables:** `bin/actord`, a POSIX `sh` launcher that runs `node dist/actord.mjs` or the project's
+pinned `node_modules/.bin/actord`. It never contacts the network.
 
 **What the toolkit never does:** call a model from its own machinery (the CLI, hooks, mod, monitor);
 approve a tool call; read, print, or store Cloudflare credentials; deploy, or write to a Cloudflare account.
 Deploys belong to `wrangler`, run by a person or by Claude after the person approves.
 
-**Enforcement, honestly stated.** The enforceable layers are Claude Code permission rules (`actors init`
+**Enforcement, honestly stated.** The enforceable layers are Claude Code permission rules (`actord init`
 generates `ask` rules for deploy, secret, and remote-write commands) and the scopes of your Cloudflare API
 tokens. Pattern-matching guards, including the Room's effect guard, are conveniences: they miss some
 spellings of a command, and mods are not sandboxed.
@@ -212,10 +212,10 @@ spellings of a command, and mods are not sandboxed.
 - **Not guaranteed by the runtime:** exactly-once external effects, global message ordering, transactions
   across actors, or a route as a security boundary. An effect without an idempotency key that loses its
   acknowledgment is reported `in_doubt`, never delivered. Nothing here undoes an external action.
-- **Local evidence only.** Tests run in workerd through Cloudflare's Vitest integration; `actors events` and
-  `actors trace` read logs from local runs and never see production. Nothing was deployed to Cloudflare.
+- **Local evidence only.** Tests run in workerd through Cloudflare's Vitest integration; `actord events` and
+  `actord trace` read logs from local runs and never see production. Nothing was deployed to Cloudflare.
 - **Inside Claude Code's default sandbox, workerd tests can't run** (the sandbox denies the loopback port
-  Miniflare needs), so `actors verify` reports `blocked` there rather than passing (decision 0004).
+  Miniflare needs), so `actord verify` reports `blocked` there rather than passing (decision 0004).
 - **Measured contribution is modest and uneven.** Two release eval runs: mean `Δ` +0.07 and +0.08, clearest
   on orientation, evolving a running system, adding a handler, deploy plans, and trace questions; near zero
   where the baseline already behaves well. Every safety case held. Inside eval runs agents can't run workerd
@@ -227,7 +227,7 @@ spellings of a command, and mods are not sandboxed.
   spellings slip past. Token scopes are the enforceable layer.
 - **Mods are an early-access Claude Code API** (2.1.287+); the Room is tested against 2.1.310 and may need
   changes as the API moves. The core works without it (`scripts/no-hooks-smoke.sh`).
-- **Not on npm yet.** `actors init` vendors the toolkit tarball the plugin ships until publishing is
+- **Not on npm yet.** `actord init` vendors the toolkit tarball the plugin ships until publishing is
   authorized.
 - Monitors run only in interactive sessions, and not on Bedrock, Google Cloud's Agent Platform, or Foundry
   before Claude Code 2.1.310.
@@ -236,7 +236,7 @@ spellings of a command, and mods are not sandboxed.
 
 `plugin/evals/` holds the `claude plugin eval` suite: six representative tasks, two adversarial ones,
 a deploy request, two prompts that must not trigger the plugin, and an onboarding case. Each runs with and
-without the plugin; `Δ` is what the plugin contributes. Results are graded from `.actors/evidence.json`,
+without the plugin; `Δ` is what the plugin contributes. Results are graded from `.actord/evidence.json`,
 paired with process graders. Run it from this repository, because the scaffolds build offline workspaces
 from `examples/`:
 

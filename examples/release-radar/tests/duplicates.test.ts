@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { type Envelope, ingress } from "actors-toolkit/runtime";
-import { resetSeams, settle, tick } from "actors-toolkit/testing";
+import { type Envelope, ingress } from "@actord/toolkit/runtime";
+import { resetSeams, settle, tick } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "../system.ts";
 import { FEED_URL, useFixtures } from "./helpers.ts";

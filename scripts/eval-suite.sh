@@ -17,7 +17,7 @@ log="$dir/$label.log"
 cd "$root"
 claude plugin eval plugin ${case_args[@]+"${case_args[@]}"} --scaffold --no-publish --trust-plugin --keep-temp \
   --model claude-sonnet-5-5 --judge-model claude-haiku-5-5 --max-cost-usd "$ceiling" -j 4 \
-  --allow-tools Write Edit "Bash(actors *)" "Bash(npx actors *)" "Bash(npx --no-install actors *)" "Bash(npm run *)" "Bash(npm test*)" \
+  --allow-tools Write Edit "Bash(actord *)" "Bash(npx actord *)" "Bash(npx --no-install actord *)" "Bash(*/bin/actord *)" "Bash(npm run *)" "Bash(npm test*)" \
   "Bash(npx vitest *)" "Bash(npx tsc *)" "Bash(git diff*)" "Bash(git status*)" "Bash(git log*)" \
   "Bash(git show*)" "Bash(git ls-files*)" "Bash(ls*)" "Bash(cat *)" "Bash(head *)" "Bash(tail *)" "Bash(wc *)" \
   "Bash(cd *)" "Bash(grep *)" "Bash(find *)" "Bash(sed *)" "Bash(mkdir *)" "Bash(mv *)" "Bash(cp *)" \
