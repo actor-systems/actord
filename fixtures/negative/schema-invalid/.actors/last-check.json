@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 0,
+  "codes": [
+    "error:MESSAGE_SCHEMA_INVALID"
+  ],
+  "fingerprint": "4f84fdb54c557e74",
+  "checkedAt": "2026-10-25T01:04:40.241Z"
+}

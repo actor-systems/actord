@@ -37,4 +37,6 @@ for (const file of readdirSync(join(here, "dist/types"), { recursive: true })) {
 mkdirSync(pluginDist, { recursive: true });
 copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actors.mjs"));
 writeFileSync(join(pluginDist, "VERSION"), `${pkg.version}\n`);
+// Until actors-toolkit is on npm, the plugin carries its package so `actors init` can pin it offline.
+execFileSync("npm", ["pack", "--silent", "--pack-destination", pluginDist], { cwd: here, stdio: ["ignore", "ignore", "inherit"] });
 console.log(`built actors-toolkit ${pkg.version} → dist/cli.mjs, plugin/dist/actors.mjs`);

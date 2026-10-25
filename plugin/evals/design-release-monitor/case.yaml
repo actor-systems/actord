@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: design-release-monitor
+description: Decompose the charter's release monitor into a justified topology
+context:
+  scaffold_script: scaffold.sh

@@ -1,0 +1,49 @@
+---
+name: implement
+description: Write or change actor code to match system.ts (message contracts, handlers, state, schedules, effects, model calls) in a Cloudflare Durable Objects actor project, starting from the current `actors check` output. Has the delivery-auditor review handlers that cause effects.
+paths: ["system.ts", "src/actors/**", "src/messages/**"]
+allowed-tools: Bash(actors check *) Bash(actors graph *) Bash(actors test *)
+---
+
+# Implement actor behavior
+
+Rules that hold for this whole skill:
+- **Change the declaration first.** Edit `system.ts`, then let the compiler and `actors check` show every
+  handler and send that no longer fits.
+- **Handlers are storage-only.** Each handler runs inside one storage transaction, so its writes, outgoing
+  messages, and effect intents commit together. Don't `await` network, model, or other slow work inside a
+  handler. Request it with `ctx.effect(name, input, { key })` and handle the declared `result` message.
+- **Assume every message can arrive twice.** Make writes idempotent: key rows by business id, upsert, and
+  use generation counters to drop stale results.
+- **Effects:** use an idempotency key when the destination honors one. Otherwise declare
+  `idempotency: "none"` and handle `in_doubt`. Never mark an unacknowledged effect as done.
+- **New capabilities are declared, never smuggled in.** Posting to a webhook, sending mail, or calling an
+  API becomes an effect in `system.ts` (with its idempotency) that the actor requests with `ctx.effect`. Never
+  call the network from a handler. The user's explicit request approves declaring it; if nobody asked, ask.
+- **Model output is untrusted input.** Validate it with a schema before acting, bound it with the actor's
+  `budget`, and route failures to a person.
+- Never deploy, and never add deploy commands to scripts.
+
+## Current state
+
+!`actors check --json || true`
+
+## Steps
+
+1. Read the diagnostics above. Fix every `error` before adding anything.
+2. Update `system.ts` and `src/messages/` for the change: new messages start at version 1, and a changed
+   contract gets a new version or stays backward compatible.
+3. Implement handlers with `actorRuntime(...)` (API: `references/runtime.md`). The class keeps a public
+   `receive(envelope)` and forwards `alarm()`. Add the binding and `exports` entry to `wrangler.jsonc`, and
+   export the class from the Worker entry.
+4. For every handler that requests an effect or calls a model, launch the `delivery-auditor` subagent on
+   those files and resolve its findings, by changing code or by adding the fault test it proposes.
+5. Write tests in workerd (`references/runtime.md`, Testing). Tag each with the claim it establishes,
+   such as `[duplicate-delivery]`, and add or update the claim in `actors.claims.json`.
+6. Run `actors check`, `actors graph --write`, and `actors test`, and fix what fails.
+
+Done when: the code builds; valid messages reach only declared handlers; malformed or unauthorized messages
+fail with a clear `rejected` reason (tested); `actors check` and the tests pass.
+
+Stop and ask before removing an actor that has stored data, or when a change relies on an external system's
+guarantee you can't verify.

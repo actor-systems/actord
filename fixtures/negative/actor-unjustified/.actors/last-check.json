@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 0,
+  "codes": [
+    "error:ACTOR_UNJUSTIFIED"
+  ],
+  "fingerprint": "eea2bd89e5b96ffc",
+  "checkedAt": "2026-10-25T01:04:39.247Z"
+}

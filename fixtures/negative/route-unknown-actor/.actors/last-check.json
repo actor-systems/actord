@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 1,
+  "codes": [
+    "error:ROUTE_UNKNOWN_ACTOR",
+    "warning:ACTOR_UNREACHABLE"
+  ],
+  "fingerprint": "793090461d22ad86",
+  "checkedAt": "2026-10-25T01:09:27.984Z"
+}

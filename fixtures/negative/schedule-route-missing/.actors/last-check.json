@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 1,
+  "codes": [
+    "error:SCHEDULE_ROUTE_MISSING",
+    "warning:MESSAGE_UNUSED"
+  ],
+  "fingerprint": "d81179d8d66771d9",
+  "checkedAt": "2026-10-25T01:04:40.153Z"
+}

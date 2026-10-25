@@ -2,6 +2,9 @@ import { parseArgs } from "node:util";
 import { VERSION } from "../version.ts";
 import { doctor } from "./commands/doctor.ts";
 import { events, followEvents, trace } from "./commands/events.ts";
+import { hook } from "./commands/hook.ts";
+import { init } from "./commands/init.ts";
+import { test, verify } from "./commands/verify.ts";
 import { check, diff, graph } from "./commands/model.ts";
 import { type CommandResult, toJson, UsageError } from "./output.ts";
 
@@ -11,6 +14,8 @@ Usage: actors <command> [options]
 
 Commands:
   doctor                       Check the environment, project, pins, and Cloudflare tooling
+  init [dir] [--adopt]         Create a starter project in an empty dir, or add the verify skill,
+       [--name N]              permission rules, and CLAUDE.md to an existing one (never overwrites)
   check [--changed <file>...]  Validate the declaration, routes, schemas, config, and manifest
         [--format brief]       (brief: hard errors only, silent when clean; for hooks)
   graph [--write]              Print the topology; --write updates actors.manifest.json
@@ -20,6 +25,9 @@ Commands:
          [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only
          [--correlation C] [--file F]
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
+  test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
+  verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
+         [--profile extended]  .actors/evidence.json (verdict pass, fail, or blocked)
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
@@ -47,7 +55,17 @@ const commands: Record<string, Handler> = {
   events: ({ cwd, values }) =>
     events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
   trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
+  init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit) }),
+  verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
+  test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
 };
+
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 export async function main(argv: string[], io = { out: process.stdout, err: process.stderr, cwd: process.cwd() }): Promise<number> {
   try {
@@ -68,6 +86,11 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
         kind: { type: "string" },
         correlation: { type: "string" },
         file: { type: "string" },
+        adopt: { type: "boolean" },
+        name: { type: "string" },
+        toolkit: { type: "string" },
+        out: { type: "string" },
+        profile: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -81,6 +104,7 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
       io.out.write(`${HELP}\n`);
       return name || values.help ? 0 : 2;
     }
+    if (name === "hook") return await hook(rest[0], await readStdin(), process.env, io.out, io.err);
     const handler = commands[name];
     if (!handler) throw new UsageError(`unknown command "${name}"`);
     const json = values.json === true;

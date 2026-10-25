@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { checkProject, type Diagnostic } from "../../model/check.ts";
 import { type DiffResult, diffManifests, EMPTY_MANIFEST } from "../../model/diff.ts";
+import { fingerprint } from "../../model/fingerprint.ts";
 import { loadProject, type Project } from "../../model/load.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "../../model/manifest.ts";
 import type { CommandResult } from "../output.ts";
@@ -45,6 +46,7 @@ export async function check(cwd: string, opts: { changed?: string[]; format?: st
   const errors = diagnostics.filter((d) => d.severity === "error").length;
   const warnings = diagnostics.length - errors;
   const data = { projectRoot: root, skipped: false, ok: errors === 0, errors, warnings, diagnostics };
+  recordCheck(root, data);
   let text: string;
   if (opts.format === "brief") {
     // For the edit-time hook: hard errors only, nothing when clean.
@@ -58,6 +60,27 @@ export async function check(cwd: string, opts: { changed?: string[]; format?: st
     text = lines.join("\n");
   }
   return { data, text, exitCode: errors === 0 ? 0 : 1 };
+}
+
+export const LAST_CHECK_FILE = ".actors/last-check.json";
+
+/** Local evidence for the evidence gate and the Room: the outcome of the latest full check. */
+function recordCheck(root: string, data: { ok: boolean; errors: number; warnings: number; diagnostics: Diagnostic[] }): void {
+  try {
+    mkdirSync(join(root, ".actors"), { recursive: true });
+    const record = {
+      schemaVersion: 1,
+      ok: data.ok,
+      errors: data.errors,
+      warnings: data.warnings,
+      codes: data.diagnostics.map((d) => `${d.severity}:${d.code}`),
+      fingerprint: fingerprint(root),
+      checkedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(root, LAST_CHECK_FILE), `${JSON.stringify(record, null, 2)}\n`);
+  } catch {
+    // A read-only checkout still gets its check result; only the local record is skipped.
+  }
 }
 
 export interface GraphData {

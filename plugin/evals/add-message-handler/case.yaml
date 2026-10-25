@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: add-message-handler
+description: Add a message field and handler behavior across two actors
+context:
+  scaffold_script: scaffold.sh

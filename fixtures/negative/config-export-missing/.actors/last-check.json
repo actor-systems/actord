@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 0,
+  "codes": [
+    "error:CONFIG_EXPORT_MISSING"
+  ],
+  "fingerprint": "58be4e4b130e3612",
+  "checkedAt": "2026-10-25T01:04:39.522Z"
+}

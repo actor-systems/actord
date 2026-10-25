@@ -42,19 +42,25 @@ Run `/actors:start` in a session. It runs `actors doctor`, explains what it foun
 
 | Component | Job |
 | --- | --- |
-| Skill `start` | Orientation: runs `actors doctor`, points to the reference apps |
+| Skills `start`, `setup`, `design`, `implement`, `reliability`, `inspect`, `evolve` | The workflow in [`docs/workflow.md`](docs/workflow.md), namespaced `/actors:<name>` |
+| Subagents `boundary-critic`, `delivery-auditor` | Read-only critics: one argues for fewer actors, the other audits idempotency, reentrancy, and in-doubt honesty. Each objection comes with the test that would settle it |
+| Hooks | Edit-time contract feedback (`check_on_edit`, on by default); an opt-in evidence gate before stopping (`strict_evidence`) |
+| Options (`userConfig`) | `check_on_edit` (true), `strict_evidence` (false), `fault_profile` (`standard` or `extended`); no credentials |
 | `bin/actors` | The deterministic machine interface, on `PATH` while the plugin is enabled. It prefers a project's pinned `actors-toolkit` (`node_modules/.bin/actors`), so Claude and CI run the same version; otherwise it runs the bundled single-file build in `dist/` |
 
 ## The `actors` CLI
 
 | Command | What it does |
 | --- | --- |
+| `actors init [dir] [--adopt]` | Creates a tested starter project (or adds the verify skill, `ask` rules, and CLAUDE.md to an existing one); never overwrites |
 | `actors doctor [--json]` | Checks Node, Claude Code, the project, CLI version pinning, Worker config, the verify skill, and permission rules, and reports actionable fixes |
 | `actors check [--changed <file>...] [--format brief] [--json]` | Validates what the compiler can't: routes, schemas, schedules, effects, budgets, `wrangler.jsonc` bindings and `exports`, Worker entry exports, and manifest freshness. Hard errors exit 1; warnings advise |
 | `actors graph [--write] [--json]` | Prints the topology; `--write` updates the derived `actors.manifest.json` |
 | `actors diff [--base <ref>] [--base-file <path>] [--json]` | Classifies architectural changes against the manifest committed at `<ref>` (default `HEAD`): compatible, breaking, or risky; approval-required; irreversible. Ends with a deploy plan, never a deploy |
 
 | `actors events [--follow] [--notable] [--json]` | Queries or follows the local structured event log (`.actors/events.ndjson`, written by tests); `--json` prints NDJSON, `--notable` keeps faults only |
+| `actors test [--profile extended]` | Runs the workerd tests (the standard profile skips `[extended]` tests) |
+| `actors verify [--out F] [--json]` | Typecheck, `actors check`, workerd tests, and claim classification; writes `.actors/evidence.json` with verdict `pass`, `fail`, or `blocked` (for example, a sandbox that denies the local port workerd needs) |
 | `actors trace <message-id> [--json]` | Follows a message's causes and consequences, with outcomes, retries, and effects; says *unknown* where recorded coverage ends and never invents production history |
 
 Every command offers `--json` with a `schemaVersion` and a `volatile` list naming the machine-dependent
@@ -94,7 +100,16 @@ key: tests use deterministic doubles, and Briefing Desk's live Anthropic adapter
 Everything this plugin runs on your machine is listed here. `tests/trust-section.test.mjs` fails the build
 if a hook, mod event, mod call, or monitor command exists in `plugin/` without appearing in this section.
 
-**Hooks (settings-style command hooks):** none yet.
+**Hooks (settings-style command hooks; deterministic, no model calls):**
+- `PostToolUse` on `Write|Edit`: runs `bin/actors hook check-on-edit` (5 s timeout). It reads the edited path
+  from stdin and exits at once unless the file is `system.ts`, `wrangler.jsonc`, `actors.manifest.json`,
+  `src/index.ts`, or under `src/actors/` or `src/messages/` in an actor project. Otherwise it runs `actors check`
+  within a 2-second budget and returns hard errors to Claude as context. It never blocks an edit, says
+  nothing when clean, and logs one line if it runs out of time. Turn it off with the `check_on_edit` option.
+- `Stop`: runs `bin/actors hook evidence-gate` (10 s timeout). It does nothing unless you turn on the
+  `strict_evidence` option. Then, if actor files changed since the last passing `actors check` (recorded in
+  `.actors/last-check.json`), it blocks the stop once with "run `actors check` and the affected tests before
+  reporting". It never blocks twice in a turn.
 
 **Mod events (the Room):** none yet.
 
@@ -113,6 +128,22 @@ Deploys belong to `wrangler`, run by a person or by Claude after the person appr
 generates `ask` rules for deploy, secret, and remote-write commands) and the scopes of your Cloudflare API
 tokens. Pattern-matching guards, including the Room's effect guard, are conveniences: they miss some
 spellings of a command, and mods are not sandboxed.
+
+## Evaluations
+
+`plugin/evals/` holds the `claude plugin eval` suite: six representative tasks, two adversarial ones,
+a deploy request, two prompts that must not trigger the plugin, and an onboarding case. Each runs with and
+without the plugin; `Δ` is what the plugin contributes. Results are graded from `.actors/evidence.json`,
+paired with process graders. Run it from this repository, because the scaffolds build offline workspaces
+from `examples/`:
+
+```sh
+claude plugin eval plugin --scaffold --no-publish --trust-plugin --model <pinned> --judge-model <pinned> \
+  --max-cost-usd <ceiling> --allow-tools Write Edit "Bash(actors *)" "Bash(npx actors *)" "Bash(npm run *)" \
+  "Bash(npm test*)" "Bash(npx vitest *)" "Bash(npx tsc *)" "Bash(git diff*)" "Bash(git status*)" --json docs/evidence/evals/<date>.json
+```
+
+Model-backed runs spend real usage, so they're a separate, explicit lane, never part of `npm run verify`.
 
 ## Developing this repository
 

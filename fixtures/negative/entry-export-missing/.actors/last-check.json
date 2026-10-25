@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 0,
+  "codes": [
+    "error:ENTRY_EXPORT_MISSING"
+  ],
+  "fingerprint": "36cdcc778145436e",
+  "checkedAt": "2026-10-25T01:04:39.780Z"
+}

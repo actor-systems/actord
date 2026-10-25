@@ -8,7 +8,7 @@
     "typecheck": "wrangler types >/dev/null && tsc --noEmit",
     "test": "vitest run",
     "check": "actors check",
-    "verify": "npm run typecheck && actors check && vitest run",
+    "verify": "actors verify",
     "dev": "wrangler dev"
   },
   "devDependencies": {

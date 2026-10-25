@@ -3,18 +3,26 @@ Actor-Native Cloudflare Toolkit (actors) 0.1.0
   Source: actors@actors-toolkit
 
 Component inventory
-  Skills (1)  start
-  Agents (0)
-  Hooks (0)
+  Skills (7)  design, evolve, implement, inspect, reliability, setup, start
+  Agents (2)  boundary-critic, delivery-auditor
+  Hooks (2)  PostToolUse, Stop  (harness-only — no model context cost)
   MCP servers (0)
   LSP servers (0)
 
 Projected token cost
-  Always-on:   ~66 tok   added to every session
+  Always-on:   ~675 tok   added to every session
 
 Per-component (rounded)
-  component  always-on  on-invoke
-  start            ~70       ~510
+  component         always-on  on-invoke
+  design                  ~90       ~770
+  inspect                 ~70       ~420
+  setup                   ~80       ~560
+  start                   ~70       ~510
+  evolve                  ~80       ~540
+  reliability             ~90       ~550
+  implement               ~70       ~620
+  boundary-critic         ~70       ~450
+  delivery-auditor        ~60       ~630
 
   On-invoke cost is paid each time a skill or agent fires.
   Token counts are estimates and may differ from actual usage.

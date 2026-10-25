@@ -3,7 +3,39 @@
   "displayName": "Actor-Native Cloudflare Toolkit",
   "version": "0.1.0",
   "description": "Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.",
-  "author": { "name": "Actor-Native Cloudflare Toolkit contributors" },
+  "author": {
+    "name": "Actor-Native Cloudflare Toolkit contributors"
+  },
   "license": "Apache-2.0",
-  "keywords": ["cloudflare", "durable-objects", "actors", "workers", "messaging"]
+  "keywords": [
+    "cloudflare",
+    "durable-objects",
+    "actors",
+    "workers",
+    "messaging"
+  ],
+  "userConfig": {
+    "check_on_edit": {
+      "type": "boolean",
+      "title": "Check actor files on edit",
+      "description": "After Claude edits system.ts, an actor, or a message contract, run actors check and report hard errors to Claude. Silent when clean.",
+      "default": true
+    },
+    "strict_evidence": {
+      "type": "boolean",
+      "title": "Require evidence before stopping",
+      "description": "If actor files changed since the last passing actors check, ask Claude once to run the check and affected tests before it reports.",
+      "default": false
+    },
+    "fault_profile": {
+      "type": "string",
+      "title": "Fault test profile",
+      "description": "Which fault tests the reliability workflow runs: standard (fast) or extended (adds [extended] stress tests).",
+      "options": [
+        "standard",
+        "extended"
+      ],
+      "default": "standard"
+    }
+  }
 }

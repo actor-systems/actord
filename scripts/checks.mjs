@@ -80,7 +80,31 @@ export const gates = [
     title: "Agentic example",
     requires: ["g4.desk.typecheck", "g4.desk.check", "g4.desk.runtime", "g4.desk.trace", "g4.runtime.probe"],
   },
+  {
+    id: "G5",
+    title: "Agent-guided development",
+    requires: [
+      "g5.cli.unit",
+      "g5.skills.lint",
+      "g5.evals.static",
+      "g5.inventory",
+      "g5.starter.smoke",
+      "g5.verify.blocked",
+      "g5.examples.verify",
+      "g5.evals.run",
+    ],
+  },
 ];
+
+/** The newest recorded eval result (docs/evidence/evals/*.json), or null. */
+export function latestEvalRun(root) {
+  const dir = join(root, "docs/evidence/evals");
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
+  if (!files.length) return null;
+  const file = files.at(-1);
+  return { file: `docs/evidence/evals/${file}`, doc: JSON.parse(readFileSync(join(dir, file), "utf8")) };
+}
 
 
 
@@ -172,4 +196,41 @@ export const checks = [
   command("g4.desk.runtime", "G4", "Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt)", "node scripts/run-example-tests.mjs examples/briefing-desk"),
   command("g4.desk.trace", "G4", "The stale model result traces to its cancelled item", "scripts/trace-stale-smoke.sh"),
   command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/cli" }),
+  command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/cli" }),
+  command("g5.skills.lint", "G5", "Seven skills and two read-only critics follow the charter's authoring rules", "node --test tests/skills.test.mjs"),
+  command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
+  {
+    id: "g5.inventory",
+    gate: "G5",
+    title: "claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens",
+    command: "scripts/budget.sh && grep docs/evidence/plugin-details.txt",
+    async run({ sh, root }) {
+      const r = sh("scripts/budget.sh");
+      const details = existsSync(join(root, "docs/evidence/plugin-details.txt")) ? readFileSync(join(root, "docs/evidence/plugin-details.txt"), "utf8") : "";
+      const ok = r.code === 0 && /Skills \(7\)/.test(details) && /Agents \(2\)/.test(details);
+      const m = /\{"pluginDir".*\}/.exec(r.output);
+      return { ...r, status: ok ? "pass" : "fail", reason: m ? `always-on ~${JSON.parse(m[0]).max} tokens` : "could not measure" };
+    },
+  },
+  command("g5.starter.smoke", "G5", "A fresh starter from actors init verifies PASS offline; regenerating changes nothing", "scripts/starter-smoke.sh"),
+  command("g5.verify.blocked", "G5", "actors verify inside the default sandbox reports BLOCKED, static evidence passing", "scripts/verify-blocked.sh"),
+  command("g5.examples.verify", "G5", "actors verify passes on both reference apps", "cd examples/release-radar && node ../../plugin/dist/actors.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actors.mjs verify"),
+  {
+    id: "g5.evals.run",
+    gate: "G5",
+    title: "Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0",
+    command: "claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
+    async run({ root }) {
+      const run = latestEvalRun(root);
+      if (!run) return { status: "blocked", reason: "model-backed; awaiting owner approval of the eval lane ($50 total ceiling)" };
+      const cases = run.doc.cases ?? [];
+      const strict = cases.filter((c) => c.name.startsWith("safety-") || c.name.startsWith("negative-"));
+      const failing = strict.filter((c) => (c.aggregates?.score ?? 0) < 1);
+      const deltas = cases.map((c) => `${c.name} Δ${c.aggregates?.delta ?? "n/a"}`).join(", ");
+      const reason = `${run.file}: score ${run.doc.aggregates?.overallScore}, mean Δ ${run.doc.aggregates?.meanDelta}; ${deltas}`;
+      return failing.length
+        ? { status: "fail", reason: `below 1.0: ${failing.map((c) => c.name).join(", ")}. ${reason}`, evidenceSource: "eval-run" }
+        : { status: "pass", reason, evidenceSource: "eval-run" };
+    },
+  },
 ];

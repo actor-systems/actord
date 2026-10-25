@@ -288,8 +288,8 @@ function icon(s) {
 }
 
 // src/cli/commands/events.ts
-import { closeSync, existsSync as existsSync5, openSync, readSync, statSync as statSync2 } from "node:fs";
-import { join as join5, relative as relative2, resolve as resolve4 } from "node:path";
+import { closeSync, existsSync as existsSync6, openSync, readSync, statSync as statSync3 } from "node:fs";
+import { join as join6, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/model/events.ts
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
@@ -444,8 +444,8 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
 
 // src/cli/commands/model.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { readFileSync as readFileSync5, writeFileSync } from "node:fs";
-import { join as join4, relative, resolve as resolve3 } from "node:path";
+import { mkdirSync, readFileSync as readFileSync6, writeFileSync } from "node:fs";
+import { join as join5, relative as relative2, resolve as resolve3 } from "node:path";
 
 // src/cli/output.ts
 var VOLATILE = {
@@ -836,9 +836,30 @@ function plan(changes, head) {
   return steps;
 }
 
+// src/model/fingerprint.ts
+import { createHash } from "node:crypto";
+import { existsSync as existsSync4, readdirSync, readFileSync as readFileSync4, statSync } from "node:fs";
+import { join as join3, relative } from "node:path";
+var ROOTS = ["system.ts", "wrangler.jsonc", "wrangler.json", "src/index.ts", "src/actors", "src/messages"];
+function actorFiles(root) {
+  const out = [];
+  const walk = (p) => {
+    if (!existsSync4(p)) return;
+    if (statSync(p).isDirectory()) for (const e of readdirSync(p).sort()) walk(join3(p, e));
+    else if (/\.(ts|jsonc?|mts)$/.test(p)) out.push(relative(root, p));
+  };
+  for (const r of ROOTS) walk(join3(root, r));
+  return out.sort();
+}
+function fingerprint(root) {
+  const h = createHash("sha256");
+  for (const f of actorFiles(root)) h.update(f).update("\0").update(readFileSync4(join3(root, f))).update("\0");
+  return h.digest("hex").slice(0, 16);
+}
+
 // src/model/load.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4, statSync } from "node:fs";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
+import { dirname as dirname2, join as join4, resolve as resolve2 } from "node:path";
 import { pathToFileURL } from "node:url";
 async function loadProject(root) {
   const project = {
@@ -854,7 +875,7 @@ async function loadProject(root) {
     committedManifestRaw: null
   };
   try {
-    const mod = await import(pathToFileURL(join3(root, DECLARATION_FILE)).href);
+    const mod = await import(pathToFileURL(join4(root, DECLARATION_FILE)).href);
     const candidate = mod.default ?? mod.system;
     if (!isSystem(candidate)) {
       project.loadError = "system.ts must `export default defineSystem({...})` from actors-toolkit/system";
@@ -866,9 +887,9 @@ async function loadProject(root) {
     project.loadError = explainLoadError(err);
   }
   for (const file of ["wrangler.jsonc", "wrangler.json"]) {
-    if (existsSync4(join3(root, file))) {
+    if (existsSync5(join4(root, file))) {
       project.configFile = file;
-      project.config = readJsonc(join3(root, file));
+      project.config = readJsonc(join4(root, file));
       break;
     }
   }
@@ -876,9 +897,9 @@ async function loadProject(root) {
     project.entryFile = project.config.main;
     project.entryExports = collectExports(resolve2(root, project.config.main), /* @__PURE__ */ new Set());
   }
-  const manifestPath = join3(root, MANIFEST_FILE);
-  if (existsSync4(manifestPath)) {
-    project.committedManifestRaw = readFileSync4(manifestPath, "utf8");
+  const manifestPath = join4(root, MANIFEST_FILE);
+  if (existsSync5(manifestPath)) {
+    project.committedManifestRaw = readFileSync5(manifestPath, "utf8");
     project.committedManifest = readJson(manifestPath);
   }
   return project;
@@ -894,9 +915,9 @@ function explainLoadError(err) {
 var EXPORT_RE = /export\s+(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]*)\}(?:\s*from\s*["']([^"']+)["'])?|export\s*\*\s*from\s*["']([^"']+)["']/g;
 function collectExports(file, seen) {
   const names = /* @__PURE__ */ new Set();
-  if (seen.has(file) || !existsSync4(file) || !statSync(file).isFile()) return names;
+  if (seen.has(file) || !existsSync5(file) || !statSync2(file).isFile()) return names;
   seen.add(file);
-  const source = readFileSync4(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  const source = readFileSync5(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   for (const m of source.matchAll(EXPORT_RE)) {
     if (m[1]) names.add(m[1]);
     if (m[2] !== void 0) {
@@ -917,8 +938,8 @@ function collectExports(file, seen) {
 function resolveRelative(dir, spec) {
   if (!spec.startsWith(".")) return null;
   const base = resolve2(dir, spec);
-  for (const candidate of [base, base.replace(/\.js$/, ".ts"), `${base}.ts`, join3(base, "index.ts")]) {
-    if (existsSync4(candidate) && statSync(candidate).isFile()) return candidate;
+  for (const candidate of [base, base.replace(/\.js$/, ".ts"), `${base}.ts`, join4(base, "index.ts")]) {
+    if (existsSync5(candidate) && statSync2(candidate).isFile()) return candidate;
   }
   return null;
 }
@@ -937,7 +958,7 @@ async function check(cwd, opts) {
   const root = findProjectRoot(cwd);
   if (!root) return noProject(cwd, { skipped: true, ok: true, errors: 0, warnings: 0, diagnostics: [] });
   if (opts.changed && opts.changed.length > 0) {
-    const touched = opts.changed.map((f) => relative(root, resolve3(cwd, f))).filter((f) => !f.startsWith(".."));
+    const touched = opts.changed.map((f) => relative2(root, resolve3(cwd, f))).filter((f) => !f.startsWith(".."));
     if (!touched.some((f) => RELEVANT.some((re) => re.test(f)))) {
       return { data: { projectRoot: root, skipped: true, ok: true, errors: 0, warnings: 0, diagnostics: [] }, text: opts.format === "brief" ? "" : "No actor files changed; nothing to check.", exitCode: 0 };
     }
@@ -947,6 +968,7 @@ async function check(cwd, opts) {
   const errors = diagnostics.filter((d) => d.severity === "error").length;
   const warnings = diagnostics.length - errors;
   const data = { projectRoot: root, skipped: false, ok: errors === 0, errors, warnings, diagnostics };
+  recordCheck(root, data);
   let text;
   if (opts.format === "brief") {
     text = diagnostics.filter((d) => d.severity === "error").map((d) => `actors check: ${d.code} ${d.subject ?? ""}: ${d.message}${d.fix ? ` (fix: ${d.fix})` : ""}`).join("\n");
@@ -958,6 +980,24 @@ async function check(cwd, opts) {
   }
   return { data, text, exitCode: errors === 0 ? 0 : 1 };
 }
+var LAST_CHECK_FILE = ".actors/last-check.json";
+function recordCheck(root, data) {
+  try {
+    mkdirSync(join5(root, ".actors"), { recursive: true });
+    const record = {
+      schemaVersion: 1,
+      ok: data.ok,
+      errors: data.errors,
+      warnings: data.warnings,
+      codes: data.diagnostics.map((d) => `${d.severity}:${d.code}`),
+      fingerprint: fingerprint(root),
+      checkedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    writeFileSync(join5(root, LAST_CHECK_FILE), `${JSON.stringify(record, null, 2)}
+`);
+  } catch {
+  }
+}
 async function graph(cwd, opts) {
   const root = findProjectRoot(cwd);
   if (!root) return noProject(cwd, { manifest: null, written: null });
@@ -965,7 +1005,7 @@ async function graph(cwd, opts) {
   if (!project.manifest) return { data: { projectRoot: root, manifest: null, written: null }, text: `\u2717 ${project.loadError}`, exitCode: 1 };
   let written = null;
   if (opts.write) {
-    writeFileSync(join4(root, MANIFEST_FILE), serializeManifest(project.manifest));
+    writeFileSync(join5(root, MANIFEST_FILE), serializeManifest(project.manifest));
     written = MANIFEST_FILE;
   }
   const text = renderGraph(project.manifest) + (written ? `
@@ -1004,7 +1044,7 @@ async function diff(cwd, opts) {
   let base = EMPTY_MANIFEST;
   let source = "none";
   if (opts.baseFile) {
-    base = JSON.parse(readFileSync5(resolve3(cwd, opts.baseFile), "utf8"));
+    base = JSON.parse(readFileSync6(resolve3(cwd, opts.baseFile), "utf8"));
     source = `file:${opts.baseFile}`;
   } else {
     const ref = opts.base ?? "HEAD";
@@ -1016,14 +1056,14 @@ async function diff(cwd, opts) {
       notes.push(`No ${MANIFEST_FILE} at ${ref}; the whole system is shown as added. Commit the manifest (\`actors graph --write\`) to diff against it.`);
     }
   }
-  const result = diffManifests(base, project.manifest);
-  const data = { projectRoot: root, base: { source, system: base.system.name }, head: { system: project.manifest.system.name }, notes, ...result };
+  const result2 = diffManifests(base, project.manifest);
+  const data = { projectRoot: root, base: { source, system: base.system.name }, head: { system: project.manifest.system.name }, notes, ...result2 };
   return { data, text: renderDiff(data), exitCode: 0 };
 }
 function gitShow(root, ref, file) {
   const top = spawnSync2("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (top.status !== 0) return null;
-  const rel = relative(top.stdout.trim(), join4(root, file));
+  const rel = relative2(top.stdout.trim(), join5(root, file));
   const r = spawnSync2("git", ["-C", root, "show", `${ref}:${rel}`], { encoding: "utf8" });
   return r.status === 0 ? r.stdout : null;
 }
@@ -1043,7 +1083,7 @@ function renderDiff(d) {
 function eventsPath(cwd, file) {
   if (file) return { path: resolve4(cwd, file), root: findProjectRoot(cwd) };
   const root = findProjectRoot(cwd);
-  return { path: root ? join5(root, EVENTS_FILE) : null, root };
+  return { path: root ? join6(root, EVENTS_FILE) : null, root };
 }
 function keep(e, f) {
   if (f.notable && !NOTABLE.has(e.kind)) return false;
@@ -1057,7 +1097,7 @@ function events(cwd, opts) {
   const { path, root } = eventsPath(cwd, opts.file);
   if (!path) return { data: { projectRoot: null, file: null, count: 0, unparseable: 0, events: [] }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
   const log = readEvents(path);
-  const file = root ? relative2(root, path) : path;
+  const file = root ? relative3(root, path) : path;
   if (!log) return { data: { projectRoot: root, file, count: 0, unparseable: 0, events: [] }, text: NO_EVENTS, exitCode: 0 };
   const selected = log.events.filter((e) => keep(e, opts));
   return {
@@ -1079,8 +1119,8 @@ async function followEvents(cwd, opts, out) {
 ` : `${formatEvent(e)}
 `);
   for (; ; ) {
-    if (existsSync5(path)) {
-      const size = statSync2(path).size;
+    if (existsSync6(path)) {
+      const size = statSync3(path).size;
       if (size < offset) {
         offset = 0;
         partial = "";
@@ -1108,11 +1148,600 @@ function trace(cwd, id, opts) {
   const empty = (file2, events2) => ({ projectRoot: root, found: false, target: id ?? "", correlationId: null, rootCauseUnknown: false, root: null, coverage: { file: file2, events: events2, note } });
   if (!id) return { data: empty(null, 0), text: "usage: actors trace <message-id> [--json] [--file <events.ndjson>]", exitCode: 2 };
   if (!path) return { data: empty(null, 0), text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
-  const file = root ? relative2(root, path) : path;
+  const file = root ? relative3(root, path) : path;
   const log = readEvents(path);
   if (!log) return { data: empty(file, 0), text: `unknown: ${id}. ${NO_EVENTS}`, exitCode: 1 };
   const t = buildTrace(log, id);
   return { data: { projectRoot: root, ...t, coverage: { file, events: log.events.length, note } }, text: renderTrace(t, file), exitCode: t.found ? 0 : 1 };
+}
+
+// src/cli/commands/hook.ts
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
+import { dirname as dirname3, join as join7, relative as relative4 } from "node:path";
+var RELEVANT2 = /(^|\/)(system\.ts|wrangler\.jsonc?|actors\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
+var BUDGET_MS = 2e3;
+async function hook(name, stdin, env, out, err) {
+  let input = {};
+  try {
+    input = stdin.trim() ? JSON.parse(stdin) : {};
+  } catch {
+    return 0;
+  }
+  if (name === "check-on-edit") return checkOnEdit(input, env, out, err);
+  if (name === "evidence-gate") return evidenceGate(input, env, out);
+  err.write(`actors hook: unknown hook "${name ?? ""}"
+`);
+  return 0;
+}
+async function checkOnEdit(input, env, out, err) {
+  if (env.CLAUDE_PLUGIN_OPTION_CHECK_ON_EDIT === "false") return 0;
+  const file = input.tool_input?.file_path;
+  if (!file || !RELEVANT2.test(file.replaceAll("\\", "/"))) return 0;
+  const root = findProjectRoot(dirname3(file));
+  if (!root) return 0;
+  const timer = new Promise((r) => setTimeout(() => r("timeout"), BUDGET_MS).unref());
+  const result2 = await Promise.race([check(root, { changed: [file], format: "brief" }), timer]);
+  if (result2 === "timeout") {
+    err.write(`actors: check-on-edit skipped (over its ${BUDGET_MS / 1e3}s budget); run \`actors check\`
+`);
+    return 0;
+  }
+  if (result2.data.errors === 0) return 0;
+  const context = `${result2.text}
+These are hard errors from \`actors check\` after editing ${relative4(root, file)}. Fix them, or explain why the declaration should change.`;
+  out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: context } })}
+`);
+  return 0;
+}
+function evidenceGate(input, env, out) {
+  if (env.CLAUDE_PLUGIN_OPTION_STRICT_EVIDENCE !== "true") return 0;
+  if (input.stop_hook_active) return 0;
+  const root = findProjectRoot(input.cwd ?? process.cwd());
+  if (!root) return 0;
+  let last = null;
+  try {
+    last = JSON.parse(readFileSync7(join7(root, LAST_CHECK_FILE), "utf8"));
+  } catch {
+    last = null;
+  }
+  if (last?.ok && last.fingerprint === fingerprint(root)) return 0;
+  if (!last && !actorFilesModified(root)) return 0;
+  out.write(
+    `${JSON.stringify({ decision: "block", reason: "Actor files changed since the last passing check: run `actors check` and the affected tests before reporting." })}
+`
+  );
+  return 0;
+}
+function actorFilesModified(root) {
+  if (!existsSync7(join7(root, ".git")) && spawnSync3("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
+  const r = spawnSync3("git", ["-C", root, "status", "--porcelain", "--", "system.ts", "src/actors", "src/messages", "src/index.ts", "wrangler.jsonc"], {
+    encoding: "utf8"
+  });
+  return r.status === 0 && r.stdout.trim().length > 0;
+}
+
+// src/cli/commands/init.ts
+import { copyFileSync, existsSync as existsSync8, mkdirSync as mkdirSync2, readdirSync as readdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename, dirname as dirname4, join as join8, resolve as resolve5 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// src/templates/project.ts
+var PINNED = {
+  "@cloudflare/vitest-plugin": "1.4.7",
+  typescript: "7.0.2",
+  vitest: "5.0.5",
+  wrangler: "4.152.0",
+  zod: "4.6.5"
+};
+function verifySkill() {
+  return `---
+name: verify
+description: Run this actor project's evidence workflow (typecheck, actors check, workerd tests, reliability claims) before committing or before reporting work as done.
+allowed-tools: Bash(npm run verify) Bash(npx actors verify *)
+---
+
+# Verify
+
+1. Run \`npm run verify\`. It runs \`actors verify\`, which writes \`.actors/evidence.json\`.
+2. Report the verdict exactly: \`pass\`, \`fail\`, or \`blocked\`, with each failing step and claim.
+   \`blocked\` means a check couldn't run (for example, the sandbox denies the local port workerd needs).
+   It is not a pass.
+3. Don't commit or call the work done while the verdict is \`fail\`. Fix the cause, or say plainly what
+   is still failing.
+
+Evidence comes from the commands above, not from reading the code. Deploying is never part of
+verification; it needs a person's approval.
+`;
+}
+function settingsJson() {
+  return `${JSON.stringify(
+    {
+      $comment: "Generated by actors init from the same table as the toolkit's effect guard. Deploys, secrets, and remote writes need a person's approval.",
+      permissions: { ask: askRules() }
+    },
+    null,
+    2
+  )}
+`;
+}
+function claudeMd(name) {
+  return `# ${name}
+
+An actor system on Cloudflare Durable Objects, built with actors-toolkit.
+- The declaration is \`system.ts\` (actors, messages, routes, effects). Actors live in \`src/actors/\`, contracts in \`src/messages/\`.
+- \`npx actors check\` validates what the compiler can't; \`npx actors graph\` prints the topology.
+- \`npm test\` runs workerd tests and records events in \`.actors/events.ndjson\`; \`npx actors trace <id>\` explains one.
+- \`npm run verify\` runs everything and writes \`.actors/evidence.json\`. Run it before committing.
+- Deploys need a person's approval; never run \`wrangler deploy\` unasked.
+`;
+}
+function starterFiles(name, toolkitSpec) {
+  return {
+    "package.json": `${JSON.stringify(
+      {
+        name,
+        private: true,
+        type: "module",
+        scripts: {
+          types: "wrangler types",
+          typecheck: "wrangler types >/dev/null && tsc --noEmit",
+          test: "vitest run",
+          check: "actors check",
+          verify: "actors verify",
+          dev: "wrangler dev"
+        },
+        devDependencies: { "actors-toolkit": toolkitSpec, ...PINNED }
+      },
+      null,
+      2
+    )}
+`,
+    ".gitignore": "node_modules/\n.wrangler/\n.actors/\nworker-configuration.d.ts\n.dev.vars\n.env\n",
+    "system.ts": `import { defineSystem } from "actors-toolkit/system";
+import { GreetingRecorded, GreetingRequested } from "./src/messages/index.ts";
+
+export default defineSystem({
+  name: "${name}",
+  description: "A starter: a greeter that accepts greetings and a guestbook that keeps them",
+  messages: {
+    "greeting.requested": GreetingRequested,
+    "greeting.recorded": GreetingRecorded,
+  },
+  actors: {
+    Greeter: {
+      binding: "GREETER",
+      kind: "deterministic",
+      purpose: "Accepts greeting requests from the outside world and forwards valid ones",
+      justification: ["permissions"],
+    },
+    Guestbook: {
+      binding: "GUESTBOOK",
+      kind: "deterministic",
+      purpose: "Owns the list of greetings and records each one once",
+      justification: ["state"],
+    },
+  },
+  routes: [
+    { from: "@ingress", message: "greeting.requested", to: "Greeter" },
+    { from: "Greeter", message: "greeting.recorded", to: "Guestbook" },
+  ],
+});
+`,
+    "src/messages/index.ts": `import { message } from "actors-toolkit/system";
+import { z } from "zod";
+
+export const GreetingRequested = message({
+  version: 1,
+  description: "Someone asked to sign the guestbook",
+  payload: z.object({ name: z.string().min(1).max(100) }),
+});
+
+export const GreetingRecorded = message({
+  version: 1,
+  description: "A greeting to keep",
+  payload: z.object({ name: z.string(), text: z.string() }),
+});
+`,
+    "src/actors/greeter.ts": `import { DurableObject } from "cloudflare:workers";
+import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import system from "../../system.ts";
+
+export class Greeter extends DurableObject<Env> {
+  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Greeter", {
+    "greeting.requested": ({ payload }, ctx) => {
+      ctx.send("greeting.recorded", { name: payload.name, text: \`Hello, \${payload.name}!\` });
+    },
+  });
+
+  receive(envelope: Envelope) {
+    return this.actor.receive(envelope);
+  }
+
+  alarm() {
+    return this.actor.alarm();
+  }
+}
+`,
+    "src/actors/guestbook.ts": `import { DurableObject } from "cloudflare:workers";
+import { actorRuntime, type Envelope } from "actors-toolkit/runtime";
+import system from "../../system.ts";
+
+export class Guestbook extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (message_id TEXT PRIMARY KEY, name TEXT NOT NULL, text TEXT NOT NULL)");
+  }
+
+  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Guestbook", {
+    "greeting.recorded": ({ id, payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO entries (message_id, name, text) VALUES (?, ?, ?)", id, payload.name, payload.text);
+    },
+  });
+
+  receive(envelope: Envelope) {
+    return this.actor.receive(envelope);
+  }
+
+  alarm() {
+    return this.actor.alarm();
+  }
+
+  entries(): Array<{ name: string; text: string }> {
+    return this.ctx.storage.sql.exec<{ name: string; text: string }>("SELECT name, text FROM entries ORDER BY name").toArray();
+  }
+}
+`,
+    "src/index.ts": `import { ingress } from "actors-toolkit/runtime";
+import system from "../system.ts";
+
+export { Greeter } from "./actors/greeter.ts";
+export { Guestbook } from "./actors/guestbook.ts";
+
+export default {
+  async fetch(request, env): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/greet") {
+      const { name } = (await request.json()) as { name: string };
+      return Response.json(await ingress(env, system, "Greeter", "greeting.requested", { name }));
+    }
+    if (request.method === "GET" && url.pathname === "/guestbook") {
+      return Response.json(await env.GUESTBOOK.getByName("main").entries());
+    }
+    return new Response("POST /greet {name} \xB7 GET /guestbook\\n", { status: 404 });
+  },
+} satisfies ExportedHandler<Env>;
+`,
+    "wrangler.jsonc": `{
+  "name": "${name}",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "GREETER", "class_name": "Greeter" },
+      { "name": "GUESTBOOK", "class_name": "Guestbook" }
+    ]
+  },
+  "exports": {
+    "Greeter": { "type": "durable-object", "storage": "sqlite" },
+    "Guestbook": { "type": "durable-object", "storage": "sqlite" }
+  }
+}
+`,
+    "tsconfig.json": `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: "es2024",
+          module: "es2022",
+          moduleResolution: "bundler",
+          lib: ["es2024"],
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          allowImportingTsExtensions: true,
+          erasableSyntaxOnly: true,
+          verbatimModuleSyntax: true,
+          types: ["@cloudflare/vitest-plugin/types"]
+        },
+        include: ["system.ts", "src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts"]
+      },
+      null,
+      2
+    )}
+`,
+    "vitest.config.ts": `import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { actorEvents } from "actors-toolkit/vitest";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } }), actorEvents()],
+});
+`,
+    "tests/greeting.test.ts": `import { env } from "cloudflare:workers";
+import { type Envelope, ingress } from "actors-toolkit/runtime";
+import { settle } from "actors-toolkit/testing";
+import { expect, it } from "vitest";
+import system from "../system.ts";
+
+it("[end-to-end] a greeting reaches the guestbook", async () => {
+  expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "Ada" })).toMatchObject({ status: "handled" });
+  await settle(env, system);
+  expect(await env.GUESTBOOK.getByName("main").entries()).toContainEqual({ name: "Ada", text: "Hello, Ada!" });
+});
+
+it("[duplicate-delivery] a redelivered message is recorded once", async () => {
+  const envelope: Envelope = {
+    v: 1, id: "dup-1", type: "greeting.recorded", version: 1, from: "Greeter:main", to: "Guestbook:main",
+    correlationId: "dup-1", causationId: null, attempt: 1, sentAt: 0, payload: { name: "Grace", text: "Hello, Grace!" },
+  };
+  const guestbook = env.GUESTBOOK.getByName("main");
+  expect(await guestbook.receive(envelope)).toMatchObject({ status: "handled" });
+  expect(await guestbook.receive({ ...envelope, attempt: 2 })).toMatchObject({ status: "duplicate" });
+  expect((await guestbook.entries()).filter((e) => e.name === "Grace")).toHaveLength(1);
+});
+
+it("[refuse-invalid] an empty name is refused before any handler runs", async () => {
+  expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "" })).toMatchObject({ status: "rejected", reason: "invalid_payload" });
+});
+`,
+    "actors.claims.json": `${JSON.stringify(
+      {
+        $comment: "Reliability claims and the tagged tests that establish them. `actors verify` classifies each from the latest run.",
+        claims: [
+          { id: "end-to-end", basis: "workerd", tests: ["end-to-end"], statement: "A greeting request reaches the guestbook." },
+          { id: "dedupe-delivery", basis: "workerd", tests: ["duplicate-delivery"], statement: "A redelivered message is recorded once." },
+          { id: "refuse-invalid", basis: "workerd", tests: ["refuse-invalid"], statement: "Invalid payloads are refused before any handler runs." },
+          { id: "exactly-once-external", basis: "not-guaranteed", statement: "Exactly-once external effects.", why: "The starter has no external effects; when you add one, say what its destination guarantees." }
+        ]
+      },
+      null,
+      2
+    )}
+`,
+    ".claude/skills/verify/SKILL.md": verifySkill(),
+    ".claude/settings.json": settingsJson(),
+    "CLAUDE.md": claudeMd(name)
+  };
+}
+
+// src/cli/commands/init.ts
+function bundledTarball() {
+  const dirs = [process.env.ACTORS_PLUGIN_DIST];
+  try {
+    dirs.push(dirname4(fileURLToPath(import.meta.url)));
+  } catch {
+  }
+  for (const dir of dirs) {
+    const tgz = dir ? join8(dir, `actors-toolkit-${VERSION}.tgz`) : null;
+    if (tgz && existsSync8(tgz)) return tgz;
+  }
+  return null;
+}
+function init(cwd, target, opts) {
+  const root = resolve5(cwd, target ?? ".");
+  const created = [];
+  const skipped = [];
+  const suggestions = [];
+  const write = (rel, content) => {
+    const path = join8(root, rel);
+    if (existsSync8(path)) {
+      skipped.push(rel);
+      return;
+    }
+    mkdirSync2(dirname4(path), { recursive: true });
+    writeFileSync2(path, content);
+    created.push(rel);
+  };
+  if (opts.adopt) {
+    if (!existsSync8(join8(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
+    const name2 = opts.name ?? readJson(join8(root, "package.json"))?.name ?? basename(root);
+    write(".claude/skills/verify/SKILL.md", verifySkill());
+    write(".claude/settings.json", settingsJson());
+    write("CLAUDE.md", claudeMd(name2));
+    if (skipped.includes(".claude/settings.json")) {
+      const ask = readJson(join8(root, ".claude/settings.json"))?.permissions?.ask ?? [];
+      const missing = askRules().filter((r) => !ask.includes(r));
+      if (missing.length) suggestions.push(`.claude/settings.json exists, so it wasn't changed. Add these to permissions.ask:
+${missing.map((r) => `    "${r}"`).join(",\n")}`);
+    }
+    const pkg = readJson(join8(root, "package.json"));
+    if (!pkg?.scripts?.verify) suggestions.push(`Add a script to package.json: "verify": "actors verify"`);
+    if (!pkg?.devDependencies?.["actors-toolkit"]) suggestions.push(`Pin the CLI so CI and Claude run the same version: npm install -D -E actors-toolkit@${VERSION}`);
+    if (!existsSync8(join8(root, "actors.manifest.json"))) suggestions.push("Run `npx actors graph --write` and commit actors.manifest.json.");
+    return result(root, "adopt", created, skipped, suggestions, "unchanged");
+  }
+  if (existsSync8(root) && readdirSync2(root).filter((e) => e !== ".git" && e !== "node_modules").length > 0) {
+    throw new UsageError(`${root} isn't empty; init only creates projects in empty directories. To add the toolkit's files to an existing project, run \`actors init --adopt\`.`);
+  }
+  const name = (opts.name ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "actor-system";
+  let toolkit = opts.toolkit ?? VERSION;
+  const tgz = opts.toolkit ? null : bundledTarball();
+  if (tgz) {
+    mkdirSync2(join8(root, "vendor"), { recursive: true });
+    copyFileSync(tgz, join8(root, "vendor", basename(tgz)));
+    created.push(`vendor/${basename(tgz)}`);
+    toolkit = `file:vendor/${basename(tgz)}`;
+  }
+  for (const [rel, content] of Object.entries(starterFiles(name, toolkit))) write(rel, content);
+  suggestions.push("cd into the project, then: npm install && npx actors graph --write && npm run verify");
+  return result(root, "create", created, skipped, suggestions, toolkit);
+}
+function result(root, mode, created, skipped, suggestions, toolkit) {
+  const text = [
+    `actors init (${mode}) at ${root}`,
+    ...created.map((f) => `  + ${f}`),
+    ...skipped.map((f) => `  = ${f} (exists; left unchanged)`),
+    ...suggestions.length ? ["", "Next:", ...suggestions.map((s) => `  ${s}`)] : []
+  ].join("\n");
+  return { data: { projectRoot: root, mode, created, skipped, suggestions, toolkit }, text, exitCode: 0 };
+}
+
+// src/cli/commands/verify.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync9, writeFileSync as writeFileSync3 } from "node:fs";
+import { dirname as dirname5, join as join10, relative as relative5, resolve as resolve6 } from "node:path";
+
+// src/model/claims.ts
+import { existsSync as existsSync9, readFileSync as readFileSync8 } from "node:fs";
+import { join as join9 } from "node:path";
+var CLAIMS_FILE = "actors.claims.json";
+function readClaims(root) {
+  const path = join9(root, CLAIMS_FILE);
+  if (!existsSync9(path)) return { claims: [], error: null };
+  try {
+    const doc = JSON.parse(readFileSync8(path, "utf8"));
+    return { claims: doc.claims ?? [], error: null };
+  } catch (e) {
+    return { claims: [], error: `${CLAIMS_FILE} doesn't parse: ${e.message}` };
+  }
+}
+function classifyClaims(claims, tests, blocked) {
+  return claims.map((c) => {
+    if (c.basis === "not-guaranteed") return { ...c, status: "not-guaranteed", evidence: [] };
+    if (blocked || !tests) return { ...c, status: "blocked", evidence: [] };
+    const evidence = [];
+    let status = c.basis === "workerd" ? "proved-locally" : "stub-only";
+    for (const tag of c.tests ?? []) {
+      const tagged = tests.filter((t) => t.name.includes(`[${tag}]`));
+      const failed = tagged.filter((t) => t.status === "failed");
+      const passed = tagged.filter((t) => t.status === "passed");
+      if (failed.length > 0) {
+        status = "failing";
+        evidence.push(...failed.map((t) => `failed: ${t.name}`));
+      } else if (passed.length === 0) {
+        if (status !== "failing") status = "untested";
+        evidence.push(tagged.length ? `[${tag}] has only skipped tests` : `[${tag}] has no test`);
+      } else evidence.push(...passed.map((t) => `passed: ${t.name}`));
+    }
+    if ((c.tests ?? []).length === 0) {
+      status = "untested";
+      evidence.push("names no tests");
+    }
+    return { ...c, status, evidence };
+  });
+}
+
+// src/cli/commands/verify.ts
+var SANDBOX_BLOCK = /listen EPERM|operation not permitted.*(listen|bind)|EPERM.*127\.0\.0\.1/i;
+var TEST_RESULTS = ".actors/vitest-results.json";
+function run2(cmd, args, cwd, extraEnv = {}) {
+  const started = Date.now();
+  const r = spawnSync4(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
+  return { code: r.status ?? 1, output: `${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started };
+}
+var tail = (s, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
+function runTests(root, profile) {
+  const out = join10(root, TEST_RESULTS);
+  mkdirSync3(dirname5(out), { recursive: true });
+  const args = ["--no-install", "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
+  if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
+  const r = run2("npx", args, root, { ACTORS_FAULT_PROFILE: profile });
+  const command = `npx vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
+  if (SANDBOX_BLOCK.test(r.output)) {
+    return {
+      step: { id: "tests", status: "blocked", command, durationMs: r.ms, summary: "blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)" },
+      tests: null,
+      blocked: true
+    };
+  }
+  let tests = null;
+  try {
+    const doc = JSON.parse(readFileSync9(out, "utf8"));
+    tests = doc.testResults.flatMap((f) => f.assertionResults.map((a) => ({ name: a.fullName ?? a.title, status: a.status })));
+  } catch {
+    tests = null;
+  }
+  if (!tests) return { step: { id: "tests", status: "fail", command, durationMs: r.ms, summary: `no test report (exit ${r.code})`, detail: { output: tail(r.output) } }, tests, blocked: false };
+  const passed = tests.filter((t) => t.status === "passed").length;
+  const failed = tests.filter((t) => t.status === "failed").length;
+  return {
+    step: {
+      id: "tests",
+      status: failed === 0 && r.code === 0 ? "pass" : "fail",
+      command,
+      durationMs: r.ms,
+      summary: `${passed} passed, ${failed} failed, ${tests.length - passed - failed} skipped (workerd)`,
+      detail: { passed, failed, total: tests.length, ...failed ? { failures: tests.filter((t) => t.status === "failed").map((t) => t.name), output: tail(r.output) } : {} }
+    },
+    tests,
+    blocked: false
+  };
+}
+async function verify(cwd, opts) {
+  const root = findProjectRoot(cwd);
+  const profile = opts.profile === "extended" ? "extended" : "standard";
+  const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail" };
+  if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
+  const steps = [];
+  const pkg = readJson(join10(root, "package.json"));
+  const tc = pkg?.scripts?.typecheck ? run2("npm", ["run", "--silent", "typecheck"], root) : run2("npx", ["--no-install", "tsc", "--noEmit"], root);
+  steps.push({
+    id: "typecheck",
+    status: tc.code === 0 ? "pass" : "fail",
+    command: pkg?.scripts?.typecheck ? "npm run typecheck" : "npx tsc --noEmit",
+    durationMs: tc.ms,
+    summary: tc.code === 0 ? "no type errors" : "type errors",
+    ...tc.code === 0 ? {} : { detail: { output: tail(tc.output, 25) } }
+  });
+  const started = Date.now();
+  const c = await check(root, {});
+  steps.push({
+    id: "check",
+    status: c.data.ok ? "pass" : "fail",
+    command: "actors check",
+    durationMs: Date.now() - started,
+    summary: `${c.data.errors} error(s), ${c.data.warnings} warning(s)`,
+    detail: { errors: c.data.errors, warnings: c.data.warnings, codes: c.data.diagnostics.map((d) => `${d.severity}:${d.code}`) }
+  });
+  const t = runTests(root, profile);
+  steps.push(t.step);
+  const { claims: raw, error } = readClaims(root);
+  const claims = classifyClaims(raw, t.tests, t.blocked);
+  const count2 = (s) => claims.filter((x) => x.status === s).length;
+  const summary = {
+    provedLocally: count2("proved-locally"),
+    stubOnly: count2("stub-only"),
+    notGuaranteed: count2("not-guaranteed"),
+    blocked: count2("blocked"),
+    failing: count2("failing"),
+    untested: count2("untested")
+  };
+  const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
+  const verdict = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
+  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: systemName(root), profile, steps, claims, summary, verdict };
+  const outPath = resolve6(cwd, opts.out ?? join10(root, ".actors/evidence.json"));
+  mkdirSync3(dirname5(outPath), { recursive: true });
+  writeFileSync3(
+    outPath,
+    `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "verify", toolkitVersion: VERSION, volatile: ["projectRoot", "generatedAt", "steps[].durationMs"], ...evidence }, null, 2)}
+`
+  );
+  const lines = [
+    `actors verify: ${evidence.system ?? "system"} \xB7 ${verdict.toUpperCase()} \xB7 evidence in ${relative5(cwd, outPath) || outPath}`,
+    ...steps.map((s) => `  ${s.status === "pass" ? "\u2713" : s.status === "blocked" ? "\u2298" : "\u2717"} ${s.id.padEnd(9)} ${s.summary}`),
+    ...error ? [`  \u2717 claims    ${error}`] : [],
+    claims.length ? "" : "  (no actors.claims.json: nothing is claimed about delivery or effects)",
+    ...claims.length ? [
+      `Claims: ${summary.provedLocally} proved locally \xB7 ${summary.stubOnly} stub only \xB7 ${summary.notGuaranteed} not guaranteed \xB7 ${summary.blocked} blocked \xB7 ${summary.failing} failing \xB7 ${summary.untested} untested`,
+      ...claims.map((cl) => `  ${statusMark(cl.status)} ${cl.status.padEnd(14)} ${cl.id}: ${cl.statement}${cl.why ? ` (${cl.why})` : ""}`)
+    ] : []
+  ];
+  return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
+}
+function statusMark(s) {
+  return { "proved-locally": "\u2713", "stub-only": "~", "not-guaranteed": "\xB7", blocked: "\u2298", failing: "\u2717", untested: "?" }[s] ?? "?";
+}
+function systemName(root) {
+  const m = readJson(join10(root, "actors.manifest.json"));
+  return m?.system?.name ?? null;
+}
+function test(cwd, opts) {
+  const root = findProjectRoot(cwd);
+  if (!root) return { data: { projectRoot: null, step: null }, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
+  const t = runTests(root, opts.profile === "extended" ? "extended" : "standard");
+  const text = `actors test: ${t.step.status} \xB7 ${t.step.summary}${t.step.detail?.output ? `
+${String(t.step.detail.output)}` : ""}`;
+  return { data: { projectRoot: root, step: t.step }, text, exitCode: t.step.status === "pass" ? 0 : t.step.status === "blocked" ? 0 : 1 };
 }
 
 // src/cli/main.ts
@@ -1122,6 +1751,8 @@ Usage: actors <command> [options]
 
 Commands:
   doctor                       Check the environment, project, pins, and Cloudflare tooling
+  init [dir] [--adopt]         Create a starter project in an empty dir, or add the verify skill,
+       [--name N]              permission rules, and CLAUDE.md to an existing one (never overwrites)
   check [--changed <file>...]  Validate the declaration, routes, schemas, config, and manifest
         [--format brief]       (brief: hard errors only, silent when clean; for hooks)
   graph [--write]              Print the topology; --write updates actors.manifest.json
@@ -1131,6 +1762,9 @@ Commands:
          [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only
          [--correlation C] [--file F]
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
+  test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
+  verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
+         [--profile extended]  .actors/evidence.json (verdict pass, fail, or blocked)
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
@@ -1146,8 +1780,17 @@ var commands = {
   graph: ({ cwd, values }) => graph(cwd, { write: values.write === true }),
   diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) }),
   events: ({ cwd, values }) => events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
-  trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) })
+  trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
+  init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit) }),
+  verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
+  test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) })
 };
+async function readStdin() {
+  if (process.stdin.isTTY) return "";
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
 async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: process.cwd() }) {
   try {
     const { values, positionals } = parseArgs({
@@ -1167,6 +1810,11 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
         kind: { type: "string" },
         correlation: { type: "string" },
         file: { type: "string" },
+        adopt: { type: "boolean" },
+        name: { type: "string" },
+        toolkit: { type: "string" },
+        out: { type: "string" },
+        profile: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" }
       }
@@ -1182,6 +1830,7 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
 `);
       return name || values.help ? 0 : 2;
     }
+    if (name === "hook") return await hook(rest[0], await readStdin(), process.env, io.out, io.err);
     const handler = commands[name];
     if (!handler) throw new UsageError(`unknown command "${name}"`);
     const json = values.json === true;
@@ -1195,10 +1844,10 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
 `).join(""));
       return r.exitCode;
     }
-    const result = await handler({ positionals: rest, json, cwd: io.cwd, values });
-    io.out.write(json ? toJson(name, result.data) : result.text ? `${result.text}
+    const result2 = await handler({ positionals: rest, json, cwd: io.cwd, values });
+    io.out.write(json ? toJson(name, result2.data) : result2.text ? `${result2.text}
 ` : "");
-    return result.exitCode;
+    return result2.exitCode;
   } catch (err) {
     if (err instanceof UsageError) {
       io.err.write(`actors: ${err.message}

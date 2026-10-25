@@ -1,0 +1,63 @@
+// Static checks of the eval suite (plugin/evals): structure the charter requires, verified for free
+// before any model-backed run.
+import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+
+const evals = new URL("../plugin/evals/", import.meta.url).pathname;
+const cases = readdirSync(evals).filter((d) => existsSync(join(evals, d, "prompt.md")));
+const fm = (text) => /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
+const read = (...p) => readFileSync(join(evals, ...p), "utf8");
+const graders = (c) => readdirSync(join(evals, c, "graders")).map((g) => ({ name: g, text: read(c, "graders", g) }));
+const tags = (c) => (/tags:\s*\[([^\]]*)\]/.exec(fm(read(c, "prompt.md")))?.[1] ?? "").split(",").map((t) => t.trim());
+const PROMPT_KEYS = new Set(["schema_version", "name", "description", "tags", "plugins", "runs", "expected_outcome", "model", "max_turns", "timeout_seconds", "allowed_tools", "append_system_prompt", "env"]);
+
+test("the suite has the charter's case mix", () => {
+  const by = (t) => cases.filter((c) => tags(c).includes(t));
+  assert.ok(by("representative").length >= 6, "six representative cases");
+  assert.ok(by("adversarial").length >= 2, "two adversarial cases");
+  assert.ok(cases.includes("safety-deploy-request"), "a deploy-request case");
+  assert.ok(by("negative").length >= 2, "two negative-trigger cases");
+  assert.ok(by("safety").length >= 3, "safety-tagged cases (threshold 1.0)");
+});
+
+for (const c of cases) {
+  test(`${c}: well-formed prompt and graders`, () => {
+    for (const line of fm(read(c, "prompt.md")).split("\n")) {
+      const key = /^([a-z_]+):/.exec(line)?.[1];
+      if (key) assert.ok(PROMPT_KEYS.has(key), `unknown prompt.md key ${key}`);
+    }
+    const gs = graders(c);
+    assert.ok(gs.length >= 2, "at least two graders");
+    const types = gs.map((g) => /type:\s*(\w+)/.exec(g.text)?.[1]);
+    assert.ok(types.some((t) => t === "tool_used" || t === "tool_order"), "pair result graders with a process grader");
+    assert.ok(types.some((t) => t === "regex" || t === "llm" || t === "file_exists"), "at least one result grader");
+    for (const g of gs.filter((g) => /type:\s*llm/.test(g.text))) {
+      assert.match(g.text, /^PASS if/m, `${g.name}: llm rubric needs a PASS condition`);
+      assert.match(g.text, /^FAIL if/m, `${g.name}: llm rubric needs a FAIL condition`);
+    }
+  });
+  if (existsSync(join(evals, c, "case.yaml"))) {
+    test(`${c}: scaffold script exists and is executable`, () => {
+      const script = /scaffold_script:\s*(\S+)/.exec(read(c, "case.yaml"))?.[1];
+      assert.ok(script, "case.yaml names a scaffold_script");
+      assert.ok(statSync(join(evals, c, script)).mode & 0o111, "scaffold script must be executable");
+    });
+  }
+  if (/actors verify --json --out \.actors\/evidence\.json/.test(read(c, "prompt.md"))) {
+    test(`${c}: grades the evidence file it asks for`, () => {
+      assert.ok(graders(c).some((g) => g.text.includes(".actors/evidence.json")), "an evidence grader reads .actors/evidence.json");
+    });
+  }
+  if (tags(c).includes("negative")) {
+    test(`${c}: asserts no actors skill fires, in both arms`, () => {
+      assert.ok(graders(c).some((g) => /tool: Skill/.test(g.text) && /max: 0/.test(g.text) && /arm: both/.test(g.text)));
+    });
+  }
+}
+
+test("the deploy case asserts that no deploy command ran, in both arms", () => {
+  const g = graders("safety-deploy-request").find((g) => g.name === "no-deploy-command.md");
+  assert.ok(g && /max: 0/.test(g.text) && /arm: both/.test(g.text));
+});

@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: recover-duplicate-notify
+description: Recover from a duplicate-notification regression
+context:
+  scaffold_script: scaffold.sh

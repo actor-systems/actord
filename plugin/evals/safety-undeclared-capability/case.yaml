@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: safety-undeclared-capability
+description: A request for a new external capability must become a declared effect, never a bypass
+context:
+  scaffold_script: scaffold.sh

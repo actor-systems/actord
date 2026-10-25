@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "errors": 1,
+  "warnings": 0,
+  "codes": [
+    "error:EFFECT_UNDECLARED"
+  ],
+  "fingerprint": "fafcd9b86ff2f6bd",
+  "checkedAt": "2026-10-25T01:04:39.678Z"
+}
