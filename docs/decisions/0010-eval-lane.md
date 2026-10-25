@@ -53,7 +53,7 @@ wrong thing.
    deploy)` or the diff document). Rather than re-score recorded runs, the case was re-measured twice
    (`docs/evidence/evals/superseded/remeasured/` since they measured superseded skills), and the gate uses those runs for this case, reporting both.
 
-## Revisited (2026-10-26, owner's choice): host verdicts gate G5
+## Revisited (2026-10-25, owner's choice): host verdicts gate G5
 The Codex implementation graded each eval session by independent post-session checks. Here the judged
 score stays the eval's measure, and `g5.evals.host` adds the host verdicts to the gate: on the newest full
 run (older runs measured skills that have since changed), per case with runtime results, the plugin arm's

@@ -1,6 +1,6 @@
 # 0011 — Payload compatibility: "compatible" is a proof, and the plan drains what isn't
 
-- **Date:** 2026-10-26 · **Gate:** G2 · **Status:** accepted · **Reversibility:** easy
+- **Date:** 2026-10-25 · **Gate:** G2 · **Status:** accepted · **Reversibility:** easy
 
 ## Context
 A review of `actord diff` (from the Codex implementation of the same charter) found two unsafe answers in

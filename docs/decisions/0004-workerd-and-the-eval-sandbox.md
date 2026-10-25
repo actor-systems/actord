@@ -41,7 +41,7 @@ limits of the eval sandbox on macOS:
 - In don't-ask mode an agent that hits a denied command can conclude all Bash is denied; the release lane
   grants a few read-only commands (`ls`, `cat`, `head`, `tail`, `wc`, `git log|show|ls-files`) to both arms.
 
-## Revisited (2026-10-26): letting eval runs bind loopback isn't available
+## Revisited (2026-10-25): letting eval runs bind loopback isn't available
 The Codex implementation's evals ran workerd inside the agent's session, so its agents could see their own
 runtime failures. Porting that needs `sandbox.network.allowLocalBinding` in eval runs, and `claude plugin
 eval` (2.1.310) offers no way to set it: no case.yaml field (`execution:` takes model, turns, timeout,
