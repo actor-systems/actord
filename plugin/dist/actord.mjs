@@ -1446,7 +1446,25 @@ async function hook(name, stdin, env, out, err) {
   }
   if (name === "check-on-edit") return checkOnEdit(input, env, out, err);
   if (name === "evidence-gate") return evidenceGate(input, env, out);
+  if (name === "heredoc-note") return heredocNote(input, out);
   err.write(`actord hook: unknown hook "${name ?? ""}"
+`);
+  return 0;
+}
+var HEREDOC_NOTE = "actord: this session runs in don't-ask mode, which refuses shell heredocs. If this command is refused, only this command is: Bash is still available for tests, `actord`, and git. Write or change files with the Write and Edit tools.";
+function hasHeredoc(command) {
+  for (const m of command.matchAll(/(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][\w.-]*)\1/g)) {
+    const rest = command.slice(m.index + m[0].length).split("\n").slice(1);
+    if (rest.some((line) => line.replace(/^\t+/, "").trimEnd() === m[2])) return true;
+  }
+  return false;
+}
+function heredocNote(input, out) {
+  if (input.permission_mode !== "dontAsk") return 0;
+  const command = input.tool_input?.command;
+  if (!command || !hasHeredoc(command)) return 0;
+  if (!findProjectRoot(input.cwd ?? process.cwd())) return 0;
+  out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: HEREDOC_NOTE } })}
 `);
   return 0;
 }

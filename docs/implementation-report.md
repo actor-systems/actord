@@ -26,10 +26,13 @@ fires wakes due now. Release runs J and K measure that plugin.
     `failed` instead of `duplicate`; handling was always exactly-once.
   - The testing notes cover instances that every test shares and effect overrides that replace earlier
     ones, the two mistakes behind the remaining evolve failures.
-- **Open findings:**
+- **Open findings, each with a fix that isn't yet measured (decision 0013):**
   - In J, one plugin run took a refused heredoc for a denial of all Bash and stopped without verifying.
-    That's five such runs across F to J, despite the `CLAUDE.md` line.
-  - The `reliability` skill fired in 1 of 12 plugin runs of the recover case across H to K.
+    That's five such runs across F to J, despite the `CLAUDE.md` line. A PreToolUse hook now puts a note
+    beside the refusal: Bash is still available, and files are written with Write and Edit. It never
+    decides the call.
+  - The `reliability` skill fired in 1 of 12 plugin runs of the recover case across H to K. Its
+    description now covers reported duplicates and losses, and its steps start from a reported failure.
 - **The handler regression stays fixed.** No plugin run in J or K changed an existing read method or broke
   an existing test of the handler case. G1 passes: `start-orients` is 1.00 in both runs.
 - **G6 is blocked on one step only you can run:** acceptance step A10 (the SVG topology in the Desktop app).
@@ -49,8 +52,9 @@ plugin/
                                      types → ./types/index.d.ts
   skills/                            start, setup, design, implement, reliability, inspect, evolve (+ references/)
   agents/                            boundary-critic, delivery-auditor (Read, Grep, Glob only)
-  hooks/hooks.json                   PostToolUse check-on-edit, Stop evidence-gate, module ./room.tsx
+  hooks/hooks.json                   PreToolUse heredoc-note, PostToolUse check-on-edit, Stop evidence-gate, module ./room.tsx
   hooks/room.tsx                     the Room (mod); effect-patterns.ts generated from the CLI's table
+  hooks/heredoc-note.sh              sh fast path for the PreToolUse heredoc note
   monitors/monitors.json             actor-events (inspect), actor-events-reliability (reliability)
   types/index.d.ts                   the Room's $.state contract
   bin/actord                         sh launcher: project pin, else dist/actord.mjs
@@ -68,7 +72,7 @@ spikes/do-messaging/                 G0 platform probes, sandbox reproduction
 
 `doctor`, `init [--adopt] [--host claude|codex|none]`, `check [--changed] [--format brief]`, `graph [--write]`, `diff [--base|--base-file]`,
 `events [--follow] [--notable] [--exclusive]`, `trace <id>`, `test [--profile extended]`, `verify`,
-`room [--follow]`, `guard -- <command>`, and the hook entry points `hook check-on-edit | evidence-gate`.
+`room [--follow]`, `guard -- <command>`, and the hook entry points `hook check-on-edit | evidence-gate | heredoc-note`.
 Every command has `--json` with `schemaVersion` and a `volatile` list; exit 0 ok, 1 errors, 2 usage, 3 no
 project. Evidence: 129 CLI unit tests (`g5.cli.unit`, `g6.cli.room`), CLI snapshots and 12 negative fixtures
 that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged`).
@@ -135,7 +139,8 @@ release-k: suite score 0.99, mean Δ +0.09, 11/12 cases at threshold, $10.11, 81
   more often (`evolve-scheduled-digest` 4/6 vs 6/6, from 1/6 vs 5/6 in H and I). The remaining failures are
   test mistakes (shared instances, a replaced effect override), now covered by the testing notes but not
   yet measured. Neither arm can run workerd in the sandbox to notice.
-- **The `reliability` skill rarely fires on the recover case** (1 of 12 plugin runs across H to K).
+- **The `reliability` skill rarely fires on the recover case** (1 of 12 plugin runs across H to K). Its
+  description now covers reported failures (decision 0013); not yet measured.
 
 Earlier rounds found and fixed these product issues: `actord verify` recording sandbox blocks as
 failures (refused `npm`/`npx` spawns; `wrangler types` needing loopback), `actord diff` without git,
@@ -156,22 +161,22 @@ Actor-Native Cloudflare Toolkit (actord) 0.1.0
 Component inventory
   Skills (7)  design, evolve, implement, inspect, reliability, setup, start
   Agents (2)  boundary-critic, delivery-auditor
-  Hooks (2)  PostToolUse, Stop  (harness-only — no model context cost)
+  Hooks (3)  PreToolUse, PostToolUse, Stop  (harness-only — no model context cost)
   MCP servers (0)
   LSP servers (0)
 
 Projected token cost
-  Always-on:   ~733 tok   added to every session
+  Always-on:   ~803 tok   added to every session
 
 Per-component (rounded)
   component         always-on  on-invoke
   design                  ~90       ~770
   inspect                ~110       ~490
   setup                   ~80       ~560
-  start                   ~70       ~520
-  evolve                 ~100       ~610
-  reliability             ~90       ~550
-  implement               ~70       ~710
+  start                   ~70       ~540
+  evolve                 ~100       ~750
+  reliability            ~160       ~720
+  implement               ~70       ~830
   boundary-critic         ~70       ~450
   delivery-auditor        ~60       ~630
 

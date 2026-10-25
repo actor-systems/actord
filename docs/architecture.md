@@ -71,7 +71,7 @@ conveniences against mistakes, not a security boundary (decisions 0001, 0009).
 | Skills | The authoring loop (`docs/workflow.md`); rules first, injected CLI evidence | Judgment that should be visible and measurable |
 | Critics | Argue for fewer actors; audit idempotency and in-doubt honesty | Isolated context, read-only tools |
 | `bin/actord` | The machine interface, preferring the project's pinned version | One deterministic binary for Claude, hooks, the Room, CI |
-| Hooks | `check-on-edit` (contract errors at edit time), `evidence-gate` (opt-in) | Feedback at the moment of change, never blocking edits |
+| Hooks | `check-on-edit` (contract errors at edit time), `evidence-gate` (opt-in), `heredoc-note` (beside a refused heredoc) | Feedback at the moment of change, never blocking edits or deciding tool calls |
 | The Room (mod) | Pane, status line, effect guard | Only a mod can draw a pane or hold a tool call for a decision |
 | Monitor | Notable local events as notifications | Faults reach Claude without polling |
 
@@ -102,6 +102,7 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0009](decisions/0009-the-room.md) | The Room: one CLI document, a prefiltered guard, a deduplicated monitor |
 | [0010](decisions/0010-eval-lane.md) | The eval lane: what the graders measure; the deploy case asserts no deploy ran |
 | [0011](decisions/0011-payload-compatibility.md) | Payload compatibility: "compatible" is a proof, and the plan drains what isn't |
+| [0013](decisions/0013-heredoc-note-and-recover-trigger.md) | A note beside refused heredocs; `reliability` takes reported failures |
 
 ## Coding-host adapters
 

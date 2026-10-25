@@ -123,6 +123,37 @@ describe("hooks", () => {
     expect(existsSync(join(dir, ".actord/last-check.json"))).toBe(true);
     expect(run(dir, ["hook", "evidence-gate"], stop(false), on).out).toBe("");
   });
+
+  describe("heredoc-note", () => {
+    const heredoc = "cat >> tests/faults.test.ts <<'EOF'\nit(\"[duplicate-input] …\", async () => {});\nEOF";
+    const bash = (command: string, mode = "dontAsk", cwd = valid) =>
+      JSON.stringify({ hook_event_name: "PreToolUse", cwd, permission_mode: mode, tool_name: "Bash", tool_input: { command } });
+    const script = join(repo, "plugin/hooks/heredoc-note.sh");
+    const viaScript = (input: string) => spawnSync(script, [], { cwd: valid, input, encoding: "utf8" });
+
+    it("adds a note, and no decision, beside a heredoc in don't-ask mode inside an actor project", () => {
+      for (const out of [run(repo, ["hook", "heredoc-note"], bash(heredoc)).out, viaScript(bash(heredoc)).stdout]) {
+        const doc = JSON.parse(out);
+        expect(doc.hookSpecificOutput).toEqual({ hookEventName: "PreToolUse", additionalContext: expect.stringMatching(/Bash is still available.*Write and Edit tools/) });
+        expect(JSON.stringify(doc)).not.toMatch(/permissionDecision|"decision"/);
+      }
+      expect(JSON.parse(run(repo, ["hook", "heredoc-note"], bash("python3 - <<-E\nprint(1)\n\tE")).out).hookSpecificOutput.additionalContext).toBeTruthy();
+    });
+
+    it("says nothing in other modes, outside actor projects, or for commands that aren't heredocs", () => {
+      const quiet = (input: string) => {
+        expect(run(repo, ["hook", "heredoc-note"], input).out).toBe("");
+        expect(viaScript(input).stdout).toBe("");
+      };
+      quiet(bash(heredoc, "default"));
+      quiet(bash(heredoc, "acceptEdits"));
+      quiet(bash(heredoc, "dontAsk", tmp));
+      quiet(bash("npm test 2>&1 | tail -20"));
+      quiet(bash('jq . <<< "$doc"'));
+      quiet(bash("python3 -c 'print(1 << n)'"));
+      quiet("not json");
+    });
+  });
 });
 
 describe("claim classification", () => {

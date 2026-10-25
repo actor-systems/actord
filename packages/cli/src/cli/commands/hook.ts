@@ -1,6 +1,6 @@
-// Command hooks the plugin registers (hooks/hooks.json). Both are deterministic, call no model, and
-// exit within milliseconds outside actor projects. Neither blocks an edit; the evidence gate may hold
-// a stop once per turn, and only when the user opted in.
+// Command hooks the plugin registers (hooks/hooks.json). All are deterministic, call no model, and
+// exit within milliseconds outside actor projects. None blocks an edit or decides a tool call; the
+// evidence gate may hold a stop once per turn, and only when the user opted in.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -10,7 +10,8 @@ import { check, LAST_CHECK_FILE } from "./model.ts";
 
 interface HookInput {
   cwd?: string;
-  tool_input?: { file_path?: string };
+  permission_mode?: string;
+  tool_input?: { file_path?: string; command?: string };
   stop_hook_active?: boolean;
 }
 
@@ -26,7 +27,31 @@ export async function hook(name: string | undefined, stdin: string, env: NodeJS.
   }
   if (name === "check-on-edit") return checkOnEdit(input, env, out, err);
   if (name === "evidence-gate") return evidenceGate(input, env, out);
+  if (name === "heredoc-note") return heredocNote(input, out);
   err.write(`actord hook: unknown hook "${name ?? ""}"\n`);
+  return 0;
+}
+
+export const HEREDOC_NOTE =
+  "actord: this session runs in don't-ask mode, which refuses shell heredocs. If this command is refused, only this command is: Bash is still available for tests, `actord`, and git. Write or change files with the Write and Edit tools.";
+
+/** A heredoc: `<<WORD` or `<<-'WORD'` (not a `<<<` here-string), closed later by a line holding only WORD. */
+export function hasHeredoc(command: string): boolean {
+  for (const m of command.matchAll(/(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][\w.-]*)\1/g)) {
+    const rest = command.slice(m.index + m[0].length).split("\n").slice(1);
+    if (rest.some((line) => line.replace(/^\t+/, "").trimEnd() === m[2])) return true;
+  }
+  return false;
+}
+
+// Don't-ask mode refuses heredocs, and the refusal reads "Permission to use Bash has been denied", which
+// agents take for all of Bash. This adds a note beside the refusal; it never decides the call.
+function heredocNote(input: HookInput, out: NodeJS.WritableStream): number {
+  if (input.permission_mode !== "dontAsk") return 0;
+  const command = input.tool_input?.command;
+  if (!command || !hasHeredoc(command)) return 0;
+  if (!findProjectRoot(input.cwd ?? process.cwd())) return 0;
+  out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: HEREDOC_NOTE } })}\n`);
   return 0;
 }
 

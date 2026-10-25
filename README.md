@@ -154,6 +154,11 @@ Everything this plugin runs on your machine is listed here. `tests/trust-section
 if a hook, mod event, mod call, or monitor command exists in `plugin/` without appearing in this section.
 
 **Hooks (settings-style command hooks; deterministic, no model calls):**
+- `PreToolUse` on `Bash`: runs `hooks/heredoc-note.sh` (5 s timeout), a POSIX `sh` script that exits at once
+  unless the session is in don't-ask mode and the command contains `<<`. Then it runs
+  `bin/actord hook heredoc-note`, which, inside an actor project and for a real heredoc, adds a note for
+  Claude: if the command is refused, Bash is still available, and files are written with Write and Edit. It
+  returns no permission decision, so it never blocks, allows, or changes a command (decision 0013).
 - `PostToolUse` on `Write|Edit`: runs `bin/actord hook check-on-edit` (5 s timeout). It reads the edited path
   from stdin and exits at once unless the file is `system.ts`, `wrangler.jsonc`, `actord.manifest.json`,
   `src/index.ts`, or under `src/actors/` or `src/messages/` in an actor project. Otherwise it runs `actord check`

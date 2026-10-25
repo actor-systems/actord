@@ -1,6 +1,6 @@
 ---
 name: reliability
-description: Establish what an actor system on Cloudflare Durable Objects actually guarantees. Write and run workerd fault tests (duplicates, crashes before and after writes, retries, restarts, reentrancy at await points, lost acknowledgments), then classify each claim as proved locally, stub only, or not guaranteed. Has the delivery-auditor review handlers.
+description: Establish what an actor system on Cloudflare Durable Objects actually guarantees, and fix it where it falls short. Use when a message, notification, or effect happens twice, goes missing, or gets stuck (after a retry, crash, restart, or repeated poll), to find the cause, fix it, and prove the fix with a fault test; or when asked what the system guarantees. Writes and runs workerd fault tests (duplicates, crashes before and after writes, retries, restarts, reentrancy at await points, lost acknowledgments), then classifies each claim as proved locally, stub only, or not guaranteed. Has the delivery-auditor review handlers.
 allowed-tools: Bash(actord test *) Bash(actord verify *) Bash(actord events *) Bash(actord trace *) Bash(actord check *)
 ---
 
@@ -17,6 +17,16 @@ Rules that hold for this whole skill:
 - `blocked` (for example, a sandbox denying local port binding) is not a pass. Say what blocked it.
 
 ## Steps
+
+**For a reported failure** (something happened twice, never happened, or is stuck), start here, then go on
+to step 1 for the faults around it:
+- Write the fault test that reproduces it, named with its claim tag, and keep the existing tests as they
+  are.
+- Find the cause in the handlers and in `actord events --notable` / `actord trace <id>`. A repeated poll or
+  an outside retry carries the same business event under a new message id, so dedupe and effect keys
+  must name the event (the item, the order), not the message.
+- Fix it, then run the tests and `actord verify`. Report what the tests showed, or that they couldn't
+  run and why.
 
 1. **Read the claims:** `actord.claims.json` (create it if missing). Each claim has an `id`, a `statement`,
    a `basis` (`workerd`, `stub`, or `not-guaranteed`), tagged `tests`, and for not-guaranteed claims a `why`.

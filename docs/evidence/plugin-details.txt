@@ -5,12 +5,12 @@ Actor-Native Cloudflare Toolkit (actord) 0.1.0
 Component inventory
   Skills (7)  design, evolve, implement, inspect, reliability, setup, start
   Agents (2)  boundary-critic, delivery-auditor
-  Hooks (2)  PostToolUse, Stop  (harness-only — no model context cost)
+  Hooks (3)  PreToolUse, PostToolUse, Stop  (harness-only — no model context cost)
   MCP servers (0)
   LSP servers (0)
 
 Projected token cost
-  Always-on:   ~733 tok   added to every session
+  Always-on:   ~803 tok   added to every session
 
 Per-component (rounded)
   component         always-on  on-invoke
@@ -19,7 +19,7 @@ Per-component (rounded)
   setup                   ~80       ~560
   start                   ~70       ~540
   evolve                 ~100       ~750
-  reliability             ~90       ~550
+  reliability            ~160       ~720
   implement               ~70       ~830
   boundary-critic         ~70       ~450
   delivery-auditor        ~60       ~630

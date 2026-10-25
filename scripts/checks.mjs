@@ -250,13 +250,13 @@ export const checks = [
   command("g4.desk.trace", "G4", "The stale model result traces to its cancelled item", "scripts/trace-stale-smoke.sh"),
   command("g4.desk.dev", "G4", "Briefing Desk runs under wrangler dev: an item travels Intake → Analyst → Desk, traced from the live log", "node scripts/dev-smoke.mjs briefing-desk", devSmoke),
   command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/cli" }),
-  command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/cli" }),
+  command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate, heredoc note), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/cli" }),
   command("g5.skills.lint", "G5", "Seven skills and two read-only critics follow the charter's authoring rules", "node --test tests/skills.test.mjs"),
   command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
   {
     id: "g5.inventory",
     gate: "G5",
-    title: "claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens",
+    title: "claude plugin details lists 7 skills, 2 agents, 3 hooks; always-on ≤ 1,500 tokens",
     command: "scripts/budget.sh && grep docs/evidence/plugin-details.txt",
     async run({ sh, root }) {
       const r = sh("scripts/budget.sh");

@@ -56,10 +56,12 @@ release-k: suite score 0.99, mean Δ +0.09, 11/12 cases at threshold, $10.11, 81
     model's suffix.
 - **One plugin run lost its evidence to a refused heredoc** (J `recover-duplicate-notify` #1). It took
   the refusal for a denial of all Bash, made its edits with Edit, and said it hadn't verified. The tenth
-  `CLAUDE.md` line was in its workspace. That makes five such plugin runs across F to J.
+  `CLAUDE.md` line was in its workspace. That makes five such plugin runs across F to J. After run K,
+  a PreToolUse hook puts a note beside such a refusal (decision 0013); not yet measured.
 - **The `reliability` skill rarely fires on the recover case:** in 1 of 12 plugin runs across H to K.
   The case's prompt reports a duplicate notification; the skill's description is about establishing
-  guarantees with fault tests. Unchanged so far.
+  guarantees with fault tests. After run K, the description and first steps cover reported failures
+  (decision 0013); not yet measured.
 - **`design-release-monitor` fails on the host in both arms by design,** in every run from A to K. The
   case asks for a new declaration and leaves implementation for later, so the starter's guestbook tests
   no longer apply.
