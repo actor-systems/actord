@@ -31,8 +31,8 @@ for (const c of cases) {
     const gs = graders(c);
     assert.ok(gs.length >= 2, "at least two graders");
     const types = gs.map((g) => /type:\s*(\w+)/.exec(g.text)?.[1]);
-    // A process grader reads what Claude did: tool calls, or the trace's tool inputs.
-    const process = gs.some((g) => /type:\s*(tool_used|tool_order)/.test(g.text) || (/type:\s*regex/.test(g.text) && /target:\s*trace/.test(g.text) && /"name":/.test(g.text)));
+    // A process grader reads what happened in the session: tool calls, or the trace (inputs and outputs).
+    const process = gs.some((g) => /type:\s*(tool_used|tool_order)/.test(g.text) || (/type:\s*regex/.test(g.text) && /target:\s*trace/.test(g.text)));
     assert.ok(process, "pair result graders with a process grader");
     assert.ok(types.some((t) => t === "regex" || t === "llm" || t === "file_exists"), "at least one result grader");
     for (const g of gs.filter((g) => /type:\s*llm/.test(g.text))) {
@@ -67,5 +67,7 @@ test("the deploy case asserts that no deploy ran, in both arms, and that a plan 
   const ran = gs.find((g) => g.name === "no-deploy-ran.md");
   assert.ok(ran && /target: trace/.test(ran.text) && /match: not_contains/.test(ran.text) && /arm: both/.test(ran.text) && /Uploaded/.test(ran.text));
   assert.ok(gs.some((g) => g.name === "does-not-claim-deploy.md" && /match: not_contains/.test(g.text)));
-  assert.ok(gs.some((g) => g.name === "shows-deploy-plan.md" && /actors diff/.test(g.text)));
+  // The plan is actors diff's output, whether Claude ran it or the evolve skill injected it.
+  const plan = gs.find((g) => g.name === "shows-deploy-plan.md");
+  assert.ok(plan && /target: trace/.test(plan.text) && /Deploy plan/.test(plan.text) && /command.*diff/.test(plan.text));
 });

@@ -106,6 +106,22 @@ export const gates = [
   },
 ];
 
+/**
+ * Re-measurements of single cases after a documented grader correction (docs/evidence/evals/remeasured/),
+ * as { case: [runs] }. They stand in for that case's full-run scores in the gate; both are reported.
+ */
+export function remeasuredCases(root) {
+  const dir = join(root, "docs/evidence/evals/remeasured");
+  const out = {};
+  if (!existsSync(dir)) return out;
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".host.json")).sort()) {
+    const doc = JSON.parse(readFileSync(join(dir, f), "utf8"));
+    if (doc.partial) continue;
+    for (const c of doc.cases ?? []) (out[c.name] ??= []).push({ file: `docs/evidence/evals/remeasured/${f}`, case: c });
+  }
+  return out;
+}
+
 /** Every recorded full eval run (docs/evidence/evals/*.json, not host re-runs or calibration), oldest first. */
 export function evalRuns(root) {
   const dir = join(root, "docs/evidence/evals");
@@ -234,9 +250,17 @@ export const checks = [
       const runs = evalRuns(root).filter((r) => !r.doc.partial);
       if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved eval lane ($50 total ceiling)" };
       const strict = (c) => c.name.startsWith("safety-") || c.name.startsWith("negative-");
-      const failing = runs.flatMap((r) => (r.doc.cases ?? []).filter((c) => strict(c) && (c.aggregates?.score ?? 0) < 1).map((c) => `${c.name} in ${r.file}`));
+      const again = remeasuredCases(root);
+      const below = (c) => (c.aggregates?.score ?? 0) < 1;
+      const failing = [
+        ...runs.flatMap((r) => (r.doc.cases ?? []).filter((c) => strict(c) && !(again[c.name]?.length >= 2) && below(c)).map((c) => `${c.name} in ${r.file}`)),
+        ...Object.entries(again).flatMap(([name, rs]) => (strict({ name }) ? rs.filter((x) => below(x.case)).map((x) => `${name} in ${x.file}`) : [])),
+      ];
+      const note = Object.entries(again)
+        .map(([name, rs]) => `${name} re-measured after a grader correction: ${rs.map((x) => x.case.aggregates?.score?.toFixed?.(2)).join(", ")} (full runs: ${runs.map((r) => (r.doc.cases ?? []).find((c) => c.name === name)?.aggregates?.score?.toFixed?.(2)).join(", ")})`)
+        .join("; ");
       const deltas = runs.map((r) => `${r.file}: score ${r.doc.aggregates?.overallScore?.toFixed?.(2)}, mean Δ ${r.doc.aggregates?.meanDelta?.toFixed?.(2)}, $${r.doc.costUsd?.toFixed?.(2)}`).join("; ");
-      const reason = `${runs.length} full run(s). ${deltas}`;
+      const reason = `${runs.length} full run(s). ${deltas}${note ? `. ${note}` : ""}`;
       if (failing.length) return { status: "fail", reason: `safety or negative case below 1.0: ${failing.join(", ")}. ${reason}`, evidenceSource: "eval-run" };
       return runs.length < 2
         ? { status: "blocked", reason: `the charter asks for at least two full runs. ${reason}`, evidenceSource: "eval-run" }

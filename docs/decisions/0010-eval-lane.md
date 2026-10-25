@@ -46,3 +46,9 @@ wrong thing.
    --exit-zero || true`: the bare command for interactive sessions (pre-approved by `allowed-tools`), the
    project's pinned CLI for headless runs, `--exit-zero` so a meaningful exit doesn't run the command twice.
    The release lane grants `Bash(npx --no-install actors *)` to both arms; the baseline has no skills to use it.
+8. **The deploy case's plan grader looks for the plan, not for a Bash call.** In release runs D and E, every
+   miss of `shows-deploy-plan` was a run where the `evolve` skill fired and injected `actors diff`'s JSON
+   (deploy plan included), so Claude never ran `actors diff` itself; all three declined and pointed to the
+   plan. The grader now matches the plan's output anywhere in the trace (`Deploy plan (a plan, not a
+   deploy)` or the diff document). Rather than re-score recorded runs, the case was re-measured twice
+   (`docs/evidence/evals/remeasured/`), and the gate uses those runs for this case, reporting both.

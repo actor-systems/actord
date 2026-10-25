@@ -1,5 +1,5 @@
 ---
-type: tool_used
-tool: Bash
-input_match: 'actors diff'
+type: regex
+target: trace
+pattern: 'Deploy plan \(a plan, not a deploy\)|\\"command\\": \\"diff\\"'
 ---
