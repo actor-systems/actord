@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 4ab6760 Skills lint: list skill directories only, past Finder's .DS_Store
+== repository at 1e99472 A note beside refused heredocs; reliability takes reported failures
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -14,7 +14,7 @@ Actor-Native Cloudflare Toolkit (actord) 0.1.0
 Component inventory
   Skills (7)  design, evolve, implement, inspect, reliability, setup, start
   Agents (2)  delivery-auditor, boundary-critic
-  Hooks (2)  PostToolUse, Stop  (harness-only — no model context cost)
+  Hooks (3)  PreToolUse, PostToolUse, Stop  (harness-only — no model context cost)
   MCP servers (0)
   LSP servers (0)
 

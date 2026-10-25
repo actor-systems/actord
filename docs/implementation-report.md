@@ -6,7 +6,7 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-25T22:41:24.141Z): **54 pass · 0 fail · 1 blocked.** G0 passed, G1 passed, G2 passed, G3 passed, G4 passed, G5 passed, G6 blocked, G7 passed.
+`npm run verify` (2026-10-25T23:04:12.478Z): **54 pass · 0 fail · 1 blocked.** G0 passed, G1 passed, G2 passed, G3 passed, G4 passed, G5 passed, G6 blocked, G7 passed.
 
 Since the 51-check release candidate: a review from the Codex implementation of the same charter found
 unsafe payload classifications, now corrected (decision 0011); Codex consolidated its adapter onto this

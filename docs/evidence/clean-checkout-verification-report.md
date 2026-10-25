@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T22:41:01.648Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T23:03:47.179Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -46,7 +46,7 @@ Generated 2026-10-25T22:41:01.648Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g1.validate.plugin` claude plugin validate --strict plugin | G1 | pass | host | `claude plugin validate --strict plugin` |  |
 | `g1.validate.marketplace` claude plugin validate --strict (marketplace) | G1 | pass | host | `claude plugin validate --strict .` |  |
 | `g1.install` Clean install from the repo marketplace, use, uninstall (isolated config) | G1 | pass | host | `scripts/install-smoke.sh` |  |
-| `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~733 tokens |
+| `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~803 tokens |
 | `g1.trust` README trust section lists every hook, mod event, mod call, monitor | G1 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g1.start-session` `start` works in a fresh session (eval case start-orients) | G1 | pass | eval-run | `claude plugin eval plugin --case start-orients (model-backed; owner-approved lane)` | score 1 in docs/evidence/evals/2026-10-25-release-k.json |
 | `g2.contract.types` Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors | G2 | pass | host | `npx --no-install tsc -p tsconfig.contract.json` |  |
@@ -65,10 +65,10 @@ Generated 2026-10-25T22:41:01.648Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g4.desk.trace` The stale model result traces to its cancelled item | G4 | pass | host | `scripts/trace-stale-smoke.sh` |  |
 | `g4.desk.dev` Briefing Desk runs under wrangler dev: an item travels Intake → Analyst → Desk, traced from the live log | G4 | pass | host | `node scripts/dev-smoke.mjs briefing-desk` |  |
 | `g4.runtime.probe` Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts | G4 | pass | host | `npx --no-install vitest run --config vitest.runtime.config.ts` |  |
-| `g5.cli.unit` init, hooks (check-on-edit, evidence gate), claim classification | G5 | pass | host | `npx --no-install vitest run test/g5.test.ts` |  |
+| `g5.cli.unit` init, hooks (check-on-edit, evidence gate, heredoc note), claim classification | G5 | pass | host | `npx --no-install vitest run test/g5.test.ts` |  |
 | `g5.skills.lint` Seven skills and two read-only critics follow the charter's authoring rules | G5 | pass | host | `node --test tests/skills.test.mjs` |  |
 | `g5.evals.static` Eval suite structure: case mix, paired graders, safety and negative-trigger assertions | G5 | pass | host | `node --test tests/evals.test.mjs` |  |
-| `g5.inventory` claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens | G5 | pass | host | `scripts/budget.sh && grep docs/evidence/plugin-details.txt` | always-on ~733 tokens |
+| `g5.inventory` claude plugin details lists 7 skills, 2 agents, 3 hooks; always-on ≤ 1,500 tokens | G5 | pass | host | `scripts/budget.sh && grep docs/evidence/plugin-details.txt` | always-on ~803 tokens |
 | `g5.starter.smoke` A fresh starter from actord init verifies PASS offline; regenerating changes nothing | G5 | pass | host | `scripts/starter-smoke.sh` |  |
 | `g5.verify.blocked` actord verify inside the default sandbox reports BLOCKED, static evidence passing | G5 | pass | host | `scripts/verify-blocked.sh` |  |
 | `g5.examples.verify` actord verify passes on both reference apps | G5 | pass | host | `cd examples/release-radar && node ../../plugin/dist/actord.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actord.mjs verify` |  |
