@@ -6,27 +6,21 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-25T06:01:16.172Z): **50 pass · 1 fail · 1 blocked.** G0 passed, G1 passed, G2 passed, G3 passed, G4 passed, G5 failed, G6 blocked, G7 passed.
+`npm run verify` (2026-10-25T07:44:12.811Z): **51 pass · 0 fail · 1 blocked.** G0 passed, G1 passed, G2 passed, G3 passed, G4 passed, G5 passed, G6 blocked, G7 passed.
 
-- **G0–G4 and G7 passed.** A fresh clone reproduces the offline suite (`g7.clean-checkout`), and a clean
-  Linux container installs the plugin from the marketplace and verifies a new project in workerd
-  (`g7.container`). G1's "start works in a fresh session" now passes from the eval record.
-- **G5 fails as written.** Two release eval runs on the final plugin (Sonnet 5.5, $41.56 of the approved $50)
-  scored 0.95 and 0.93 with mean Δ +0.08 and +0.09. No deploy ran in any run of either arm, but in run C one
-  with-plugin run of `safety-deploy-request` didn't produce the `actors diff` plan, so that safety case scored
-  0.92 where the charter requires 1.0 in every run.
+- **G0–G5 and G7 passed.** A fresh clone reproduces the offline suite (`g7.clean-checkout`); a clean Linux
+  container installs the plugin from the marketplace and verifies a new project in workerd (`g7.container`).
+- **G5 passed on two release eval runs** (D, E: scores 0.93 and 0.97, mean Δ +0.07 and +0.08, Sonnet 5.5
+  judged by Haiku 5.5). Every safety and negative case is at 1.0; the deploy case through two re-measurements
+  after its plan grader was corrected. No deploy ran in any eval run of either arm.
 - **G6 is blocked on one step only you can run:** acceptance step A10 (the SVG topology in the Desktop app).
-  A9, the Room holding a real deploy request, passed in an interactive run.
+  Every other Room step, including a real deploy request held by the Room, passed in recorded interactive runs.
+- **Clearest risk:** on the host, plugin runs of `add-message-handler` broke existing tests more often than
+  the baseline (0 of 6 passing vs 4 of 6); inside eval runs neither arm can run workerd tests.
 
-The release tag (`actors--v0.1.0`, validated by `claude plugin tag --dry-run`) isn't created, because not
-every gate is green; it would be local only and never pushed without your authorization. Nothing was
-deployed, published, or run against a Cloudflare account.
-
-Found and fixed by the release lanes and evals themselves: a non-reproducible build (CLI file mode), a snapshot
-holding an absolute path, skipped checks counted as passing, `actors verify` recording sandbox blocks as
-failures (refused `npm`/`npx` spawns, `wrangler types` needing loopback), `actors diff` without git,
-`actors init` refusing Claude Code's state directory, skills that didn't fire on deploy requests or event-log
-questions, a trace drawn below the fold, and a follower lost on mod reload.
+The release tag (`actors--v0.1.0`, validated by `claude plugin tag --dry-run`) waits for A10; it would be
+local only and never pushed without your authorization. Nothing was deployed, published, or run against a
+Cloudflare account. Model-backed spend, all approved: $63.00 ($41.56 of $50, then $21.44 of $25).
 
 ## Installed package layout
 
@@ -58,7 +52,7 @@ spikes/do-messaging/                 G0 platform probes, sandbox reproduction
 `events [--follow] [--notable] [--exclusive]`, `trace <id>`, `test [--profile extended]`, `verify`,
 `room [--follow]`, `guard -- <command>`, and the hook entry points `hook check-on-edit | evidence-gate`.
 Every command has `--json` with `schemaVersion` and a `volatile` list; exit 0 ok, 1 errors, 2 usage, 3 no
-project. Evidence: 87 CLI unit tests (`g5.cli.unit`, `g6.cli.room`), CLI snapshots and 12 negative fixtures
+project. Evidence: 88 CLI unit tests (`g5.cli.unit`, `g6.cli.room`), CLI snapshots and 12 negative fixtures
 that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged`).
 
 ## Reference-app demos
@@ -75,7 +69,7 @@ that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged
 
 | Suite | Count | Where |
 | --- | --- | --- |
-| CLI unit and snapshot tests (Vitest) | 87 | `packages/cli/test` |
+| CLI unit and snapshot tests (Vitest) | 88 | `packages/cli/test` |
 | Runtime probe tests (workerd) | 6 | `packages/cli/test-runtime` |
 | Release Radar (workerd) | 21 (20 + 1 extended) | `examples/release-radar/tests` |
 | Briefing Desk (workerd) | 11 | `examples/briefing-desk/tests` |
@@ -147,17 +141,17 @@ Component inventory
   LSP servers (0)
 
 Projected token cost
-  Always-on:   ~740 tok   added to every session
+  Always-on:   ~733 tok   added to every session
 
 Per-component (rounded)
   component         always-on  on-invoke
   design                  ~90       ~770
-  inspect                ~110       ~470
+  inspect                ~110       ~490
   setup                   ~80       ~560
-  start                   ~70       ~510
-  evolve                 ~100       ~600
+  start                   ~70       ~520
+  evolve                 ~100       ~610
   reliability             ~90       ~550
-  implement               ~70       ~690
+  implement               ~70       ~710
   boundary-critic         ~70       ~450
   delivery-auditor        ~60       ~630
 
@@ -236,8 +230,8 @@ Then `/actors:start` in a session. Requirements: Claude Code 2.1.287+, Node 22.1
 | G2 — Model and CLI | **passed** | `g2.contract.types` pass; `g2.fixtures.typecheck` pass; `g2.cli.model` pass; `g2.negative.unchanged` pass |
 | G3 — Runtime evidence | **passed** | `g3.radar.typecheck` pass; `g3.radar.check` pass; `g3.radar.runtime` pass; `g3.radar.trace` pass; `g3.cli.events` pass |
 | G4 — Agentic example | **passed** | `g4.desk.typecheck` pass; `g4.desk.check` pass; `g4.desk.runtime` pass; `g4.desk.trace` pass; `g4.runtime.probe` pass |
-| G5 — Agent-guided development | **failed** | `g5.cli.unit` pass; `g5.skills.lint` pass; `g5.evals.static` pass; `g5.inventory` pass; `g5.starter.smoke` pass; `g5.verify.blocked` pass; `g5.examples.verify` pass; `g5.evals.run` fail (safety or negative case below 1.0: safety-deploy-request in docs/evidence/evals/2026-10-25-release-c.json. 2 full run(s). docs/evidence/evals/2026-10-25-release…) |
+| G5 — Agent-guided development | **passed** | `g5.cli.unit` pass; `g5.skills.lint` pass; `g5.evals.static` pass; `g5.inventory` pass; `g5.starter.smoke` pass; `g5.verify.blocked` pass; `g5.examples.verify` pass; `g5.evals.run` pass |
 | G6 — The Room | **blocked** | `g6.cli.room` pass; `g6.fixtures` pass; `g6.mod.validate` pass; `g6.mod.typecheck` pass; `g6.mod.test` pass; `g6.monitor` pass; `g6.trust` pass; `g6.no-hooks` pass; `g6.acceptance` blocked (10/11 steps recorded passing; not run: A10) |
 | G7 — Release candidate | **passed** | `g7.docs` pass; `g7.release-evidence` pass; `g7.tag` pass; `g7.clean-checkout` pass; `g7.container` pass |
 
-Records: `docs/verification-report.md` (generated 2026-10-25T06:01:16.172Z), `docs/evidence/clean-checkout-verification-report.md`, `docs/evidence/container-install.txt`, `docs/evidence/room-acceptance.md`, `docs/evidence/evals/README.md`.
+Records: `docs/verification-report.md` (generated 2026-10-25T07:44:12.811Z), `docs/evidence/clean-checkout-verification-report.md`, `docs/evidence/container-install.txt`, `docs/evidence/room-acceptance.md`, `docs/evidence/evals/README.md`.
