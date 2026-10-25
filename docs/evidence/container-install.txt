@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 1812ad3 clean-checkout.sh: drop the exported allow-scripts setting before npm ci
+== repository at 5c33503 Record release runs H and I: the current plugin
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -43,6 +43,7 @@ Claims: 3 proved locally · 0 stub only · 1 not guaranteed · 0 blocked · 0 fa
   ✓ proved-locally refuse-invalid: Invalid payloads are refused before any handler runs.
   · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)
 
+Verdict: PASS
 Before any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.
 evidence verdict pass {
   provedLocally: 3,
