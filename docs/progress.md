@@ -5,7 +5,7 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**G2 — Model and CLI** (next). G1 offline-complete; `g1.start-session` blocked on eval approval.
+**G3 — Runtime evidence** (next). G2 passed; G1 offline-complete (`g1.start-session` blocked on eval approval).
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
@@ -17,9 +17,16 @@ Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-re
   `actors-toolkit`; README trust section + test; strict validation; isolated install/uninstall smoke;
   always-on ~66 tok. `g1.start-session` = eval case `start-orients` (blocked until evals approved).
 
+- **G2 passed** (verify 2026-10-24): `actors-toolkit/system` (`defineSystem`, `message`; compile-time route,
+  effect, schedule, payload contracts), normalized `actors.manifest.json`, `check` (stable codes),
+  `graph`, `diff` + deploy plan; DO lifecycle via wrangler `exports` (decision 0006); fixtures 2 valid +
+  12 negative; tests run the shipped `plugin/dist/actors.mjs`.
+
 ## Next
-- G2: `system.ts` convention (`defineSystem`/`actor`/`message`, zod 4 payloads), normalized manifest,
-  `check/graph/diff`, valid + negative fixtures, CLI snapshots.
+- G3: runtime helper `actors-toolkit/runtime` (envelope + causality fields, route authorization,
+  Standard Schema validation, SQLite inbox dedupe, transactional outbox + alarm retries, schedules,
+  structured events via console JSON) ; vitest reporter → `.actors/events.ndjson`; `actors events`,
+  `actors trace`; Release Radar example with duplicate/crash/trace tests in workerd.
 
 ## Open issues
 - Eval runs and local port binding are unverified until the first approved eval run (decision 0004).
