@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "spike-do-messaging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "SENDER", "class_name": "Sender" },
+      { "name": "RECEIVER", "class_name": "Receiver" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sender", "Receiver"] }]
+}

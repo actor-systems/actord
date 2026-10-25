@@ -1,0 +1,16 @@
+{
+  "network": {
+    "allowedDomains": [],
+    "deniedDomains": [],
+    "allowLocalBinding": true
+  },
+  "filesystem": {
+    "denyRead": [
+      "~/.ssh"
+    ],
+    "allowWrite": [
+      "."
+    ],
+    "denyWrite": []
+  }
+}

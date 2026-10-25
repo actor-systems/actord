@@ -9,3 +9,6 @@ coverage/
 .env
 plugin/evals/results/
 /scratch/
+.claude/settings.local.json
+.cc-writes/
+worker-configuration.d.ts

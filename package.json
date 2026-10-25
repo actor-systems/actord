@@ -1,0 +1,17 @@
+{
+  "name": "actors-toolkit",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "examples/*",
+    "spikes/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "versions": "node scripts/verify.mjs --versions"
+  }
+}

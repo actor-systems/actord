@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-25T00:05:08.369Z",
+  "versions": {
+    "claude": "2.1.310",
+    "node": "v24.22.1",
+    "npm": "11.19.1",
+    "wrangler": "4.152.0",
+    "workerd": "1.20261019.1",
+    "vitest": "5.0.5",
+    "vitestPlugin": "1.4.7",
+    "typescript": "7.0.2",
+    "platform": "darwin-arm64"
+  },
+  "summary": {
+    "pass": 6,
+    "fail": 0,
+    "blocked": 0,
+    "skipped": 0
+  },
+  "gates": {
+    "G0": {
+      "title": "Ground truth",
+      "status": "passed",
+      "missing": []
+    }
+  },
+  "checks": [
+    {
+      "id": "g0.versions",
+      "gate": "G0",
+      "title": "Claude Code meets the mods (2.1.287) and plugin eval (2.1.269) floors",
+      "command": "claude --version",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": null,
+      "outputTail": "{\"claude\":\"2.1.310\",\"node\":\"v24.22.1\",\"npm\":\"11.19.1\",\"wrangler\":\"4.152.0\",\"workerd\":\"1.20261019.1\",\"vitest\":\"5.0.5\",\"vitestPlugin\":\"1.4.7\",\"typescript\":\"7.0.2\",\"platform\":\"darwin-arm64\"}"
+    },
+    {
+      "id": "g0.guardrails",
+      "gate": "G0",
+      "title": "Repository deny rules cover every required category",
+      "command": "node --test tests/guardrails.test.mjs",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 84,
+      "outputTail": "✔ deny rules cover deployment (0.416333ms)\n✔ deny rules cover secrets (0.05725ms)\n✔ deny rules cover remote writes (0.042583ms)\n✔ deny rules cover publishing (0.048458ms)\n✔ deny rules cover tag pushes (0.048167ms)\n✔ deny rules cover force pushes (0.042791ms)\n✔ model-backed evals and plain pushes still ask (0.047666ms)\n✔ no allow rules widen the agent's authority (0.057542ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 46.908541"
+    },
+    {
+      "id": "g0.spike.types",
+      "gate": "G0",
+      "title": "wrangler types generates Env for the DO spike",
+      "command": "npx --no-install wrangler types",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 819,
+      "outputTail": "\n ⛅️ wrangler 4.152.0\n────────────────────\nGenerating project types...\n\ninterface __BaseEnv_Env {\n\tSENDER: DurableObjectNamespace<import(\"./src/index\").Sender>;\n\tRECEIVER: DurableObjectNamespace<import(\"./src/index\").Receiver>;\n}\ndeclare namespace Cloudflare {\n\tinterface GlobalProps {\n\t\tmainModule: typeof import(\"./src/index\");\n\t\tdurableNamespaces: \"Sender\" | \"Receiver\";\n\t}\n\tinterface Env extends __BaseEnv_Env {}\n}\ninterface Env extends __BaseEnv_Env {}\n\nGenerating runtime types...\n\nRuntime types generated.\n\n\n✨ Types written to worker-configuration.d.ts\n\nAction required Install @types/node\nSince your Worker has Node.js compatibility enabled, you should install Node.js types by running \"npm i --save-dev @types/node\".\n\n📖 Read about runtime types\nhttps://developers.cloudflare.com/workers/languages/typescript/#generate-types\n📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file."
+    },
+    {
+      "id": "g0.spike.typecheck",
+      "gate": "G0",
+      "title": "DO spike typechecks (TypeScript 7)",
+      "command": "npm run --silent typecheck -w spike-do-messaging",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 182,
+      "outputTail": null
+    },
+    {
+      "id": "g0.spike.runtime",
+      "gate": "G0",
+      "title": "Native DO messaging spike passes in workerd",
+      "command": "npm test --silent -w spike-do-messaging",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 1151,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/spikes/do-messaging\n\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  17:05:05\n   Duration  611ms (tests 46%, transform 23%, worker 18%, import 13%)"
+    },
+    {
+      "id": "g0.sandbox",
+      "gate": "G0",
+      "title": "workerd under the OS sandbox: default denies listen, local binding passes",
+      "command": "spikes/do-messaging/sandbox/run.sh",
+      "status": "pass",
+      "reason": "finding reproduced (decision 0004)",
+      "evidenceSource": "host",
+      "durationMs": 2468,
+      "outputTail": "default 1 listen-eperm\nlocal-binding 0 passes"
+    }
+  ]
+}
