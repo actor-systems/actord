@@ -355,9 +355,16 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const pending: Pending[] = [];
     const notes: Array<Omit<ActorEvent, "$actord">> = [];
     const handler = (handlers as Record<string, (m: unknown, c: unknown) => void | Promise<void>>)[envelope.type];
+    let duplicate = false;
     try {
       if (!handler) throw new Error(`${actorName} has no handler for ${envelope.type}`);
       await ctx.storage.transaction(async () => {
+        // Another copy may have been handled while this one waited for the transaction: the check above
+        // is only a fast path, and this one decides.
+        if (sql.exec("SELECT 1 FROM _actors_inbox WHERE id = ?", envelope.id).toArray().length > 0) {
+          duplicate = true;
+          return;
+        }
         maybeFault(actorName, envelope.type, "before-handler");
         await handler({ ...envelope, payload: validated.value }, handlerContext(envelope, pending, notes));
         maybeFault(actorName, envelope.type, "after-handler");
@@ -379,6 +386,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       const error = err instanceof Error ? err.message : String(err);
       emit({ kind: "failed", at: now(), actor: self, ...ids(envelope), reason: error });
       return { status: "failed", messageId: envelope.id, error };
+    }
+    if (duplicate) {
+      emit({ kind: "duplicate", at: now(), actor: self, ...ids(envelope) });
+      return { status: "duplicate", messageId: envelope.id };
     }
     emit({ kind: "handled", at: now(), actor: self, ...ids(envelope) });
     for (const n of notes) emit(n);

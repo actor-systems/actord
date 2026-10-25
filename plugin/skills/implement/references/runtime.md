@@ -66,10 +66,11 @@ import { injectFault, overrideBudget, overrideEffect, resetSeams, settle, tick }
 - `tick(env, system, "Actor", key)` delivers a scheduled wake due now, so its `payload.at` is the current
   time, as when the alarm fires on schedule. Each call is a new wake.
 - Storage persists across the tests in one file (each file starts empty), and effects dedupe by key per
-  instance, so give each test its own instance keys and ids.
+  instance, so give each test its own instance keys and ids. An instance every test shares, such as one
+  at `main`, keeps what earlier tests left: assert only on what this test added.
 - `injectFault({ actor, type, at: "before-handler" | "after-handler" | "deliver", times })`.
-- `overrideEffect(name, adapter)` and `overrideBudget(actor, { timeoutMs, maxAttempts })`; call `resetSeams()`
-  in `afterEach`.
+- `overrideEffect(name, adapter)` and `overrideBudget(actor, { timeoutMs, maxAttempts })`. A later override
+  of the same effect replaces the earlier one, and any log it kept. Call `resetSeams()` in `afterEach`.
 - `vitest.config.ts` adds `actorEvents()` from `@actord/toolkit/vitest`, so events land in
   `.actord/events.ndjson` for `actord trace`.
 - Name tests with claim tags (`it("[crash-after-mutation] …")`). Tests tagged `[extended]` run only under

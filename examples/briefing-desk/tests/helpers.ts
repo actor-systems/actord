@@ -5,7 +5,8 @@ import system from "../system.ts";
 import type { Analysis, AnalyzeInput } from "../src/model.ts";
 
 // Durable Object storage persists across the tests in one file (each file starts empty), and effects
-// dedupe by key per instance: give each test its own instance keys and ids.
+// dedupe by key per instance: give each test its own instance keys and ids. An instance every test
+// shares, such as one at `main`, keeps what earlier tests left: assert only on what this test added.
 
 /** A model double that answers from a table keyed by item title; unknown titles throw. */
 export function scriptedModel(answers: Record<string, Analysis | Error | unknown>) {
