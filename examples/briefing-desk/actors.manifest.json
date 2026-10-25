@@ -1,0 +1,366 @@
+{
+  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "briefing-desk",
+    "description": "Triage incoming items with a model, and brief the owner only on what matters, after a person approves"
+  },
+  "actors": [
+    {
+      "binding": "ANALYST",
+      "budget": {
+        "maxAttempts": 2,
+        "maxTokens": 2048,
+        "timeoutMs": 30000
+      },
+      "effects": [
+        "model.analyze",
+        "notify.brief"
+      ],
+      "justification": [
+        "identity",
+        "isolation",
+        "lifecycle"
+      ],
+      "kind": "model-assisted",
+      "name": "Analyst",
+      "purpose": "One per item: asks the model to classify and summarize, then decides whether the owner needs a briefing",
+      "receives": [
+        "analysis.completed",
+        "briefing.decided",
+        "briefing.delivery",
+        "item.cancelled",
+        "item.routed"
+      ],
+      "schedule": null,
+      "sends": [
+        "analysis.completed",
+        "briefing.delivery",
+        "briefing.updated"
+      ]
+    },
+    {
+      "binding": "DESK",
+      "budget": null,
+      "effects": [],
+      "justification": [
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Desk",
+      "purpose": "Owns the briefing board: the latest status of every item",
+      "receives": [
+        "briefing.updated"
+      ],
+      "schedule": null,
+      "sends": []
+    },
+    {
+      "binding": "INTAKE",
+      "budget": null,
+      "effects": [],
+      "justification": [
+        "permissions",
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Intake",
+      "purpose": "The only actor the outside world reaches: records submissions, drops repeats, and routes each new item to its analyst",
+      "receives": [
+        "item.submitted"
+      ],
+      "schedule": null,
+      "sends": [
+        "item.routed"
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "description": "Outcome of the model.analyze effect, delivered back to the analyst (value is untrusted model output)",
+      "name": "analysis.completed",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "confirmed",
+              "failed",
+              "in_doubt"
+            ],
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "status"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "A person approved or refused sending a briefing",
+      "name": "briefing.decided",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "type": "string"
+          },
+          "itemId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "decision",
+          "by"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Outcome of the notify.brief effect, delivered back to the analyst",
+      "name": "briefing.delivery",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "confirmed",
+              "failed",
+              "in_doubt"
+            ],
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "key",
+          "status"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The latest status of one item, for the board",
+      "name": "briefing.updated",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "itemId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "analyzing",
+              "cancelled",
+              "needs_human",
+              "dismissed",
+              "filed",
+              "awaiting_approval",
+              "sending",
+              "sent",
+              "in_doubt",
+              "denied"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "title",
+          "status"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The submitter withdrew the item; any analysis in flight is now stale",
+      "name": "item.cancelled",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "itemId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Intake hands a new item to its analyst",
+      "name": "item.routed",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "itemId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "source",
+          "title",
+          "body"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Someone submitted an item for triage (from the Worker's HTTP entry point)",
+      "name": "item.submitted",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "itemId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "source",
+          "title",
+          "body"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@ingress",
+      "message": "briefing.decided",
+      "to": "Analyst"
+    },
+    {
+      "from": "@ingress",
+      "message": "item.cancelled",
+      "to": "Analyst"
+    },
+    {
+      "from": "@ingress",
+      "message": "item.submitted",
+      "to": "Intake"
+    },
+    {
+      "from": "Analyst",
+      "message": "analysis.completed",
+      "to": "Analyst"
+    },
+    {
+      "from": "Analyst",
+      "message": "briefing.delivery",
+      "to": "Analyst"
+    },
+    {
+      "from": "Analyst",
+      "message": "briefing.updated",
+      "to": "Desk"
+    },
+    {
+      "from": "Intake",
+      "message": "item.routed",
+      "to": "Analyst"
+    }
+  ],
+  "effects": [
+    {
+      "approval": "none",
+      "description": "Ask the model for a category, priority, and summary (no side effects, so safe to retry)",
+      "idempotency": "key",
+      "name": "model.analyze",
+      "reconcile": false,
+      "result": "analysis.completed"
+    },
+    {
+      "approval": "human",
+      "description": "Send a briefing to the owner's inbox through the outbound gateway, which accepts no idempotency key",
+      "idempotency": "none",
+      "name": "notify.brief",
+      "reconcile": false,
+      "result": "briefing.delivery"
+    }
+  ]
+}

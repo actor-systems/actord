@@ -1,14 +1,22 @@
 #!/usr/bin/env node
-// Run an example's workerd test suite and confirm every required fault-matrix tag has a passing test.
-//   node scripts/run-example-tests.mjs <example-dir> <tag> [<tag> ...]
-// Tags appear in test names as [tag]. Prints one line per tag; exits 1 on any failure or missing tag.
+// Run an example's workerd test suite and confirm every required tag has a passing test.
+//   node scripts/run-example-tests.mjs <example-dir> [<tag> ...]
+// With no tags, the required tags are those of the example's actors.claims.json (workerd and stub
+// claims), so every claimed property needs a passing test. Tags appear in test names as [tag].
+// Prints one line per tag; exits 1 on any failure or missing tag.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const [dir, ...required] = process.argv.slice(2);
+const [dir, ...tags] = process.argv.slice(2);
 const root = join(import.meta.dirname, "..");
 const cwd = join(root, dir);
+const claimsFile = join(cwd, "actors.claims.json");
+const required = tags.length
+  ? tags
+  : existsSync(claimsFile)
+    ? [...new Set(JSON.parse(readFileSync(claimsFile, "utf8")).claims.filter((c) => c.basis !== "not-guaranteed").flatMap((c) => c.tests))]
+    : [];
 const out = join(cwd, ".actors", "vitest-results.json");
 const r = spawnSync("npx", ["--no-install", "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`], { cwd, encoding: "utf8" });
 let results;

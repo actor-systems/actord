@@ -77,6 +77,18 @@ backed by tests in workerd (see `examples/release-radar/tests/`):
 Not guaranteed: exactly-once external effects, global ordering, cross-actor transactions, or a route as a
 security boundary. Decision 0007 has the details and the platform behavior they rest on.
 
+## Reference applications
+
+| App | What it demonstrates | Tests (workerd) |
+| --- | --- | --- |
+| [`examples/release-radar`](examples/release-radar) | Deterministic-first: a scheduled poller (one actor per feed), a state-owning ledger that deduplicates and classifies by rule, a digest writer that notifies once per finding | 20, across duplicates, crashes before and after writes, eviction, retry exhaustion, ordering, schedule, lost acknowledgment |
+| [`examples/briefing-desk`](examples/briefing-desk) | Judgment-capable: intake, a model-assisted analyst per item (bounded budget, validated model output, cancellation while the model call is in flight), and human approval before a briefing leaves through a gateway with no idempotency key | 11, across reentrancy, model unavailable or slow, invalid model output, approval, denial, in-doubt delivery |
+
+Each app states its reliability claims in `actors.claims.json`: what is proved locally in workerd, what is
+shown only against a stub of an external system, and what is deliberately not guaranteed. Every claimed
+property must have a passing tagged test (`npm run verify` enforces this). Neither app needs a model API
+key: tests use deterministic doubles, and Briefing Desk's live Anthropic adapter is optional.
+
 ## Trust and safety
 
 Everything this plugin runs on your machine is listed here. `tests/trust-section.test.mjs` fails the build

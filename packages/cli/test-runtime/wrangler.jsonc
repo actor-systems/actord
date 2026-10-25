@@ -1,0 +1,7 @@
+{
+  "name": "runtime-probe",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "PROBE", "class_name": "Probe" }] },
+  "exports": { "Probe": { "type": "durable-object", "storage": "sqlite" } }
+}

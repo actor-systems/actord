@@ -45,6 +45,7 @@ export interface SqlStorageLike {
 }
 export interface DurableObjectStateLike {
   id: { name?: string; toString(): string };
+  waitUntil?(promise: Promise<unknown>): void;
   storage: {
     sql: SqlStorageLike;
     transaction<T>(closure: () => Promise<T>): Promise<T>;
@@ -181,6 +182,10 @@ export interface HandlerContext<S extends AnySystem, A extends ActorName<S>> {
   send<M extends MessagesFrom<S, A>>(type: M, payload: PayloadIn<S, M>, options?: { to?: Receivers<S, A, M>; key?: string }): void;
   /** Queue an external effect, deduplicated by key; it runs after commit, outside the transaction. */
   effect(name: EffectsOf<S, A>, input: unknown, options: { key: string }): void;
+  /** Release an effect parked for human approval; it runs after this handler commits. False if none is waiting. */
+  approve(name: EffectsOf<S, A>, key: string): boolean;
+  /** Refuse an effect parked for human approval. False if none is waiting. */
+  deny(name: EffectsOf<S, A>, key: string, reason: string): boolean;
   /** Record a structured note in the event log (for inspection; no behavior). */
   note(text: string, detail?: Record<string, unknown>): void;
   now(): number;
@@ -225,6 +230,7 @@ export type FaultPoint = "before-handler" | "after-handler" | "deliver";
 interface TestSeams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter>;
+  budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
 }
 function seams(): TestSeams | undefined {
   return (globalThis as { __actorsTestSeams?: TestSeams }).__actorsTestSeams;
@@ -289,6 +295,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const key = ctx.id.name ?? ctx.id.toString();
   const self = `${actorName}:${key}`;
   let draining: Promise<void> | null = null;
+  // Effects in flight in this instance. A row marked running that isn't here was orphaned by a restart.
+  const inflight = new Map<string, Promise<void>>();
+  let recovered = false;
 
   const sql = ctx.storage.sql;
   const meta = (k: string): string | null => sql.exec<{ v: string }>("SELECT v FROM _actors_meta WHERE k = ?", k).toArray()[0]?.v ?? null;
@@ -322,6 +331,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   }
 
   async function receive(raw: unknown): Promise<Receipt> {
+    await recoverOrphans();
     const e = raw as Partial<Envelope>;
     if (!e || typeof e !== "object" || e.v !== ENVELOPE_VERSION || typeof e.id !== "string" || typeof e.type !== "string" || typeof e.from !== "string" || typeof e.to !== "string" || typeof e.version !== "number") {
       return reject(e && typeof e === "object" ? e : null, "malformed", "missing or mistyped envelope fields");
@@ -420,6 +430,23 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         const body = JSON.stringify({ name: effectName, key: opts.key, input, causationId: current.id, correlationId: current.correlationId });
         pending.push({ kind: "effect", id, target: effectName, body, event: { kind: "effect.requested", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId } });
       },
+      approve(name, effectKey) {
+        const id = `fx:${name as string}:${effectKey}`;
+        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval'", id).toArray()[0];
+        if (!row) return false;
+        sql.exec("UPDATE _actors_outbox SET status = 'pending', next_at = ?, body = ? WHERE id = ?", now(), JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: current.id }), id);
+        notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: name as string, effectKey, reason: "approved by a person" });
+        return true;
+      },
+      deny(name, effectKey, reason) {
+        const id = `fx:${name as string}:${effectKey}`;
+        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval'", id).toArray()[0];
+        if (!row) return false;
+        const req = JSON.parse(row.body) as { causationId: string; correlationId: string };
+        sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason, id);
+        notes.push({ kind: "effect.denied", at: now(), actor: self, effect: name as string, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason });
+        return true;
+      },
       note(text, detail) {
         notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, reason: text, ...(detail ? { detail } : {}) });
       },
@@ -448,11 +475,53 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           .toArray()[0];
         if (!due) break;
         if (due.kind === "message") await deliverMessage(due);
-        else await runEffect(due);
+        else startEffect(due);
       }
     } finally {
       await armAlarm();
     }
+  }
+
+  /**
+   * Effects run in the background so a slow one (a model call) never holds up message delivery. next_at
+   * records when the attempt started; a completed effect drains again to deliver its result message.
+   */
+  function startEffect(row: { id: string; target: string; body: string; attempts: number }): void {
+    sql.exec("UPDATE _actors_outbox SET status = 'running', next_at = ? WHERE id = ?", now(), row.id);
+    const run: Promise<void> = runEffect(row)
+      .catch((err) => {
+        const error = err instanceof Error ? err.message : String(err);
+        sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', last_error = ? WHERE id = ? AND status = 'running'", error, row.id);
+        emit({ kind: "effect.in_doubt", at: now(), actor: self, effect: row.target, reason: `effect runner failed: ${error}` });
+      })
+      .finally(() => {
+        inflight.delete(row.id);
+        drain().catch((err) => emit({ kind: "note", at: now(), actor: self, reason: `drain after effect failed: ${String(err)}` }));
+      });
+    inflight.set(row.id, run);
+    ctx.waitUntil?.(run);
+  }
+
+  /** Once per instance: attempts left running by a previous instance are retried only when that's safe. */
+  async function recoverOrphans(): Promise<void> {
+    if (recovered) return;
+    recovered = true;
+    const orphans = sql.exec<{ id: string; target: string; body: string; attempts: number }>("SELECT id, target, body, attempts FROM _actors_outbox WHERE status = 'running'").toArray();
+    for (const row of orphans) {
+      if (inflight.has(row.id)) continue;
+      const req = JSON.parse(row.body) as { name: string; key: string; causationId: string; correlationId: string };
+      const fx = system.effects?.[req.name];
+      const reason = "interrupted: the actor restarted while the attempt was in flight";
+      if (fx?.idempotency === "key") {
+        sql.exec("UPDATE _actors_outbox SET status = 'pending', attempts = ?, next_at = ?, last_error = ? WHERE id = ?", row.attempts + 1, now(), reason, row.id);
+        emit({ kind: "retry.scheduled", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, attempt: row.attempts + 2, reason });
+      } else {
+        sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', attempts = ?, last_error = ? WHERE id = ?", row.attempts + 1, reason, row.id);
+        emit({ kind: "effect.in_doubt", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, reason });
+        if (fx?.result) enqueueResult(fx.result, row.id, req, { key: req.key, status: "in_doubt", error: reason });
+      }
+    }
+    if (orphans.length > 0) await armAlarm();
   }
 
   function retryOrExhaust(row: { id: string; attempts: number }, error: string, event: Omit<ActorEvent, "$actors" | "kind" | "at" | "actor">, overloaded = false): void {
@@ -462,7 +531,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       emit({ kind: "retry.exhausted", at: now(), actor: self, ...event, attempt: attempts, reason: error });
     } else {
       const delay = backoff(attempts) * (overloaded ? 4 : 1);
-      sql.exec("UPDATE _actors_outbox SET attempts = ?, next_at = ?, last_error = ? WHERE id = ?", attempts, now() + delay, error, row.id);
+      sql.exec("UPDATE _actors_outbox SET status = 'pending', attempts = ?, next_at = ?, last_error = ? WHERE id = ?", attempts, now() + delay, error, row.id);
       emit({ kind: "retry.scheduled", at: now(), actor: self, ...event, attempt: attempts + 1, reason: error, detail: { delayMs: delay } });
     }
   }
@@ -514,8 +583,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       finish("failed", null, `no adapter registered for effect ${req.name}`, "effect.failed");
       return;
     }
-    const timeoutMs = spec.budget?.timeoutMs ?? 30_000;
-    const budgetAttempts = spec.budget?.maxAttempts ?? maxAttempts;
+    const budget = { ...spec.budget, ...seams()?.budgets?.[actorName] };
+    const timeoutMs = budget.timeoutMs ?? 30_000;
+    const budgetAttempts = budget.maxAttempts ?? maxAttempts;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`effect timed out after ${timeoutMs}ms`)), timeoutMs);
     try {
@@ -598,6 +668,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   }
 
   async function alarm(): Promise<void> {
+    await recoverOrphans();
     const tick = meta("schedule.next");
     if (spec.schedule && tick && Number(tick) <= now()) {
       const every = durationMs(spec.schedule.every) ?? 3_600_000;
@@ -626,6 +697,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     receive,
     alarm,
     async start() {
+      await recoverOrphans();
       await ensureSchedule();
       await armAlarm();
     },
@@ -640,11 +712,12 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       }
       sql.exec("UPDATE _actors_outbox SET status = 'pending', body = ?, next_at = ? WHERE id = ?", JSON.stringify({ ...JSON.parse(row.body), approved: true }), now(), row.id);
       await drain();
+      await inflight.get(row.id);
       const done = sql.exec<{ status: string; body: string; last_error: string | null }>("SELECT status, body, last_error FROM _actors_outbox WHERE id = ?", row.id).toArray()[0]!;
       const outcome = (JSON.parse(done.body) as { outcome?: unknown }).outcome;
       if (done.status === "confirmed") return { status: "confirmed", key: effectKey, value: outcome };
       if (done.status === "in_doubt") return { status: "in_doubt", key: effectKey, error: done.last_error ?? "unknown" };
-      if (done.status === "pending") return { status: "in_doubt", key: effectKey, error: `retry scheduled: ${done.last_error ?? ""}` };
+      if (done.status === "pending" || done.status === "running") return { status: "in_doubt", key: effectKey, error: `not settled yet: ${done.last_error ?? "in flight"}` };
       return { status: "failed", key: effectKey, error: done.last_error ?? "failed" };
     },
     outbox() {

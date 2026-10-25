@@ -48,6 +48,7 @@ it("[crash-after-mutation] a crash after the handler's writes rolls them back, s
 it("[delivery-retry][restart] an undelivered message survives the sender's eviction and is delivered by the alarm", async () => {
   injectFault({ actor: "FeedPoller", type: "release.observed", at: "deliver", times: 1 });
   await watchAndPoll("evicted", [item("evicted", "1.4.0")]);
+  await settle(env, system, { deliver: false }); // let the fetch effect finish; don't force the failed delivery
   const poller = env.FEED_POLLER.getByName("evicted");
   const pending = await runInDurableObject(poller, (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE status = 'pending'").one().n);
   expect(pending).toBe(1);

@@ -1,0 +1,19 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "briefing-desk",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "INTAKE", "class_name": "Intake" },
+      { "name": "ANALYST", "class_name": "Analyst" },
+      { "name": "DESK", "class_name": "Desk" }
+    ]
+  },
+  "exports": {
+    "Intake": { "type": "durable-object", "storage": "sqlite" },
+    "Analyst": { "type": "durable-object", "storage": "sqlite" },
+    "Desk": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

@@ -47,3 +47,18 @@
 Exactly-once external effects; global or cross-sender ordering; ordering across retries; cross-actor
 transactions; dedupe beyond inbox retention (7 days by default); routes as a security boundary (any code
 with the binding can call `receive`).
+
+## Amendment (G4): effects run in the background; orphaned attempts are recovered honestly
+- **Problem found while writing Briefing Desk's reentrancy test:** effects ran inline in the actor's single
+  drain loop, so a slow model call blocked delivery of every later message from that actor. A cancellation's
+  update to the Desk would wait for the model (head-of-line blocking).
+- **Change:** an effect row is marked `running` and started in the background (`ctx.waitUntil` when
+  available); the drain moves on. A finished effect drains again to deliver its result message.
+- **Recovery:** a `running` row with no in-memory attempt was orphaned by a restart. On the instance's first
+  activity it's retried if the effect has an idempotency key, and otherwise recorded as `in_doubt`
+  ("interrupted: the actor restarted while the attempt was in flight"), delivering the declared result
+  message. Tested in `packages/cli/test-runtime` with `abortAllDurableObjects()`.
+- `actors-toolkit/testing`'s `settle()` waits for running effects; `settle({ deliver: false })` waits without
+  forcing deliveries.
+- Approval decisions can arrive as messages: `ctx.approve(effect, key)` and `ctx.deny(effect, key, reason)`
+  change the parked effect inside the handler's transaction; the approved effect runs after commit.

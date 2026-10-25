@@ -1,0 +1,25 @@
+{
+  "name": "briefing-desk",
+  "private": true,
+  "type": "module",
+  "description": "Reference app: an intake actor routes items to a model-assisted analyst; a human approves outbound briefings",
+  "scripts": {
+    "types": "wrangler types",
+    "typecheck": "wrangler types >/dev/null && tsc --noEmit",
+    "test": "vitest run",
+    "check": "actors check",
+    "verify": "npm run typecheck && actors check && vitest run",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "actors-toolkit": "0.1.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "wrangler": "4.152.0",
+    "zod": "4.6.5"
+  }
+}

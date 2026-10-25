@@ -1,0 +1,16 @@
+{
+  "$comment": "What this system claims about delivery, state, and effects, and the tagged tests that establish each claim. `actors verify` classifies every claim from the latest test run. basis: workerd = proved locally in Cloudflare's runtime; stub = shown only against a test double of an external system; not-guaranteed = deliberately not claimed.",
+  "claims": [
+    { "id": "end-to-end", "basis": "workerd", "tests": ["end-to-end"], "statement": "Items are triaged to filed, dismissed, or awaiting approval, and an approved briefing is sent once." },
+    { "id": "dedupe-submission", "basis": "workerd", "tests": ["duplicate-submission"], "statement": "The same item submitted twice is analyzed once." },
+    { "id": "stale-results", "basis": "workerd", "tests": ["reentrancy"], "statement": "A cancellation handled while the model call is in flight makes the late answer stale: it never produces a briefing." },
+    { "id": "approval-gate", "basis": "workerd", "tests": ["approval-required", "approval-denied"], "statement": "No briefing leaves without a person's approval; a refusal or a cancellation means it never leaves." },
+    { "id": "model-bounded", "basis": "workerd", "tests": ["model-unavailable", "model-timeout", "budget"], "statement": "A model call is attempted at most budget.maxAttempts times, each cut off after budget.timeoutMs; then the item goes to a person." },
+    { "id": "model-output-checked", "basis": "workerd", "tests": ["model-output-invalid"], "statement": "Model output that fails the schema is never acted on." },
+    { "id": "lost-ack-in-doubt", "basis": "stub", "tests": ["lost-ack-in-doubt"], "statement": "A briefing the gateway accepted but never acknowledged is reported in doubt: not marked sent, and not resent. Shown with a stub gateway that drops its answer." },
+    { "id": "unreachable-gateway", "basis": "stub", "tests": ["gateway-unreachable"], "statement": "A gateway that provably never received a briefing is retried up to the budget, then the item goes to a person." },
+    { "id": "exactly-once-briefing", "basis": "not-guaranteed", "statement": "Exactly-once delivery of briefings.", "why": "The gateway accepts no idempotency key, so a lost acknowledgment can't be resolved; the desk says in_doubt instead." },
+    { "id": "classification-quality", "basis": "not-guaranteed", "statement": "The model classifies items correctly.", "why": "Tests use deterministic doubles; judging the live model's output needs people or a model-backed eval, which CI doesn't run." },
+    { "id": "live-model-adapter", "basis": "not-guaranteed", "statement": "The Anthropic adapter works against the live API.", "why": "It typechecks against @anthropic-ai/sdk 1.3.0, but calling the API needs a key and contacts an external service, so it is unverified here." }
+  ]
+}

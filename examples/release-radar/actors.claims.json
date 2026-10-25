@@ -1,0 +1,17 @@
+{
+  "$comment": "What this system claims about delivery, state, and effects, and the tagged tests that establish each claim. `actors verify` classifies every claim from the latest test run. basis: workerd = proved locally in Cloudflare's runtime; stub = shown only against a test double of an external system; not-guaranteed = deliberately not claimed.",
+  "claims": [
+    { "id": "refuse-invalid", "basis": "workerd", "tests": ["malformed", "unauthorized-route", "unknown-message"], "statement": "Malformed, wrong-version, unknown, and off-route messages are refused before any handler runs, and change no state." },
+    { "id": "dedupe-delivery", "basis": "workerd", "tests": ["duplicate-delivery"], "statement": "A redelivered message (same id) is handled once." },
+    { "id": "dedupe-input", "basis": "workerd", "tests": ["duplicate-input"], "statement": "A release seen again in a later poll is recorded once and notified once." },
+    { "id": "atomic-handler", "basis": "workerd", "tests": ["crash-before-mutation", "crash-after-mutation"], "statement": "A crash before or after a handler's writes leaves no partial state; the retry runs as if the first attempt never happened." },
+    { "id": "at-least-once", "basis": "workerd", "tests": ["delivery-retry", "restart"], "statement": "A message whose delivery failed survives the sender's eviction and is delivered by the alarm; actor state survives eviction." },
+    { "id": "dead-letter", "basis": "workerd", "tests": ["retry-exhausted"], "statement": "A message that can't be delivered stops after 6 attempts and is recorded as retry.exhausted, not retried forever." },
+    { "id": "order-independent", "basis": "workerd", "tests": ["out-of-order"], "statement": "Classification and the latest-version pointer don't depend on arrival order." },
+    { "id": "scheduled-wake", "basis": "workerd", "tests": ["scheduled-wake"], "statement": "Watching a feed arms a 15-minute wake that re-arms itself; a wake with nothing to watch does nothing." },
+    { "id": "notify-once-keyed", "basis": "stub", "tests": ["lost-ack-idempotent"], "statement": "A notification the gateway accepted but didn't acknowledge reaches the owner once, because it is retried with the same key and the gateway deduplicates by key. Shown with a stub gateway; a real gateway must honor the key." },
+    { "id": "exactly-once-notify", "basis": "not-guaranteed", "statement": "Exactly-once notification when a gateway ignores the idempotency key.", "why": "Retries after a lost acknowledgment can duplicate; only the gateway's deduplication prevents it." },
+    { "id": "exact-schedule", "basis": "not-guaranteed", "statement": "Polls exactly every 15 minutes.", "why": "Durable Object alarms run at least once and can be delayed by up to a minute." },
+    { "id": "production-traces", "basis": "not-guaranteed", "statement": "Traces of production traffic in actors trace.", "why": "actors trace reads local test and dev events only; production events go to Workers Logs." }
+  ]
+}
