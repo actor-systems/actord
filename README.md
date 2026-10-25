@@ -225,10 +225,13 @@ paired with process graders. Run it from this repository, because the scaffolds 
 from `examples/`:
 
 ```sh
-claude plugin eval plugin --scaffold --no-publish --trust-plugin --model <pinned> --judge-model <pinned> \
-  --max-cost-usd <ceiling> --allow-tools Write Edit "Bash(actors *)" "Bash(npx actors *)" "Bash(npm run *)" \
-  "Bash(npm test*)" "Bash(npx vitest *)" "Bash(npx tsc *)" "Bash(git diff*)" "Bash(git status*)" --json docs/evidence/evals/<date>.json
+scripts/eval-suite.sh <label> <max-cost-usd>   # e.g. scripts/eval-suite.sh 2026-10-25-run1 22
 ```
+
+It runs `claude plugin eval plugin --scaffold --no-publish --trust-plugin --keep-temp` with pinned models
+(`claude-sonnet-5-5`, judged by `claude-haiku-5-5`), the cost ceiling, and the tool grants the cases need,
+writes `docs/evidence/evals/<label>.json`, then re-runs each kept workspace's runtime tests on the host
+(`<label>.host.json`), because eval runs deny the loopback port workerd needs (decision 0004).
 
 Model-backed runs spend real usage, so they're a separate, explicit lane, never part of `npm run verify`.
 

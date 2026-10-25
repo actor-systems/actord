@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.310",
+  "startedAt": "2026-10-25T03:59:06.512Z",
+  "durationSeconds": 78,
+  "costUsd": 0.26547960000000004,
+  "partial": false,
+  "suite": {
+    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "ablation": "none",
+    "modelOverride": "claude-sonnet-5-5",
+    "judgeModel": "claude-haiku-5-5",
+    "caseFilter": "add-message-handler",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "actors",
+        "version": "0.1.0",
+        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "add-message-handler",
+      "dir": "evals/add-message-handler",
+      "source": "mixed",
+      "promptMarkdown": "In this release monitor, add support for retracted releases: a feed item can now come with `retracted: true`. The ledger should mark that release retracted, and the digest writer must not send a notification for a retracted release that hasn't been notified yet. Add a test for it. When you're done, run `npx actors verify --json --out .actors/evidence.json` and report its verdict.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 1200,
+      "maxTurns": 60,
+      "graders": [
+        {
+          "name": "contract-has-retracted",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": {
+              "source": "file",
+              "path": "src/messages/index.ts"
+            },
+            "pattern": "retracted",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "evidence-check-passes",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": {
+              "source": "file",
+              "path": ".actors/evidence.json"
+            },
+            "pattern": "\"id\": \"check\",\\s*\"status\": \"pass\"",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "evidence-typecheck-passes",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": {
+              "source": "file",
+              "path": ".actors/evidence.json"
+            },
+            "pattern": "\"id\": \"typecheck\",\\s*\"status\": \"pass\"",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "evidence-verdict-not-fail",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": {
+              "source": "file",
+              "path": ".actors/evidence.json"
+            },
+            "pattern": "\"verdict\": \"(pass|blocked)\"",
+            "flags": "",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "ledger-handles-retraction",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": {
+              "source": "file",
+              "path": "src/actors/release-ledger.ts"
+            },
+            "pattern": "retract",
+            "flags": "i",
+            "match": "contains"
+          }
+        },
+        {
+          "name": "ran-actors-verify",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Bash",
+            "input_match": "actors verify"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 31,
+            "costUsd": 0.26547960000000004,
+            "judgeCostUsd": 0,
+            "durationSeconds": 78,
+            "startedAt": "2026-10-25T03:59:06.560Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-L0C6bQ/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "contract-has-retracted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched retracted",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "evidence-check-passes",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched \"id\": \"check\",\\s*\"status\": \"pass\"",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "evidence-typecheck-passes",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched \"id\": \"typecheck\",\\s*\"status\": \"pass\"",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "evidence-verdict-not-fail",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched \"verdict\": \"(pass|blocked)\"",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "ledger-handles-retraction",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched retract",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "ran-actors-verify",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Bash called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1
+  }
+}

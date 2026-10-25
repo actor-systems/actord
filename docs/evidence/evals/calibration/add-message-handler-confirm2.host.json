@@ -1,0 +1,25 @@
+[
+  {
+    "case": "add-message-handler",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 7,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 1,
+        "untested": 0
+      },
+      "tests": "19 passed, 3 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[crash-before-mutation] a handler crash before any write is retried and handled once",
+      "polls a feed, records each release once, and notifies once per significant release",
+      "drops a finding that is retracted by a later poll"
+    ]
+  }
+]

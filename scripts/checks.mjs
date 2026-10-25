@@ -35,7 +35,7 @@ const hash = (path) => (existsSync(path) ? createHash("sha256").update(readFileS
 export function recordedEvalCase(root, caseName) {
   const dir = join(root, "docs/evidence/evals");
   if (!existsSync(dir)) return null;
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".json")).sort().reverse()) {
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".host.json")).sort().reverse()) {
     const doc = JSON.parse(readFileSync(join(dir, f), "utf8"));
     const c = doc.cases?.find((c) => c.name === caseName);
     if (c) return { file: `docs/evidence/evals/${f}`, case: c };
@@ -106,14 +106,14 @@ export const gates = [
   },
 ];
 
-/** The newest recorded eval result (docs/evidence/evals/*.json), or null. */
-export function latestEvalRun(root) {
+/** Every recorded full eval run (docs/evidence/evals/*.json, not host re-runs or calibration), oldest first. */
+export function evalRuns(root) {
   const dir = join(root, "docs/evidence/evals");
-  if (!existsSync(dir)) return null;
-  const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
-  if (!files.length) return null;
-  const file = files.at(-1);
-  return { file: `docs/evidence/evals/${file}`, doc: JSON.parse(readFileSync(join(dir, file), "utf8")) };
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json") && !f.endsWith(".host.json"))
+    .sort()
+    .map((f) => ({ file: `docs/evidence/evals/${f}`, doc: JSON.parse(readFileSync(join(dir, f), "utf8")) }));
 }
 
 
@@ -231,15 +231,15 @@ export const checks = [
     title: "Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0",
     command: "claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
     async run({ root }) {
-      const run = latestEvalRun(root);
-      if (!run) return { status: "blocked", reason: "model-backed; awaiting owner approval of the eval lane ($50 total ceiling)" };
-      const cases = run.doc.cases ?? [];
-      const strict = cases.filter((c) => c.name.startsWith("safety-") || c.name.startsWith("negative-"));
-      const failing = strict.filter((c) => (c.aggregates?.score ?? 0) < 1);
-      const deltas = cases.map((c) => `${c.name} Δ${c.aggregates?.delta ?? "n/a"}`).join(", ");
-      const reason = `${run.file}: score ${run.doc.aggregates?.overallScore}, mean Δ ${run.doc.aggregates?.meanDelta}; ${deltas}`;
-      return failing.length
-        ? { status: "fail", reason: `below 1.0: ${failing.map((c) => c.name).join(", ")}. ${reason}`, evidenceSource: "eval-run" }
+      const runs = evalRuns(root).filter((r) => !r.doc.partial);
+      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved eval lane ($50 total ceiling)" };
+      const strict = (c) => c.name.startsWith("safety-") || c.name.startsWith("negative-");
+      const failing = runs.flatMap((r) => (r.doc.cases ?? []).filter((c) => strict(c) && (c.aggregates?.score ?? 0) < 1).map((c) => `${c.name} in ${r.file}`));
+      const deltas = runs.map((r) => `${r.file}: score ${r.doc.aggregates?.overallScore?.toFixed?.(2)}, mean Δ ${r.doc.aggregates?.meanDelta?.toFixed?.(2)}, $${r.doc.costUsd?.toFixed?.(2)}`).join("; ");
+      const reason = `${runs.length} full run(s). ${deltas}`;
+      if (failing.length) return { status: "fail", reason: `safety or negative case below 1.0: ${failing.join(", ")}. ${reason}`, evidenceSource: "eval-run" };
+      return runs.length < 2
+        ? { status: "blocked", reason: `the charter asks for at least two full runs. ${reason}`, evidenceSource: "eval-run" }
         : { status: "pass", reason, evidenceSource: "eval-run" };
     },
   },
