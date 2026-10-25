@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at cf80848 G6: the Room (pane, effect guard, monitor) and its tests
+== repository at 3733bef G7: release docs, CI, clean-checkout and clean-container lanes
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -32,7 +32,7 @@ Projected token cost
 == starter project from the installed plugin
 create 16 files
 == verify in workerd
-actors verify: system · PASS · evidence in .actors/evidence.json
+actors verify: container-app · PASS · evidence in .actors/evidence.json
   ✓ typecheck no type errors
   ✓ check     0 error(s), 1 warning(s)
   ✓ tests     3 passed, 0 failed, 0 skipped (workerd)

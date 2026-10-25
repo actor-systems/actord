@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T02:04:26.083Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T02:11:43.222Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -27,8 +27,9 @@ Generated 2026-10-25T02:04:26.083Z by `npm run verify` (`scripts/verify.mjs`). M
 | G4 — Agentic example | **passed** | — |
 | G5 — Agent-guided development | **blocked** | — |
 | G6 — The Room | **blocked** | — |
+| G7 — Release candidate | **failed** | — |
 
-## Checks (44 pass · 0 fail · 3 blocked · 0 skipped)
+## Checks (48 pass · 1 fail · 3 blocked · 0 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -79,4 +80,23 @@ Generated 2026-10-25T02:04:26.083Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g6.trust` README trust section lists every mod event, mod call, and monitor command; no forbidden calls | G6 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g6.no-hooks` Core path with disableAllHooks: installs, starter verifies, Room view and guard decision as CLI text | G6 | pass | host | `scripts/no-hooks-smoke.sh` |  |
 | `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | blocked | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 9/11 steps recorded passing; not run: A9, A10 |
+| `g7.docs` README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
+| `g7.release-evidence` Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded | G7 | pass | host | `claude plugin validate plugin > docs/evidence/mod-listing.txt` | docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt |
+| `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugin --dry-run` | actors--v0.1.0 |
+| `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds plugin/dist byte-for-byte, and passes npm run verify | G7 | fail | host | `scripts/clean-checkout.sh` | exit 1 |
+| `g7.container` Clean-container install from the marketplace: install, starter verifies in workerd, uninstall | G7 | pass | host | `scripts/container-install.sh` |  |
+
+## Output of non-passing checks
+
+### g7.clean-checkout (fail)
+
+```text
+== clone 3733bef G7: release docs, CI, clean-checkout and clean-container lanes
+== npm ci
+== build reproduces plugin/dist
+built actors-toolkit 0.1.0 → dist/cli.mjs, plugin/dist/actors.mjs
+ plugin/dist/actors-toolkit-0.1.0.tgz | Bin 45140 -> 45132 bytes
+ plugin/dist/actors.mjs               |   0
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+```
 

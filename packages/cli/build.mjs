@@ -1,6 +1,6 @@
 // Bundles the CLI into one dependency-free ESM file for npm (dist/cli.mjs) and for the plugin
 // (plugin/dist/actors.mjs). The plugin copy is what ships; tests run against it.
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -11,6 +11,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
 const pluginDist = join(here, "..", "..", "plugin", "dist");
 
+// Start from nothing so a clean checkout and this tree produce identical bytes.
+rmSync(join(here, "dist"), { recursive: true, force: true });
 await build({
   entryPoints: [join(here, "src/cli/bin.ts")],
   outfile: join(here, "dist/cli.mjs"),
@@ -23,6 +25,8 @@ await build({
   legalComments: "none",
   logLevel: "warning",
 });
+// esbuild doesn't set the executable bit; the bin (and the tarball's header for it) must not depend on umask.
+chmodSync(join(here, "dist/cli.mjs"), 0o755);
 // Library entry points for projects: plain ESM (Node won't strip types under node_modules) plus .d.ts.
 const library = { outdir: join(here, "dist"), outExtension: { ".js": ".mjs" }, bundle: true, format: "esm", target: "es2022", legalComments: "none", logLevel: "warning" };
 await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), runtime: join(here, "src/runtime/index.ts") }, platform: "neutral" });
@@ -46,6 +50,7 @@ writeFileSync(
 );
 mkdirSync(pluginDist, { recursive: true });
 copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actors.mjs"));
+chmodSync(join(pluginDist, "actors.mjs"), 0o755);
 writeFileSync(join(pluginDist, "VERSION"), `${pkg.version}\n`);
 // Until actors-toolkit is on npm, the plugin carries its package so `actors init` can pin it offline.
 execFileSync("npm", ["pack", "--silent", "--pack-destination", pluginDist], { cwd: here, stdio: ["ignore", "ignore", "inherit"] });

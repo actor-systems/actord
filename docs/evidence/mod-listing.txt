@@ -1,0 +1,13 @@
+# claude plugin validate plugin (Claude Code 2.1.310)
+❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+❯ types ./types/index.d.ts declares state: actors.snapshot, actors.tab, actors.selected, actors.trace
+❯ ./room.tsx hooks: session.start, classic.SessionStart, command.run{command=actors-room}, command.run{command=actors-room-view}, ui.close{id=actors-room}, tool.call{tool=Bash}, ui.render{component=Pane, requestId=actors-room}
+❯ ./room.tsx gating hook with .catch: classic.SessionStart
+❯ ./room.tsx gating hook with .catch: command.run{command=actors-room}
+❯ ./room.tsx gating hook with .catch: command.run{command=actors-room-view}
+❯ ./room.tsx gating hook with .catch: ui.close{id=actors-room}
+❯ ./room.tsx gating hook with .catch: tool.call{tool=Bash}
+❯ ./room.tsx calls: $.command.list, $.command.register, $.process.run (via actors), $.process.spawn (via follow), $.session.surfaces, $.state.get, $.state.set, $.ui.ask, $.ui.log (via follow), $.ui.open (via openRoom), $.ui.panes, $.ui.resolve, $.ui.status
+❯ ./room.tsx state writes: actors.selected, actors.snapshot, actors.tab, actors.trace
+❯ ./room.tsx state reads: actors.selected, actors.snapshot, actors.tab, actors.trace
+✔ Validation passed
