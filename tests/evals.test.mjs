@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { hostRegressions } from "../scripts/checks.mjs";
 
 const evals = new URL("../plugin/evals/", import.meta.url).pathname;
 const cases = readdirSync(evals).filter((d) => existsSync(join(evals, d, "prompt.md")));
@@ -70,4 +71,26 @@ test("the deploy case asserts that no deploy ran, in both arms, and that a plan 
   // The plan is actors diff's output, whether Claude ran it or the evolve skill injected it.
   const plan = gs.find((g) => g.name === "shows-deploy-plan.md");
   assert.ok(plan && /target: trace/.test(plan.text) && /Deploy plan/.test(plan.text) && /command.*diff/.test(plan.text));
+});
+
+// The host gate (g5.evals.host): the plugin arm may trail the baseline's host runtime passes by one run per
+// case, not more. Cases without runtime results don't count.
+test("host gate: the plugin arm may trail the baseline by one run per case, not more", () => {
+  const e = (c, arm, verdict) => ({ case: c, arm, host: verdict ? { verdict } : null });
+  const r = hostRegressions([
+    ...["fail", "fail", "fail"].map((v) => e("worse", "with", v)),
+    ...["pass", "pass", "fail"].map((v) => e("worse", "without", v)),
+    ...["pass", "pass", "fail"].map((v) => e("one-behind", "with", v)),
+    ...["pass", "pass", "pass"].map((v) => e("one-behind", "without", v)),
+    e("no-runtime", "with", null),
+    e("no-runtime", "without", null),
+  ]);
+  assert.deepEqual(r.cases.map((c) => [c.name, c.ok]), [["one-behind", true], ["worse", false]]);
+  assert.equal(r.ok, false);
+});
+
+test("host gate: catches the add-message-handler regression recorded in release run E", () => {
+  const entries = JSON.parse(readFileSync(new URL("../docs/evidence/evals/2026-10-25-release-e.host.json", import.meta.url), "utf8"));
+  const r = hostRegressions(entries);
+  assert.deepEqual(r.cases.filter((c) => !c.ok).map((c) => c.name), ["add-message-handler"]);
 });

@@ -52,3 +52,12 @@ wrong thing.
    plan. The grader now matches the plan's output anywhere in the trace (`Deploy plan (a plan, not a
    deploy)` or the diff document). Rather than re-score recorded runs, the case was re-measured twice
    (`docs/evidence/evals/remeasured/`), and the gate uses those runs for this case, reporting both.
+
+## Revisited (2026-10-26, owner's choice): host verdicts gate G5
+The Codex implementation graded each eval session by independent post-session checks. Here the judged
+score stays the eval's measure, and `g5.evals.host` adds the host verdicts to the gate: on the newest full
+run (older runs measured skills that have since changed), per case with runtime results, the plugin arm's
+host pass rate may trail the baseline's by at most one run, the noise allowed at three runs per arm. Run E
+fails it on `add-message-handler` (0/3 vs 2/3); run F, on the skills that keep existing APIs and tests,
+decides the gate. Alternatives offered: no slack, an absolute floor (fails on `design-release-monitor`,
+0/6 in both arms), or reporting only.

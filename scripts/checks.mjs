@@ -92,6 +92,7 @@ export const gates = [
       "g5.verify.blocked",
       "g5.examples.verify",
       "g5.evals.run",
+      "g5.evals.host",
     ],
   },
   {
@@ -120,6 +121,28 @@ export function remeasuredCases(root) {
     for (const c of doc.cases ?? []) (out[c.name] ??= []).push({ file: `docs/evidence/evals/remeasured/${f}`, case: c });
   }
   return out;
+}
+
+/**
+ * Host re-runs (decision 0004) as a check on what the plugin adds: per case with runtime results, the plugin
+ * arm's host pass rate may trail the baseline's by at most one run (noise, at three runs per arm). Entries
+ * are a .host.json array; runs without a pass or fail host verdict don't count. Returns { cases, ok }.
+ */
+export function hostRegressions(entries) {
+  const by = new Map();
+  for (const e of entries) {
+    if (e.host?.verdict !== "pass" && e.host?.verdict !== "fail") continue;
+    const c = by.get(e.case) ?? { name: e.case, with: { pass: 0, runs: 0 }, without: { pass: 0, runs: 0 } };
+    const arm = e.arm === "with" ? c.with : c.without;
+    arm.runs++;
+    if (e.host.verdict === "pass") arm.pass++;
+    by.set(e.case, c);
+  }
+  const rate = (pass, runs) => (runs ? pass / runs : 0);
+  const cases = [...by.values()]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => ({ ...c, ok: c.without.runs === 0 || (c.with.runs > 0 && rate(c.with.pass, c.with.runs) >= rate(c.without.pass - 1, c.without.runs)) }));
+  return { cases, ok: cases.every((c) => c.ok) };
 }
 
 /** Every recorded full eval run (docs/evidence/evals/*.json, not host re-runs or calibration), oldest first. */
@@ -270,6 +293,25 @@ export const checks = [
       return runs.length < 2
         ? { status: "blocked", reason: `the charter asks for at least two full runs. ${reason}`, evidenceSource: "eval-run" }
         : { status: "pass", reason, evidenceSource: "eval-run" };
+    },
+  },
+  {
+    id: "g5.evals.host",
+    gate: "G5",
+    title: "Host re-runs of the newest full eval run: no case's plugin arm passes runtime tests in more than one run fewer than the baseline",
+    command: "scripts/rerun-eval-workspaces.sh <run>.json <run>.host.json (owner-approved lane)",
+    async run({ root }) {
+      // The newest full run only: older runs measured skills that have since changed.
+      const newest = evalRuns(root).filter((r) => !r.doc.partial).at(-1);
+      if (!newest) return { status: "blocked", reason: "no full eval run recorded" };
+      const hostFile = newest.file.replace(/\.json$/, ".host.json");
+      if (!existsSync(join(root, hostFile))) return { status: "blocked", reason: `no host re-run recorded for ${newest.file}` };
+      const { cases, ok } = hostRegressions(JSON.parse(readFileSync(join(root, hostFile), "utf8")));
+      const show = (c) => `${c.name} ${c.with.pass}/${c.with.runs} vs ${c.without.pass}/${c.without.runs}`;
+      const reason = `${hostFile}, host passes with vs without the plugin: ${cases.map(show).join(", ")}`;
+      return ok
+        ? { status: "pass", reason, evidenceSource: "eval-run" }
+        : { status: "fail", reason: `plugin arm trails the baseline by more than one run: ${cases.filter((c) => !c.ok).map(show).join(", ")}. ${reason}`, evidenceSource: "eval-run" };
     },
   },
   command("g6.cli.room", "G6", "actors room, guard, and the monitor lock (CLI unit tests)", "cd packages/cli && NO_COLOR=1 npx vitest run test/room.test.ts"),
