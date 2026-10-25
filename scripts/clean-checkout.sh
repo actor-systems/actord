@@ -16,6 +16,11 @@ step "build reproduces plugin/dist"
 npm run --silent build -w actors-toolkit
 git diff --exit-code --stat -- plugin/dist plugin/hooks/effect-patterns.ts
 step "npm run verify"
-npm run --silent verify | tail -12
+status=0
+npm run --silent verify >verify.log 2>&1 || status=$?
+tail -12 verify.log
+# Keep the clone's evidence either way: a failure here is a finding about the clean checkout.
 cp verify-report.json "$root/docs/evidence/clean-checkout-verify-report.json"
+cp docs/verification-report.md "$root/docs/evidence/clean-checkout-verification-report.md"
+[ "$status" -eq 0 ] || { echo "clean-checkout: verify failed (exit $status); see docs/evidence/clean-checkout-verification-report.md"; exit "$status"; }
 echo "clean-checkout: ok"

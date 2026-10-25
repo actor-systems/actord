@@ -104,6 +104,8 @@ for (const gate of gates) {
   if (own.some((r) => r.status === "fail")) status = "failed";
   else if (missing.length > 0) status = only ? "not-run" : "incomplete";
   else if (own.some((r) => r.status === "blocked")) status = "blocked";
+  // A skipped required check established nothing, so the gate can't pass on it.
+  else if (own.some((r) => r.status === "skipped" && gate.requires.includes(r.id))) status = "incomplete";
   else if (own.length === 0) status = "not-started";
   else status = "passed";
   gateStatus[gate.id] = { title: gate.title, status, missing };
