@@ -1620,7 +1620,7 @@ ${missing.map((r) => `    "${r}"`).join(",\n")}`);
     if (!existsSync9(join8(root, "actors.manifest.json"))) suggestions.push("Run `npx actors graph --write` and commit actors.manifest.json.");
     return result(root, "adopt", created, skipped, suggestions, "unchanged");
   }
-  if (existsSync9(root) && readdirSync2(root).filter((e) => e !== ".git" && e !== "node_modules").length > 0) {
+  if (existsSync9(root) && readdirSync2(root).filter((e) => !ignorable(root, e)).length > 0) {
     throw new UsageError(`${root} isn't empty; init only creates projects in empty directories. To add the toolkit's files to an existing project, run \`actors init --adopt\`.`);
   }
   const name = (opts.name ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "actor-system";
@@ -1644,6 +1644,18 @@ function result(root, mode, created, skipped, suggestions, toolkit) {
     ...suggestions.length ? ["", "Next:", ...suggestions.map((s) => `  ${s}`)] : []
   ].join("\n");
   return { data: { projectRoot: root, mode, created, skipped, suggestions, toolkit }, text, exitCode: 0 };
+}
+var CLAUDE_STATE = /* @__PURE__ */ new Set([".cc-writes", ".DS_Store"]);
+function ignorable(root, entry) {
+  if (entry === ".git" || entry === "node_modules" || entry === ".DS_Store") return true;
+  if (entry === ".claude") {
+    try {
+      return readdirSync2(join8(root, entry)).every((e) => CLAUDE_STATE.has(e));
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 // src/cli/commands/room.ts

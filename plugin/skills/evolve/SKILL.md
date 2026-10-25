@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: Safely change an existing actor system on Cloudflare Durable Objects (add, remove, or revise actors, messages, routes, effects, schedules), then show the semantic diff, compatibility risks, passing tests, and a deploy plan, never a deploy. Starts from `actors diff`; has both critics review the change.
+description: Safely change an existing actor system on Cloudflare Durable Objects (add, remove, or revise actors, messages, routes, effects, schedules), then show the semantic diff, compatibility risks, passing tests, and a deploy plan, never a deploy. Also use when asked to deploy or ship an actor project, to produce the deploy plan a person runs. Starts from `actors diff`; has both critics review the change.
 allowed-tools: Bash(actors diff *) Bash(actors check *) Bash(actors graph *) Bash(actors test *) Bash(actors verify *)
 ---
 

@@ -100,3 +100,4 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0007](decisions/0007-runtime-semantics.md) | Transactional handlers, outbox, effects after commit |
 | [0008](decisions/0008-agent-guided-development.md) | Skills, critics, hooks, claims, evals |
 | [0009](decisions/0009-the-room.md) | The Room: one CLI document, a prefiltered guard, a deduplicated monitor |
+| [0010](decisions/0010-eval-lane.md) | The eval lane: what the graders measure; the deploy case asserts no deploy ran |

@@ -32,6 +32,21 @@ describe("actors init", () => {
     expect(readFileSync(join(dir, "CLAUDE.md"), "utf8").trim().split("\n").length).toBeLessThanOrEqual(10);
   });
 
+  it("creates in a directory holding only .git, node_modules, and Claude Code's own .claude state", () => {
+    const dir = join(tmp, "with-state");
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    mkdirSync(join(dir, ".claude/.cc-writes"), { recursive: true });
+    const r = run(tmp, ["init", "with-state", "--json", "--toolkit", "0.1.0"]);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).created).toContain(".claude/settings.json");
+    // A .claude directory with real configuration still counts.
+    const taken = join(tmp, "taken");
+    mkdirSync(join(taken, ".claude"), { recursive: true });
+    writeFileSync(join(taken, ".claude/settings.json"), "{}");
+    expect(run(tmp, ["init", "taken"]).code).toBe(2);
+  });
+
   it("refuses a non-empty directory instead of overwriting it", () => {
     const r = run(tmp, ["init", "fresh"]);
     expect(r.code).toBe(2);

@@ -67,8 +67,8 @@ export function init(cwd: string, target: string | undefined, opts: { adopt?: bo
     return result(root, "adopt", created, skipped, suggestions, "unchanged");
   }
 
-  // A git repository and installed dependencies don't make a directory "taken".
-  if (existsSync(root) && readdirSync(root).filter((e) => e !== ".git" && e !== "node_modules").length > 0) {
+  // A git repository, installed dependencies, and Claude Code's own session state don't make a directory "taken".
+  if (existsSync(root) && readdirSync(root).filter((e) => !ignorable(root, e)).length > 0) {
     throw new UsageError(`${root} isn't empty; init only creates projects in empty directories. To add the toolkit's files to an existing project, run \`actors init --adopt\`.`);
   }
   const name = (opts.name ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "actor-system";
@@ -93,4 +93,20 @@ function result(root: string, mode: "create" | "adopt", created: string[], skipp
     ...(suggestions.length ? ["", "Next:", ...suggestions.map((s) => `  ${s}`)] : []),
   ].join("\n");
   return { data: { projectRoot: root, mode, created, skipped, suggestions, toolkit }, text, exitCode: 0 };
+}
+
+const CLAUDE_STATE = new Set([".cc-writes", ".DS_Store"]);
+
+/** Entries that don't count when deciding whether a directory is empty enough to create a project in. */
+function ignorable(root: string, entry: string): boolean {
+  if (entry === ".git" || entry === "node_modules" || entry === ".DS_Store") return true;
+  // A .claude directory holding only Claude Code's bookkeeping (no settings, skills, or agents yet).
+  if (entry === ".claude") {
+    try {
+      return readdirSync(join(root, entry)).every((e) => CLAUDE_STATE.has(e));
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }

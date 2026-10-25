@@ -10,15 +10,15 @@ Component inventory
   LSP servers (0)
 
 Projected token cost
-  Always-on:   ~675 tok   added to every session
+  Always-on:   ~740 tok   added to every session
 
 Per-component (rounded)
   component         always-on  on-invoke
   design                  ~90       ~770
-  inspect                 ~70       ~420
+  inspect                ~110       ~420
   setup                   ~80       ~560
   start                   ~70       ~510
-  evolve                  ~80       ~600
+  evolve                 ~100       ~600
   reliability             ~90       ~550
   implement               ~70       ~690
   boundary-critic         ~70       ~450

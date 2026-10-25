@@ -1,6 +1,6 @@
 ---
 name: inspect
-description: Explain why a message, state change, or effect happened (or didn't) in an actor system on Cloudflare Durable Objects, from its topology and recorded events (`actors events`, `actors trace`). Reports unknown where recorded coverage ends; never invents production history.
+description: Explain why a message, state change, or effect happened (or didn't) in an actor system on Cloudflare Durable Objects, from its topology and recorded events (`actors events`, `actors trace`). Use for questions about an actor event log (`.actors/events.ndjson`), such as why a message was retried, rejected, or delayed, or whether a notification went out. Reports unknown where recorded coverage ends; never invents production history.
 allowed-tools: Bash(actors graph *) Bash(actors events *) Bash(actors trace *) Bash(actors check *)
 ---
 
