@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 5c33503 Record release runs H and I: the current plugin
+== repository at 4ab6760 Skills lint: list skill directories only, past Finder's .DS_Store
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
