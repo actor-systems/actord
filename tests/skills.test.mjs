@@ -15,12 +15,13 @@ const frontmatter = (text) => {
   }
   return { fields, body: text.slice(m[0].length) };
 };
-const skills = readdirSync(join(plugin, "skills"));
+// Directories only: Finder drops .DS_Store files here (ignored by git, never shipped).
+const skills = readdirSync(join(plugin, "skills"), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
 const FORBIDDEN = /deploy|secret|publish|login|\bcurl\b|\bwget\b|npm install|--remote|wrangler/i;
 
 test("the plugin ships the seven skills and two critics the charter names", () => {
   assert.deepEqual(skills.sort(), ["design", "evolve", "implement", "inspect", "reliability", "setup", "start"]);
-  assert.deepEqual(readdirSync(join(plugin, "agents")).sort(), ["boundary-critic.md", "delivery-auditor.md"]);
+  assert.deepEqual(readdirSync(join(plugin, "agents")).filter((f) => !f.startsWith(".")).sort(), ["boundary-critic.md", "delivery-auditor.md"]);
 });
 
 for (const name of skills) {
