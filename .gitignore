@@ -1,7 +1,6 @@
 node_modules/
 .wrangler/
 **/.actors/
-!fixtures/**/.actors/
 *.log
 .DS_Store
 coverage/

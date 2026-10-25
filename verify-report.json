@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-25T00:57:22.222Z",
+  "generatedAt": "2026-10-25T01:29:48.661Z",
   "versions": {
     "claude": "2.1.310",
     "node": "v24.22.1",
@@ -13,9 +13,9 @@
     "platform": "darwin-arm64"
   },
   "summary": {
-    "pass": 29,
-    "fail": 0,
-    "blocked": 1,
+    "pass": 35,
+    "fail": 1,
+    "blocked": 2,
     "skipped": 0
   },
   "gates": {
@@ -31,7 +31,7 @@
     },
     "G2": {
       "title": "Model and CLI",
-      "status": "passed",
+      "status": "failed",
       "missing": []
     },
     "G3": {
@@ -42,6 +42,11 @@
     "G4": {
       "title": "Agentic example",
       "status": "passed",
+      "missing": []
+    },
+    "G5": {
+      "title": "Agent-guided development",
+      "status": "blocked",
       "missing": []
     }
   },
@@ -65,8 +70,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 77,
-      "outputTail": "✔ deny rules cover deployment (0.415083ms)\n✔ deny rules cover secrets (0.057209ms)\n✔ deny rules cover remote writes (0.0435ms)\n✔ deny rules cover publishing (0.05ms)\n✔ deny rules cover tag pushes (0.061583ms)\n✔ deny rules cover force pushes (0.04025ms)\n✔ model-backed evals and plain pushes still ask (0.04775ms)\n✔ no allow rules widen the agent's authority (0.050291ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 42.18675"
+      "durationMs": 82,
+      "outputTail": "✔ deny rules cover deployment (0.410292ms)\n✔ deny rules cover secrets (0.056083ms)\n✔ deny rules cover remote writes (0.043625ms)\n✔ deny rules cover publishing (0.048541ms)\n✔ deny rules cover tag pushes (0.046125ms)\n✔ deny rules cover force pushes (0.03775ms)\n✔ model-backed evals and plain pushes still ask (0.045ms)\n✔ no allow rules widen the agent's authority (0.049584ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 46.0755"
     },
     {
       "id": "g0.spike.types",
@@ -76,7 +81,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 858,
+      "durationMs": 942,
       "outputTail": "\n ⛅️ wrangler 4.152.0\n────────────────────\nGenerating project types...\n\ninterface __BaseEnv_Env {\n\tSENDER: DurableObjectNamespace<import(\"./src/index\").Sender>;\n\tRECEIVER: DurableObjectNamespace<import(\"./src/index\").Receiver>;\n\tGATE: DurableObjectNamespace<import(\"./src/index\").Gate>;\n\tSLOW: DurableObjectNamespace<import(\"./src/index\").Slow>;\n\tTX: DurableObjectNamespace<import(\"./src/index\").Tx>;\n}\ndeclare namespace Cloudflare {\n\tinterface GlobalProps {\n\t\tmainModule: typeof import(\"./src/index\");\n\t\tdurableNamespaces: \"Sender\" | \"Receiver\" | \"Gate\" | \"Slow\" | \"Tx\";\n\t}\n\tinterface Env extends __BaseEnv_Env {}\n}\ninterface Env extends __BaseEnv_Env {}\n\nGenerating runtime types...\n\nRuntime types generated.\n\n\n✨ Types written to worker-configuration.d.ts\n\n📖 Read about runtime types\nhttps://developers.cloudflare.com/workers/languages/typescript/#generate-types\n📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file."
     },
     {
@@ -87,7 +92,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 169,
+      "durationMs": 171,
       "outputTail": null
     },
     {
@@ -98,8 +103,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1185,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/spikes/do-messaging\n\n\n Test Files  2 passed (2)\n      Tests  6 passed (6)\n   Start at  17:56:56\n   Duration  719ms (tests 72%, transform 18%, import 5%, worker 5%)"
+      "durationMs": 1229,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/spikes/do-messaging\n\n\n Test Files  2 passed (2)\n      Tests  6 passed (6)\n   Start at  18:28:51\n   Duration  742ms (tests 79%, transform 7%, worker 7%, import 7%)"
     },
     {
       "id": "g0.sandbox",
@@ -109,7 +114,7 @@
       "status": "pass",
       "reason": "finding reproduced (decision 0004)",
       "evidenceSource": "host",
-      "durationMs": 2298,
+      "durationMs": 2359,
       "outputTail": "default 1 listen-eperm\nlocal-binding 0 passes"
     },
     {
@@ -120,7 +125,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 189,
+      "durationMs": 204,
       "outputTail": null
     },
     {
@@ -131,8 +136,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 491,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  27 passed (27)\n   Start at  17:56:59\n   Duration  143ms (tests 47%, transform 37%, import 12%, worker 3%)"
+      "durationMs": 494,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  27 passed (27)\n   Start at  18:28:54\n   Duration  132ms (tests 67%, import 16%, transform 11%, worker 5%)"
     },
     {
       "id": "g1.dist.fresh",
@@ -142,7 +147,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 416,
+      "durationMs": 624,
       "outputTail": "built actors-toolkit 0.1.0 → dist/cli.mjs, plugin/dist/actors.mjs"
     },
     {
@@ -153,8 +158,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 484,
-      "outputTail": "✔ runs the bundled build outside any project (130.084375ms)\n✔ delegates to a pinned project CLI from a nested directory and passes the bundled version (268.615541ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 448.630875"
+      "durationMs": 683,
+      "outputTail": "✔ runs the bundled build outside any project (139.757209ms)\n✔ delegates to a pinned project CLI from a nested directory and passes the bundled version (454.508958ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 646.64525"
     },
     {
       "id": "g1.validate.plugin",
@@ -164,7 +169,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 600,
+      "durationMs": 558,
       "outputTail": "Validating plugin manifest: /Users/jaredmcfarland/Developer/actors-plugin/plugin/.claude-plugin/plugin.json\n\nPlugin directory checks for /Users/jaredmcfarland/Developer/actors-plugin/plugin. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.\n\n⚠ Found 1 plugin directory warning:\n\n  ❯ .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.\n    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.\n\nAbout these checks:\n\n  ❯ The repository root was taken to be /Users/jaredmcfarland/Developer/actors-plugin, the nearest parent folder with a .git folder or file. README.md was taken from it, because this plugin folder has none of its own. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.\n\nThese plugin directory checks do not change the result below.\n\nThe directory also runs a safety scan and a policy review that this command does not.\n\n✔ Validation passed"
     },
     {
@@ -175,7 +180,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 520,
+      "durationMs": 503,
       "outputTail": "Validating marketplace manifest: /Users/jaredmcfarland/Developer/actors-plugin/.claude-plugin/marketplace.json\n\n✔ Validation passed"
     },
     {
@@ -186,8 +191,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2442,
-      "outputTail": "== marketplace add /Users/jaredmcfarland/Developer/actors-plugin\nAdding marketplace…✔ Successfully added marketplace: actors-toolkit (declared in user settings)\n== install actors@actors-toolkit\nInstalling plugin \"actors@actors-toolkit\"...✔ Successfully installed plugin: actors@actors-toolkit (scope: user)\n== list\n== launcher from the installed plugin\nlauncher: /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.nv2eLYDF2E/plugins/cache/actors-toolkit/actors/0.1.0/bin/actors\n== uninstall\n✔ Successfully uninstalled plugin: actors (scope: user)\n✔ Successfully removed marketplace: actors-toolkit\n== nothing left\ninstall-smoke: ok (actors 0.1.0)"
+      "durationMs": 2609,
+      "outputTail": "== marketplace add /Users/jaredmcfarland/Developer/actors-plugin\nAdding marketplace…✔ Successfully added marketplace: actors-toolkit (declared in user settings)\n== install actors@actors-toolkit\nInstalling plugin \"actors@actors-toolkit\"...✔ Successfully installed plugin: actors@actors-toolkit (scope: user)\n3 userConfig options not yet set — run /plugin configure actors@actors-toolkit in Claude Code, or pass --config KEY=VALUE.\n== list\n== launcher from the installed plugin\nlauncher: /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.aXBLlNm1GQ/plugins/cache/actors-toolkit/actors/0.1.0/bin/actors\n== uninstall\n✔ Successfully uninstalled plugin: actors (scope: user)\n✔ Successfully removed marketplace: actors-toolkit\n== nothing left\ninstall-smoke: ok (actors 0.1.0)"
     },
     {
       "id": "g1.budget",
@@ -195,10 +200,10 @@
       "title": "Always-on context cost ≤ 1,500 tokens (target 1,000)",
       "command": "scripts/budget.sh",
       "status": "pass",
-      "reason": "always-on ~66 tokens",
+      "reason": "always-on ~675 tokens",
       "evidenceSource": "host",
-      "durationMs": 1556,
-      "outputTail": "{\"pluginDir\":66,\"installed\":66,\"max\":66,\"target\":1000,\"limit\":1500}"
+      "durationMs": 1690,
+      "outputTail": "{\"pluginDir\":675,\"installed\":675,\"max\":675,\"target\":1000,\"limit\":1500}"
     },
     {
       "id": "g1.trust",
@@ -209,7 +214,7 @@
       "reason": null,
       "evidenceSource": "host",
       "durationMs": 90,
-      "outputTail": "✔ README has a trust section (0.364292ms)\n✔ every settings-style hook command is listed (0.10625ms)\n✔ every monitor command is listed (0.456875ms)\n﹣ every mod event and mod call is listed (0.162833ms) # no mod module yet\nℹ tests 4\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 42.504208"
+      "outputTail": "✔ README has a trust section (0.41575ms)\n✔ every settings-style hook command is listed (0.581709ms)\n✔ every monitor command is listed (0.077334ms)\n﹣ every mod event and mod call is listed (0.129458ms) # no mod module yet\nℹ tests 4\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 46.512792"
     },
     {
       "id": "g1.start-session",
@@ -230,7 +235,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 259,
+      "durationMs": 273,
       "outputTail": null
     },
     {
@@ -241,7 +246,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 3340,
+      "durationMs": 3557,
       "outputTail": "ok   valid/evolved: tsc pass (expected pass)\nok   valid/minimal: tsc pass (expected pass)\nok   negative/actor-unjustified: tsc pass (expected pass)\nok   negative/agent-budget-missing: tsc pass (expected pass)\nok   negative/config-binding-missing: tsc pass (expected pass)\nok   negative/config-export-missing: tsc pass (expected pass)\nok   negative/declaration-load-failed: tsc fail (expected fail)  fixtures/negative/declaration-load-failed/system.ts(2,37): error TS2307: Cannot find module './src/messages/missing.ts' or its corresponding type declarations.\nok   negative/effect-undeclared: tsc fail (expected fail)  fixtures/negative/effect-undeclared/system.ts(21,7): error TS2322: Type '[\"notify.pager\"]' is not assignable to type 'readonly [\"notify.pager\"] & readonly never[]'.\nok   negative/entry-export-missing: tsc pass (expected pass)\nok   negative/manifest-stale: tsc pass (expected pass)\nok   negative/route-unknown-actor: tsc fail (expected fail)  fixtures/negative/route-unknown-actor/system.ts(26,45): error TS2322: Type '\"Ghost\"' is not assignable to type '\"Pinger\" | \"Ponger\"'.\nok   negative/route-unknown-message: tsc fail (expected fail)  fixtures/negative/route-unknown-message/system.ts(25,25): error TS2322: Type '\"ping.vanished\"' is not assignable to type '\"ping.due\" | \"ping.kicked\" | \"ping.sent\"'.\nok   negative/schedule-route-missing: tsc pass (expected pass)\nok   negative/schema-invalid: tsc pass (expected pass)"
     },
     {
@@ -252,19 +257,19 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2743,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  30 passed (30)\n   Start at  17:57:10\n   Duration  2.41s (tests 98%, transform 1%, import 1%)"
+      "durationMs": 2921,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  2 passed (2)\n      Tests  30 passed (30)\n   Start at  18:29:06\n   Duration  2.58s (tests 99%, import 1%)"
     },
     {
       "id": "g2.negative.unchanged",
       "gate": "G2",
       "title": "No file under fixtures/negative differs from the last commit",
       "command": "git diff --exit-code --stat HEAD -- fixtures/negative && test -z \"$(git status --porcelain -- fixtures/negative)\"",
-      "status": "pass",
-      "reason": null,
+      "status": "fail",
+      "reason": "exit 1",
       "evidenceSource": "host",
-      "durationMs": 26,
-      "outputTail": null
+      "durationMs": 17,
+      "outputTail": " fixtures/negative/actor-unjustified/.actors/last-check.json       | 2 +-\n fixtures/negative/agent-budget-missing/.actors/last-check.json    | 2 +-\n fixtures/negative/config-binding-missing/.actors/last-check.json  | 2 +-\n fixtures/negative/config-export-missing/.actors/last-check.json   | 2 +-\n fixtures/negative/declaration-load-failed/.actors/last-check.json | 2 +-\n fixtures/negative/effect-undeclared/.actors/last-check.json       | 2 +-\n fixtures/negative/entry-export-missing/.actors/last-check.json    | 2 +-\n fixtures/negative/manifest-stale/.actors/last-check.json          | 2 +-\n fixtures/negative/route-unknown-actor/.actors/last-check.json     | 2 +-\n fixtures/negative/route-unknown-message/.actors/last-check.json   | 2 +-\n fixtures/negative/schedule-route-missing/.actors/last-check.json  | 2 +-\n fixtures/negative/schema-invalid/.actors/last-check.json          | 2 +-\n 12 files changed, 12 insertions(+), 12 deletions(-)"
     },
     {
       "id": "g3.radar.typecheck",
@@ -274,7 +279,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 985,
+      "durationMs": 991,
       "outputTail": null
     },
     {
@@ -285,7 +290,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 81,
+      "durationMs": 92,
       "outputTail": "✓ release-radar: 0 error(s), 0 warning(s)"
     },
     {
@@ -296,8 +301,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2014,
-      "outputTail": "ok   [malformed] 4 test(s)\nok   [unauthorized-route] 1 test(s)\nok   [unknown-message] 1 test(s)\nok   [duplicate-delivery] 1 test(s)\nok   [duplicate-input] 1 test(s)\nok   [crash-before-mutation] 1 test(s)\nok   [crash-after-mutation] 1 test(s)\nok   [delivery-retry] 1 test(s)\nok   [restart] 2 test(s)\nok   [retry-exhausted] 1 test(s)\nok   [out-of-order] 2 test(s)\nok   [scheduled-wake] 2 test(s)\nok   [lost-ack-idempotent] 1 test(s)\n20/20 tests passed in workerd"
+      "durationMs": 2179,
+      "outputTail": "ok   [malformed] 4 test(s)\nok   [unauthorized-route] 1 test(s)\nok   [unknown-message] 1 test(s)\nok   [duplicate-delivery] 2 test(s)\nok   [duplicate-input] 1 test(s)\nok   [crash-before-mutation] 1 test(s)\nok   [crash-after-mutation] 1 test(s)\nok   [delivery-retry] 1 test(s)\nok   [restart] 2 test(s)\nok   [retry-exhausted] 1 test(s)\nok   [out-of-order] 2 test(s)\nok   [scheduled-wake] 2 test(s)\nok   [lost-ack-idempotent] 1 test(s)\n21/21 tests passed in workerd"
     },
     {
       "id": "g3.radar.trace",
@@ -307,8 +312,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 58,
-      "outputTail": "trace 3d9xh1gta7cu5 · correlation 22dwcfgjimlnc · coverage: .actors/events.ndjson (local only)\n  @clock → FeedPoller:crash-before  feed.poll.due  ✓ handled (2q2wtnee77a6j)\n  └─ effect feed.fetch [poll-1792888835296]  ✓ confirmed\n     └─ FeedPoller:crash-before → FeedPoller:crash-before  feed.fetched  ✓ handled (3ffxgl4aiqgde)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (0wclv3j93dw2l)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (33ie72cnflqs8)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (3d9xh1gta7cu5)  ◀ target\n        │     └─ effect notify.digest [wsdk-4.151.1]  ✓ confirmed\n        ├─ FeedPoller:crash-before → ReleaseLedger:main  release.observed  ✓ handled after 1 retry (34xz7g7re243y)\n        │    ! injected fault at before-handler\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (25ghoiisfhlii)\n        │     └─ effect notify.digest [crash-before-2.0.0]  ✓ confirmed\n        └─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (3utjxlr3xa8hr)\n           └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (3s4a1efnc3yxv)\n              └─ effect notify.digest [wsdk-5.0.0]  ✓ confirmed"
+      "durationMs": 62,
+      "outputTail": "trace 1uew9iuxsx0q9 · correlation 0m68m2s7uu7bi · coverage: .actors/events.ndjson (local only)\n  @clock → FeedPoller:workers-sdk  feed.poll.due  ✓ handled (0m68m2s7uu7bi)\n  └─ effect feed.fetch [poll-1792890751597]  ✓ confirmed\n     └─ FeedPoller:workers-sdk → FeedPoller:workers-sdk  feed.fetched  ✓ handled (1nz7g93gwwylw)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (1ss5i34g2b9da)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (27d2wz6qomvva)\n        │     └─ effect notify.digest [wsdk-5.0.0]  ✓ confirmed\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (2tlq48lnnrpx9)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (1uew9iuxsx0q9)  ◀ target\n        │     └─ effect notify.digest [wsdk-4.151.1]  ✓ confirmed\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (31ew8vdkbxi73)\n        └─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (35hft629vkzlk)"
     },
     {
       "id": "g3.cli.events",
@@ -318,8 +323,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1312,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n   Start at  17:57:15\n   Duration  956ms (tests 98%, transform 2%, import 1%)"
+      "durationMs": 1402,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n   Start at  18:29:12\n   Duration  1.04s (tests 99%, import 1%)"
     },
     {
       "id": "g4.desk.typecheck",
@@ -329,7 +334,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 818,
+      "durationMs": 1016,
       "outputTail": null
     },
     {
@@ -340,7 +345,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 83,
+      "durationMs": 91,
       "outputTail": "! EFFECT_IN_DOUBT notify.brief: notify.brief has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered\n✓ briefing-desk: 0 error(s), 1 warning(s)"
     },
     {
@@ -351,7 +356,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2768,
+      "durationMs": 2833,
       "outputTail": "ok   [end-to-end] 1 test(s)\nok   [duplicate-submission] 1 test(s)\nok   [reentrancy] 1 test(s)\nok   [approval-required] 2 test(s)\nok   [approval-denied] 1 test(s)\nok   [model-unavailable] 1 test(s)\nok   [model-timeout] 1 test(s)\nok   [budget] 1 test(s)\nok   [model-output-invalid] 1 test(s)\nok   [lost-ack-in-doubt] 1 test(s)\nok   [gateway-unreachable] 1 test(s)\n11/11 tests passed in workerd"
     },
     {
@@ -362,8 +367,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 58,
-      "outputTail": "trace 0f8wn3kidj35w · correlation 93c43fe6-fa18-4a2d-aae5-34151b7a1944 · coverage: .actors/events.ndjson (local only)\n  @ingress → Intake:main  item.submitted  ✓ handled (93c43fe6-fa18-4a2d-aae5-34151b7a1944)\n  └─ Intake:main → Analyst:re-1  item.routed  ✓ handled (0szn5wmccbzau)\n     ├─ effect model.analyze [re-1:g1]  ✓ confirmed\n     │  └─ Analyst:re-1 → Analyst:re-1  analysis.completed  ✓ handled (0f8wn3kidj35w)  ◀ target\n     │       · stale analysis ignored (item cancelled, generation 1 vs 2)\n     └─ Analyst:re-1 → Desk:main  briefing.updated  ✓ handled (24sq9k8pkbg6m)"
+      "durationMs": 62,
+      "outputTail": "trace 0f8wn3kidj35w · correlation 138a68cd-5d37-4c82-b749-a9eccedfbcae · coverage: .actors/events.ndjson (local only)\n  @ingress → Intake:main  item.submitted  ✓ handled (138a68cd-5d37-4c82-b749-a9eccedfbcae)\n  └─ Intake:main → Analyst:re-1  item.routed  ✓ handled (0kc3kkl1v3r9j)\n     ├─ effect model.analyze [re-1:g1]  ✓ confirmed\n     │  └─ Analyst:re-1 → Analyst:re-1  analysis.completed  ✓ handled (0f8wn3kidj35w)  ◀ target\n     │       · stale analysis ignored (item cancelled, generation 1 vs 2)\n     └─ Analyst:re-1 → Desk:main  briefing.updated  ✓ handled (2h9insc8z3xiw)"
     },
     {
       "id": "g4.runtime.probe",
@@ -373,8 +378,96 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1560,
-      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  17:57:21\n   Duration  1.01s (transform 74%, import 14%, tests 10%, worker 1%)"
+      "durationMs": 1611,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  18:29:17\n   Duration  1.04s (transform 73%, import 16%, tests 10%, worker 1%)"
+    },
+    {
+      "id": "g5.cli.unit",
+      "gate": "G5",
+      "title": "init, hooks (check-on-edit, evidence gate), claim classification",
+      "command": "npx --no-install vitest run test/g5.test.ts",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 1170,
+      "outputTail": "\n RUN  v5.0.5 /Users/jaredmcfarland/Developer/actors-plugin/packages/cli\n\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n   Start at  18:29:19\n   Duration  802ms (tests 98%, import 1%)"
+    },
+    {
+      "id": "g5.skills.lint",
+      "gate": "G5",
+      "title": "Seven skills and two read-only critics follow the charter's authoring rules",
+      "command": "node --test tests/skills.test.mjs",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 84,
+      "outputTail": "✔ the plugin ships the seven skills and two critics the charter names (0.904625ms)\n✔ design: narrow description under the listing cap, concise body (0.090667ms)\n✔ design: allowed-tools never names deploy, secret, publish, or network commands (0.168375ms)\n✔ design: every injected command tolerates failure and is pre-approved (0.160625ms)\n✔ design: states its rules up front, its done condition, and when to stop (0.11975ms)\n✔ evolve: narrow description under the listing cap, concise body (0.042166ms)\n✔ evolve: allowed-tools never names deploy, secret, publish, or network commands (0.101541ms)\n✔ evolve: every injected command tolerates failure and is pre-approved (0.16475ms)\n✔ evolve: states its rules up front, its done condition, and when to stop (0.099416ms)\n✔ implement: narrow description under the listing cap, concise body (0.092833ms)\n✔ implement: allowed-tools never names deploy, secret, publish, or network commands (0.092958ms)\n✔ implement: every injected command tolerates failure and is pre-approved (0.097583ms)\n✔ implement: states its rules up front, its done condition, and when to stop (0.039875ms)\n✔ inspect: narrow description under the listing cap, concise body (0.027583ms)\n✔ inspect: allowed-tools never names deploy, secret, publish, or network commands (0.0225ms)\n✔ inspect: every injected command tolerates failure and is pre-approved (0.061125ms)\n✔ inspect: states its rules up front, its done condition, and when to stop (0.04425ms)\n✔ reliability: narrow description under the listing cap, concise body (0.045291ms)\n✔ reliability: allowed-tools never names deploy, secret, publish, or network commands (0.018ms)\n✔ reliability: every injected command tolerates failure and is pre-approved (0.024ms)\n✔ reliability: states its rules up front, its done condition, and when to stop (0.021041ms)\n✔ setup: narrow description under the listing cap, concise body (0.021167ms)\n✔ setup: allowed-tools never names deploy, secret, publish, or network commands (0.016916ms)\n✔ setup: every injected command tolerates failure and is pre-approved (0.019625ms)\n✔ setup: states its rules up front, its done condition, and when to stop (0.023166ms)\n✔ start: narrow description under the listing cap, concise body (0.020125ms)\n✔ start: allowed-tools never names deploy, secret, publish, or network commands (0.018375ms)\n✔ start: every injected command tolerates failure and is pre-approved (0.063625ms)\n✔ start: states its rules up front, its done condition, and when to stop (0.024917ms)\n✔ boundary-critic.md: read-only tools, so the critic can't edit (0.099292ms)\n✔ delivery-auditor.md: read-only tools, so the critic can't edit (0.05675ms)\n✔ no always-on instructions beyond skill and agent descriptions (0.10175ms)\nℹ tests 32\nℹ suites 0\nℹ pass 32\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 50.183625"
+    },
+    {
+      "id": "g5.evals.static",
+      "gate": "G5",
+      "title": "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions",
+      "command": "node --test tests/evals.test.mjs",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 88,
+      "outputTail": "✔ the suite has the charter's case mix (1.362875ms)\n✔ add-message-handler: well-formed prompt and graders (0.476041ms)\n✔ add-message-handler: scaffold script exists and is executable (0.504584ms)\n✔ add-message-handler: grades the evidence file it asks for (0.212167ms)\n✔ design-release-monitor: well-formed prompt and graders (0.309ms)\n✔ design-release-monitor: scaffold script exists and is executable (0.096125ms)\n✔ evolve-scheduled-digest: well-formed prompt and graders (0.331417ms)\n✔ evolve-scheduled-digest: scaffold script exists and is executable (0.076208ms)\n✔ evolve-scheduled-digest: grades the evidence file it asks for (0.300458ms)\n✔ investigate-trace: well-formed prompt and graders (0.213958ms)\n✔ investigate-trace: scaffold script exists and is executable (0.098292ms)\n✔ negative-cloudflare-kv: well-formed prompt and graders (0.170792ms)\n✔ negative-cloudflare-kv: asserts no actors skill fires, in both arms (0.113333ms)\n✔ negative-typescript-bug: well-formed prompt and graders (0.126833ms)\n✔ negative-typescript-bug: scaffold script exists and is executable (0.064542ms)\n✔ negative-typescript-bug: asserts no actors skill fires, in both arms (0.079583ms)\n✔ recover-duplicate-notify: well-formed prompt and graders (0.252334ms)\n✔ recover-duplicate-notify: scaffold script exists and is executable (0.051042ms)\n✔ recover-duplicate-notify: grades the evidence file it asks for (0.156666ms)\n✔ safety-deploy-request: well-formed prompt and graders (0.145958ms)\n✔ safety-deploy-request: scaffold script exists and is executable (0.050792ms)\n✔ safety-exactly-once: well-formed prompt and graders (0.164042ms)\n✔ safety-exactly-once: scaffold script exists and is executable (0.053ms)\n✔ safety-undeclared-capability: well-formed prompt and graders (0.189875ms)\n✔ safety-undeclared-capability: scaffold script exists and is executable (0.053125ms)\n✔ safety-undeclared-capability: grades the evidence file it asks for (0.112042ms)\n✔ scaffold-new-project: well-formed prompt and graders (0.199291ms)\n✔ scaffold-new-project: scaffold script exists and is executable (0.071583ms)\n✔ scaffold-new-project: grades the evidence file it asks for (0.119792ms)\n✔ start-orients: well-formed prompt and graders (0.1285ms)\n✔ the deploy case asserts that no deploy command ran, in both arms (0.100917ms)\nℹ tests 31\nℹ suites 0\nℹ pass 31\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 53.524583"
+    },
+    {
+      "id": "g5.inventory",
+      "gate": "G5",
+      "title": "claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens",
+      "command": "scripts/budget.sh && grep docs/evidence/plugin-details.txt",
+      "status": "pass",
+      "reason": "always-on ~675 tokens",
+      "evidenceSource": "host",
+      "durationMs": 1563,
+      "outputTail": "{\"pluginDir\":675,\"installed\":675,\"max\":675,\"target\":1000,\"limit\":1500}"
+    },
+    {
+      "id": "g5.starter.smoke",
+      "gate": "G5",
+      "title": "A fresh starter from actors init verifies PASS offline; regenerating changes nothing",
+      "command": "scripts/starter-smoke.sh",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 10508,
+      "outputTail": "scaffolded starter at /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.E2hNSWBMGB/starter\nactors verify: starter-app · PASS · evidence in .actors/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     3 passed, 0 failed, 0 skipped (workerd)\n\nClaims: 3 proved locally · 0 stub only · 1 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally end-to-end: A greeting request reaches the guestbook.\n  ✓ proved-locally dedupe-delivery: A redelivered message is recorded once.\n  ✓ proved-locally refuse-invalid: Invalid payloads are refused before any handler runs.\n  · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)\nstarter-smoke: ok"
+    },
+    {
+      "id": "g5.verify.blocked",
+      "gate": "G5",
+      "title": "actors verify inside the default sandbox reports BLOCKED, static evidence passing",
+      "command": "scripts/verify-blocked.sh",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 9301,
+      "outputTail": "actors verify: starter-app · BLOCKED · evidence in .actors/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ⊘ tests     blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)\n\nClaims: 0 proved locally · 0 stub only · 1 not guaranteed · 3 blocked · 0 failing · 0 untested\n  ⊘ blocked        end-to-end: A greeting request reaches the guestbook.\n  ⊘ blocked        dedupe-delivery: A redelivered message is recorded once.\n  ⊘ blocked        refuse-invalid: Invalid payloads are refused before any handler runs.\n  · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)\nverify-blocked: ok"
+    },
+    {
+      "id": "g5.examples.verify",
+      "gate": "G5",
+      "title": "actors verify passes on both reference apps",
+      "command": "cd examples/release-radar && node ../../plugin/dist/actors.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actors.mjs verify",
+      "status": "pass",
+      "reason": null,
+      "evidenceSource": "host",
+      "durationMs": 6977,
+      "outputTail": "actors verify: release-radar · PASS · evidence in .actors/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     20 passed, 0 failed, 1 skipped (workerd)\n\nClaims: 8 proved locally · 1 stub only · 3 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally refuse-invalid: Malformed, wrong-version, unknown, and off-route messages are refused before any handler runs, and change no state.\n  ✓ proved-locally dedupe-delivery: A redelivered message (same id) is handled once.\n  ✓ proved-locally dedupe-input: A release seen again in a later poll is recorded once and notified once.\n  ✓ proved-locally atomic-handler: A crash before or after a handler's writes leaves no partial state; the retry runs as if the first attempt never happened.\n  ✓ proved-locally at-least-once: A message whose delivery failed survives the sender's eviction and is delivered by the alarm; actor state survives eviction.\n  ✓ proved-locally dead-letter: A message that can't be delivered stops after 6 attempts and is recorded as retry.exhausted, not retried forever.\n  ✓ proved-locally order-independent: Classification and the latest-version pointer don't depend on arrival order.\n  ✓ proved-locally scheduled-wake: Watching a feed arms a 15-minute wake that re-arms itself; a wake with nothing to watch does nothing.\n  ~ stub-only      notify-once-keyed: A notification the gateway accepted but didn't acknowledge reaches the owner once, because it is retried with the same key and the gateway deduplicates by key. Shown with a stub gateway; a real gateway must honor the key.\n  · not-guaranteed exactly-once-notify: Exactly-once notification when a gateway ignores the idempotency key. (Retries after a lost acknowledgment can duplicate; only the gateway's deduplication prevents it.)\n  · not-guaranteed exact-schedule: Polls exactly every 15 minutes. (Durable Object alarms run at least once and can be delayed by up to a minute.)\n  · not-guaranteed production-traces: Traces of production traffic in actors trace. (actors trace reads local test and dev events only; production events go to Workers Logs.)\nactors verify: briefing-desk · PASS · evidence in .actors/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 1 warning(s)\n  ✓ tests     11 passed, 0 failed, 0 skipped (workerd)\n\nClaims: 6 proved locally · 2 stub only · 3 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally end-to-end: Items are triaged to filed, dismissed, or awaiting approval, and an approved briefing is sent once.\n  ✓ proved-locally dedupe-submission: The same item submitted twice is analyzed once.\n  ✓ proved-locally stale-results: A cancellation handled while the model call is in flight makes the late answer stale: it never produces a briefing.\n  ✓ proved-locally approval-gate: No briefing leaves without a person's approval; a refusal or a cancellation means it never leaves.\n  ✓ proved-locally model-bounded: A model call is attempted at most budget.maxAttempts times, each cut off after budget.timeoutMs; then the item goes to a person.\n  ✓ proved-locally model-output-checked: Model output that fails the schema is never acted on.\n  ~ stub-only      lost-ack-in-doubt: A briefing the gateway accepted but never acknowledged is reported in doubt: not marked sent, and not resent. Shown with a stub gateway that drops its answer.\n  ~ stub-only      unreachable-gateway: A gateway that provably never received a briefing is retried up to the budget, then the item goes to a person.\n  · not-guaranteed exactly-once-briefing: Exactly-once delivery of briefings. (The gateway accepts no idempotency key, so a lost acknowledgment can't be resolved; the desk says in_doubt instead.)\n  · not-guaranteed classification-quality: The model classifies items correctly. (Tests use deterministic doubles; judging the live model's output needs people or a model-backed eval, which CI doesn't run.)\n  · not-guaranteed live-model-adapter: The Anthropic adapter works against the live API. (It typechecks against @anthropic-ai/sdk 1.3.0, but calling the API needs a key and contacts an external service, so it is unverified here.)"
+    },
+    {
+      "id": "g5.evals.run",
+      "gate": "G5",
+      "title": "Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0",
+      "command": "claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
+      "status": "blocked",
+      "reason": "model-backed; awaiting owner approval of the eval lane ($50 total ceiling)",
+      "evidenceSource": "host",
+      "durationMs": null,
+      "outputTail": null
     }
   ]
 }

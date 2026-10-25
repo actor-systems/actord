@@ -20,7 +20,7 @@ Per-component (rounded)
   start                   ~70       ~510
   evolve                  ~80       ~540
   reliability             ~90       ~550
-  implement               ~70       ~620
+  implement               ~70       ~690
   boundary-critic         ~70       ~450
   delivery-auditor        ~60       ~630
 

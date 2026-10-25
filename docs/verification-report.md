@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T00:57:22.222Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T01:29:48.661Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -22,11 +22,12 @@ Generated 2026-10-25T00:57:22.222Z by `npm run verify` (`scripts/verify.mjs`). M
 | --- | --- | --- |
 | G0 — Ground truth | **passed** | — |
 | G1 — Installable plugin | **blocked** | — |
-| G2 — Model and CLI | **passed** | — |
+| G2 — Model and CLI | **failed** | — |
 | G3 — Runtime evidence | **passed** | — |
 | G4 — Agentic example | **passed** | — |
+| G5 — Agent-guided development | **blocked** | — |
 
-## Checks (29 pass · 0 fail · 1 blocked · 0 skipped)
+## Checks (35 pass · 1 fail · 2 blocked · 0 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -43,13 +44,13 @@ Generated 2026-10-25T00:57:22.222Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g1.validate.plugin` claude plugin validate --strict plugin | G1 | pass | host | `claude plugin validate --strict plugin` |  |
 | `g1.validate.marketplace` claude plugin validate --strict (marketplace) | G1 | pass | host | `claude plugin validate --strict .` |  |
 | `g1.install` Clean install from the repo marketplace, use, uninstall (isolated config) | G1 | pass | host | `scripts/install-smoke.sh` |  |
-| `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~66 tokens |
+| `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~675 tokens |
 | `g1.trust` README trust section lists every hook, mod event, mod call, monitor | G1 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g1.start-session` `start` works in a fresh session (eval case start-orients) | G1 | blocked | host | `claude plugin eval plugin --case start-orients (model-backed; owner-approved lane)` | needs a model-backed fresh session; awaiting owner approval of the eval lane |
 | `g2.contract.types` Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors | G2 | pass | host | `npx --no-install tsc -p tsconfig.contract.json` |  |
 | `g2.fixtures.typecheck` tsc passes on valid fixtures and fails where negative fixtures expect it | G2 | pass | host | `node scripts/typecheck-fixtures.mjs` |  |
 | `g2.cli.model` Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes | G2 | pass | host | `npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts` |  |
-| `g2.negative.unchanged` No file under fixtures/negative differs from the last commit | G2 | pass | host | `git diff --exit-code --stat HEAD -- fixtures/negative && test -z "$(git status --porcelain -- fixtures/negative)"` |  |
+| `g2.negative.unchanged` No file under fixtures/negative differs from the last commit | G2 | fail | host | `git diff --exit-code --stat HEAD -- fixtures/negative && test -z "$(git status --porcelain -- fixtures/negative)"` | exit 1 |
 | `g3.radar.typecheck` Release Radar typechecks (wrangler types + tsc) | G3 | pass | host | `npm run --silent typecheck -w release-radar` |  |
 | `g3.radar.check` actors check passes on Release Radar (declaration, config, exports, manifest) | G3 | pass | host | `node ../../plugin/dist/actors.mjs check` |  |
 | `g3.radar.runtime` Release Radar fault matrix passes in workerd | G3 | pass | host | `node scripts/run-example-tests.mjs examples/release-radar` |  |
@@ -60,4 +61,32 @@ Generated 2026-10-25T00:57:22.222Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g4.desk.runtime` Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt) | G4 | pass | host | `node scripts/run-example-tests.mjs examples/briefing-desk` |  |
 | `g4.desk.trace` The stale model result traces to its cancelled item | G4 | pass | host | `scripts/trace-stale-smoke.sh` |  |
 | `g4.runtime.probe` Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts | G4 | pass | host | `npx --no-install vitest run --config vitest.runtime.config.ts` |  |
+| `g5.cli.unit` init, hooks (check-on-edit, evidence gate), claim classification | G5 | pass | host | `npx --no-install vitest run test/g5.test.ts` |  |
+| `g5.skills.lint` Seven skills and two read-only critics follow the charter's authoring rules | G5 | pass | host | `node --test tests/skills.test.mjs` |  |
+| `g5.evals.static` Eval suite structure: case mix, paired graders, safety and negative-trigger assertions | G5 | pass | host | `node --test tests/evals.test.mjs` |  |
+| `g5.inventory` claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens | G5 | pass | host | `scripts/budget.sh && grep docs/evidence/plugin-details.txt` | always-on ~675 tokens |
+| `g5.starter.smoke` A fresh starter from actors init verifies PASS offline; regenerating changes nothing | G5 | pass | host | `scripts/starter-smoke.sh` |  |
+| `g5.verify.blocked` actors verify inside the default sandbox reports BLOCKED, static evidence passing | G5 | pass | host | `scripts/verify-blocked.sh` |  |
+| `g5.examples.verify` actors verify passes on both reference apps | G5 | pass | host | `cd examples/release-radar && node ../../plugin/dist/actors.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actors.mjs verify` |  |
+| `g5.evals.run` Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0 | G5 | blocked | host | `claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)` | model-backed; awaiting owner approval of the eval lane ($50 total ceiling) |
+
+## Output of non-passing checks
+
+### g2.negative.unchanged (fail)
+
+```text
+ fixtures/negative/actor-unjustified/.actors/last-check.json       | 2 +-
+ fixtures/negative/agent-budget-missing/.actors/last-check.json    | 2 +-
+ fixtures/negative/config-binding-missing/.actors/last-check.json  | 2 +-
+ fixtures/negative/config-export-missing/.actors/last-check.json   | 2 +-
+ fixtures/negative/declaration-load-failed/.actors/last-check.json | 2 +-
+ fixtures/negative/effect-undeclared/.actors/last-check.json       | 2 +-
+ fixtures/negative/entry-export-missing/.actors/last-check.json    | 2 +-
+ fixtures/negative/manifest-stale/.actors/last-check.json          | 2 +-
+ fixtures/negative/route-unknown-actor/.actors/last-check.json     | 2 +-
+ fixtures/negative/route-unknown-message/.actors/last-check.json   | 2 +-
+ fixtures/negative/schedule-route-missing/.actors/last-check.json  | 2 +-
+ fixtures/negative/schema-invalid/.actors/last-check.json          | 2 +-
+ 12 files changed, 12 insertions(+), 12 deletions(-)
+```
 
