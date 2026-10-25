@@ -5,9 +5,10 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**G7 — Release** (next). G0, G2–G4 passed. G1, G5, G6 offline-complete; their remaining checks need the
-owner: `g1.start-session` and `g5.evals.run` (model-backed eval lane), `g6.acceptance` steps A9 (one model
-turn) and A10 (Desktop app). Ask after G7 so the suite measures the final plugin.
+**Owner items** (all offline work is done). Final `npm run verify`: 49 pass · 0 fail · 3 blocked; G0, G2,
+G3, G4, G7 passed; G1, G5, G6 blocked on: the model-backed eval lane (`g1.start-session`, `g5.evals.run`) and
+Room acceptance steps A9 (one model turn) and A10 (Desktop app). After they pass: create the local tag
+`actors--v0.1.0` (never pushed without authorization). Report: `docs/implementation-report.md`.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
@@ -44,9 +45,13 @@ turn) and A10 (Desktop app). Ask after G7 so the suite measures the final plugin
   evidence fingerprint. Monitor (2 entries, one follower per session). 18 mod tests (+ guard mutation
   checks), fixture schema pin, mod typecheck, no-hooks smoke, acceptance run 9/11 recorded. Decision 0009.
 
+- **G7 passed** (verify 2026-10-25): README release sections (update/uninstall, the Room, limitations),
+  `docs/architecture.md`, CI workflow (offline lane), `scripts/clean-checkout.sh` (fresh clone verifies),
+  `scripts/container-install.sh` (clean Linux container installs from the marketplace, starter verifies),
+  release evidence (`docs/evidence/`), tag dry run. Release lanes found and fixed: non-reproducible build
+  (CLI file mode), absolute path in a snapshot, skipped checks counted as passing, machine paths in reports.
+
 ## Next
-- G7: README/docs polish, CI workflow (.github/workflows/verify.yml, offline lane), clean-container install
-  (ask owner: needs network/docker), `claude plugin tag --dry-run`, final report.
 - Then ASK OWNER: eval lane approval (calibration run ≤$2, then full suite ×2 within $50), and the two
   Room acceptance steps only a person can run (A9: one model turn holding a deploy; A10: Desktop app).
 

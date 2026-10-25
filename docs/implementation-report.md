@@ -6,10 +6,17 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-FINAL_VERIFY_SUMMARY
+`npm run verify` (2026-10-25T03:27:50.435Z): **49 pass · 0 fail · 3 blocked · 0 skipped.** G0 passed, G1 blocked, G2 passed, G3 passed, G4 passed, G5 blocked, G6 blocked, G7 passed. The three blocked checks are the owner's: the model-backed eval suite (which also settles G1's "start works in a fresh session") and two interactive acceptance steps. A fresh clone of the repository passes the same suite (`g7.clean-checkout`), and a clean Linux container installs the plugin from the marketplace and verifies a new project in workerd (`g7.container`).
 
-Nothing was deployed, published, tagged on a remote, or run against a Cloudflare account, and no model-backed
-eval has run: those need the owner (see "Blocked checks").
+G7's own checks pass, but the charter's G7 exit also requires every mandatory gate green, so the release
+candidate isn't complete until G1, G5, and G6 clear their owner items. The release tag (`actors--v0.1.0`,
+validated by `claude plugin tag --dry-run`) is created locally only after that; it's never pushed without
+authorization. Nothing was deployed, published, or run against a Cloudflare account, and no model-backed eval
+has run (see "Blocked checks").
+
+Found and fixed by the release lanes themselves: the clean clone caught a non-reproducible build (file mode on
+the CLI) and a snapshot holding an absolute path; the acceptance run caught a trace drawn below the fold and a
+follower lost on mod reload; the clone's report caught a gate counting skipped checks as passed.
 
 ## Installed package layout
 
@@ -80,13 +87,52 @@ needs approval. Δ per case: pending for every case.
 ## `claude plugin details`
 
 ```
-PLUGIN_DETAILS
+Actor-Native Cloudflare Toolkit (actors) 0.1.0
+  Description: Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.
+  Source: actors@actors-toolkit
+
+Component inventory
+  Skills (7)  design, evolve, implement, inspect, reliability, setup, start
+  Agents (2)  boundary-critic, delivery-auditor
+  Hooks (2)  PostToolUse, Stop  (harness-only — no model context cost)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+  Always-on:   ~675 tok   added to every session
+
+Per-component (rounded)
+  component         always-on  on-invoke
+  design                  ~90       ~770
+  inspect                 ~70       ~420
+  setup                   ~80       ~560
+  start                   ~70       ~510
+  evolve                  ~80       ~540
+  reliability             ~90       ~550
+  implement               ~70       ~690
+  boundary-critic         ~70       ~450
+  delivery-auditor        ~60       ~630
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.
 ```
 
 ## The mod's `hooks:` / `calls:` listing
 
 ```
-MOD_LISTING
+# claude plugin validate plugin (Claude Code 2.1.310)
+❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+❯ types ./types/index.d.ts declares state: actors.snapshot, actors.tab, actors.selected, actors.trace
+❯ ./room.tsx hooks: session.start, classic.SessionStart, command.run{command=actors-room}, command.run{command=actors-room-view}, ui.close{id=actors-room}, tool.call{tool=Bash}, ui.render{component=Pane, requestId=actors-room}
+❯ ./room.tsx gating hook with .catch: classic.SessionStart
+❯ ./room.tsx gating hook with .catch: command.run{command=actors-room}
+❯ ./room.tsx gating hook with .catch: command.run{command=actors-room-view}
+❯ ./room.tsx gating hook with .catch: ui.close{id=actors-room}
+❯ ./room.tsx gating hook with .catch: tool.call{tool=Bash}
+❯ ./room.tsx calls: $.command.list, $.command.register, $.process.run (via actors), $.process.spawn (via follow), $.session.surfaces, $.state.get, $.state.set, $.ui.ask, $.ui.log (via follow), $.ui.open (via openRoom), $.ui.panes, $.ui.resolve, $.ui.status
+❯ ./room.tsx state writes: actors.selected, actors.snapshot, actors.tab, actors.trace
+❯ ./room.tsx state reads: actors.selected, actors.snapshot, actors.tab, actors.trace
+✔ Validation passed
 ```
 
 ## Blocked checks
@@ -133,4 +179,15 @@ Then `/actors:start` in a session. Requirements: Claude Code 2.1.287+, Node 22.1
 
 ## Gate → evidence
 
-GATE_TRACE
+| Gate | Status | Checks (status) |
+| --- | --- | --- |
+| G0 — Ground truth | **passed** | `g0.versions` pass; `g0.guardrails` pass; `g0.spike.types` pass; `g0.spike.typecheck` pass; `g0.spike.runtime` pass; `g0.sandbox` pass |
+| G1 — Installable plugin | **blocked** | `g1.cli.typecheck` pass; `g1.cli.unit` pass; `g1.dist.fresh` pass; `g1.launcher` pass; `g1.validate.plugin` pass; `g1.validate.marketplace` pass; `g1.install` pass; `g1.budget` pass; `g1.trust` pass; `g1.start-session` blocked (needs a model-backed fresh session; awaiting owner approval of the eval lane) |
+| G2 — Model and CLI | **passed** | `g2.contract.types` pass; `g2.fixtures.typecheck` pass; `g2.cli.model` pass; `g2.negative.unchanged` pass |
+| G3 — Runtime evidence | **passed** | `g3.radar.typecheck` pass; `g3.radar.check` pass; `g3.radar.runtime` pass; `g3.radar.trace` pass; `g3.cli.events` pass |
+| G4 — Agentic example | **passed** | `g4.desk.typecheck` pass; `g4.desk.check` pass; `g4.desk.runtime` pass; `g4.desk.trace` pass; `g4.runtime.probe` pass |
+| G5 — Agent-guided development | **blocked** | `g5.cli.unit` pass; `g5.skills.lint` pass; `g5.evals.static` pass; `g5.inventory` pass; `g5.starter.smoke` pass; `g5.verify.blocked` pass; `g5.examples.verify` pass; `g5.evals.run` blocked (model-backed; awaiting owner approval of the eval lane ($50 total ceiling)) |
+| G6 — The Room | **blocked** | `g6.cli.room` pass; `g6.fixtures` pass; `g6.mod.validate` pass; `g6.mod.typecheck` pass; `g6.mod.test` pass; `g6.monitor` pass; `g6.trust` pass; `g6.no-hooks` pass; `g6.acceptance` blocked (9/11 steps recorded passing; not run: A9, A10) |
+| G7 — Release candidate | **passed** | `g7.docs` pass; `g7.release-evidence` pass; `g7.tag` pass; `g7.clean-checkout` pass; `g7.container` pass |
+
+Record: `docs/verification-report.md` (generated 2026-10-25T03:27:50.435Z). Clean-checkout run: `docs/evidence/clean-checkout-verification-report.md`. Container run: `docs/evidence/container-install.txt`. Acceptance: `docs/evidence/room-acceptance.md`.

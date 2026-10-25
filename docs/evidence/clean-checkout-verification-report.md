@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T03:23:25.550Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T03:27:24.404Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -23,13 +23,13 @@ Generated 2026-10-25T03:23:25.550Z by `npm run verify` (`scripts/verify.mjs`). M
 | G0 — Ground truth | **passed** | — |
 | G1 — Installable plugin | **blocked** | — |
 | G2 — Model and CLI | **passed** | — |
-| G3 — Runtime evidence | **failed** | — |
+| G3 — Runtime evidence | **passed** | — |
 | G4 — Agentic example | **passed** | — |
 | G5 — Agent-guided development | **blocked** | — |
 | G6 — The Room | **blocked** | — |
 | G7 — Release candidate | **incomplete** | — |
 
-## Checks (46 pass · 1 fail · 3 blocked · 2 skipped)
+## Checks (47 pass · 0 fail · 3 blocked · 2 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Generated 2026-10-25T03:23:25.550Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g3.radar.check` actors check passes on Release Radar (declaration, config, exports, manifest) | G3 | pass | host | `node ../../plugin/dist/actors.mjs check` |  |
 | `g3.radar.runtime` Release Radar fault matrix passes in workerd | G3 | pass | host | `node scripts/run-example-tests.mjs examples/release-radar` |  |
 | `g3.radar.trace` A real significant release traces from @clock to a confirmed notification | G3 | pass | host | `scripts/trace-smoke.sh` |  |
-| `g3.cli.events` actors events/trace on recorded logs: known, unknown, truncated, retries, follow | G3 | fail | host | `npx --no-install vitest run test/events.test.ts` | exit 1 |
+| `g3.cli.events` actors events/trace on recorded logs: known, unknown, truncated, retries, follow | G3 | pass | host | `npx --no-install vitest run test/events.test.ts` |  |
 | `g4.desk.typecheck` Briefing Desk typechecks, including the live Anthropic adapter | G4 | pass | host | `npm run --silent typecheck -w briefing-desk` |  |
 | `g4.desk.check` actors check passes on Briefing Desk | G4 | pass | host | `node ../../plugin/dist/actors.mjs check` |  |
 | `g4.desk.runtime` Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt) | G4 | pass | host | `node scripts/run-example-tests.mjs examples/briefing-desk` |  |
@@ -85,51 +85,4 @@ Generated 2026-10-25T03:23:25.550Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugin --dry-run` | actors--v0.1.0 |
 | `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds plugin/dist byte-for-byte, and passes npm run verify | G7 | skipped | host | `scripts/clean-checkout.sh` | inside a clean-checkout run |
 | `g7.container` Clean-container install from the marketplace: install, starter verifies in workerd, uninstall | G7 | skipped | host | `scripts/container-install.sh` | inside a clean-checkout run |
-
-## Output of non-passing checks
-
-### g3.cli.events (fail)
-
-```text
-
- RUN  v5.0.5 /private/var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.kRDKveyTlR/repo/packages/cli
-
- ❯ test/events.test.ts (8 tests | 1 failed) 940ms
-   ❯ actors trace (5)
-     × follows a known message from its root cause through effects to its consequences 83ms
-
-  Snapshots  1 failed
- Test Files  1 failed (1)
-      Tests  1 failed | 7 passed (8)
-   Start at  20:22:18
-   Duration  1.03s (tests 98%, transform 1%, import 1%)
-
-
-⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
-
- FAIL  test/events.test.ts > actors trace > follows a known message from its root cause through effects to its consequences
-Error: Snapshot `actors trace > follows a known message from its root cause through effects to its consequences > trace text 1` mismatched
-
-- Expected
-+ Received
-
-@@ -1,6 +1,6 @@
-- "trace 1i6hflvldpajf · correlation 2z8ig0agbnj3l · coverage: /Users/jaredmcfarland/Developer/actors-plugin/fixtures/events/release-radar-flow.ndjson (local only)
-+ "trace 1i6hflvldpajf · correlation 2z8ig0agbnj3l · coverage: /private/var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.kRDKveyTlR/repo/fixtures/events/release-radar-flow.ndjson (local only)
-    @clock → FeedPoller:workers-sdk  feed.poll.due  ✓ handled (2z8ig0agbnj3l)
-    └─ effect feed.fetch [poll-1792887998597]  ✓ confirmed
-       └─ FeedPoller:workers-sdk → FeedPoller:workers-sdk  feed.fetched  ✓ handled (3eadtkrf02yzd)
-          ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (1d8qgjkwcti41)
-          │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (3iovv7gmi41lt)
-
- ❯ test/events.test.ts:44:59
-     42|     expect(target).toMatchObject({ type: "release.significant", outcom…
-     43|     expect(target.effects[0]).toMatchObject({ effect: "notify.digest",…
-     44|     expect(run("trace", significant, "--file", flow).out).toMatchSnaps…
-       |                                                           ^
-     45|   });
-     46|
-
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
-```
 
