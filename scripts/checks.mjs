@@ -73,12 +73,12 @@ export const gates = [
   {
     id: "G3",
     title: "Runtime evidence",
-    requires: ["g3.radar.typecheck", "g3.radar.check", "g3.radar.runtime", "g3.radar.trace", "g3.cli.events"],
+    requires: ["g3.radar.typecheck", "g3.radar.check", "g3.radar.runtime", "g3.radar.trace", "g3.radar.dev", "g3.cli.events"],
   },
   {
     id: "G4",
     title: "Agentic example",
-    requires: ["g4.desk.typecheck", "g4.desk.check", "g4.desk.runtime", "g4.desk.trace", "g4.runtime.probe"],
+    requires: ["g4.desk.typecheck", "g4.desk.check", "g4.desk.runtime", "g4.desk.trace", "g4.desk.dev", "g4.runtime.probe"],
   },
   {
     id: "G5",
@@ -133,6 +133,9 @@ export function evalRuns(root) {
 }
 
 
+
+// A local Worker under `wrangler dev`: 0 pass, 2 blocked (can't listen here, or credentials present), else fail.
+const devSmoke = { timeoutMs: 180_000, classify: (r) => (r.code === 0 ? { status: "pass" } : r.code === 2 ? { status: "blocked", reason: r.output.trim().split("\n").pop() } : { status: "fail", reason: `exit ${r.code}` }) };
 
 export const checks = [
   {
@@ -216,11 +219,13 @@ export const checks = [
   command("g3.radar.check", "G3", "actors check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugin/dist/actors.mjs check", { cwd: "examples/release-radar" }),
   command("g3.radar.runtime", "G3", "Release Radar fault matrix passes in workerd", "node scripts/run-example-tests.mjs examples/release-radar"),
   command("g3.radar.trace", "G3", "A real significant release traces from @clock to a confirmed notification", "scripts/trace-smoke.sh"),
+  command("g3.radar.dev", "G3", "Release Radar runs under wrangler dev: front door, rejection, and a traced watch from the live log", "node scripts/dev-smoke.mjs release-radar", devSmoke),
   command("g3.cli.events", "G3", "actors events/trace on recorded logs: known, unknown, truncated, retries, follow", "npx --no-install vitest run test/events.test.ts", { cwd: "packages/cli" }),
   command("g4.desk.typecheck", "G4", "Briefing Desk typechecks, including the live Anthropic adapter", "npm run --silent typecheck -w briefing-desk"),
   command("g4.desk.check", "G4", "actors check passes on Briefing Desk", "node ../../plugin/dist/actors.mjs check", { cwd: "examples/briefing-desk" }),
   command("g4.desk.runtime", "G4", "Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt)", "node scripts/run-example-tests.mjs examples/briefing-desk"),
   command("g4.desk.trace", "G4", "The stale model result traces to its cancelled item", "scripts/trace-stale-smoke.sh"),
+  command("g4.desk.dev", "G4", "Briefing Desk runs under wrangler dev: an item travels Intake → Analyst → Desk, traced from the live log", "node scripts/dev-smoke.mjs briefing-desk", devSmoke),
   command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/cli" }),
   command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/cli" }),
   command("g5.skills.lint", "G5", "Seven skills and two read-only critics follow the charter's authoring rules", "node --test tests/skills.test.mjs"),
