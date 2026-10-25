@@ -62,6 +62,21 @@ export function formatEvent(e: LoggedEvent): string {
 
 export type Outcome = "handled" | "duplicate" | "rejected" | "failed" | "undeliverable" | "retry.exhausted" | "in-flight" | "unknown";
 
+/** A message's outcome from the events recorded for its id, in precedence order. */
+export function outcomeOf(evs: LoggedEvent[]): Outcome {
+  const kinds = new Set(evs.map((e) => e.kind));
+  if (kinds.has("handled")) return "handled";
+  if (kinds.has("rejected")) return "rejected";
+  if (kinds.has("undeliverable")) return "undeliverable";
+  if (kinds.has("retry.exhausted")) return "retry.exhausted";
+  if (kinds.has("duplicate")) return "duplicate";
+  if (kinds.has("failed")) return "failed";
+  if (kinds.has("sent") || kinds.has("retry.scheduled")) return "in-flight";
+  return "unknown";
+}
+
+export const OUTCOME_MARK: Record<Outcome, string> = { handled: "✓", duplicate: "≡", rejected: "✗", failed: "✗", undeliverable: "✗", "retry.exhausted": "✗", "in-flight": "…", unknown: "?" };
+
 export interface TraceEffect {
   effect: string;
   key: string;
@@ -141,22 +156,7 @@ export function buildTrace(log: EventLog, id: string): Trace {
     visited.add(mid);
     const evs = byMessage.get(mid) ?? [];
     const first = evs.find((e) => e.type) ?? evs[0];
-    const kinds = new Set(evs.map((e) => e.kind));
-    const outcome: Outcome = kinds.has("handled")
-      ? "handled"
-      : kinds.has("rejected") || kinds.has("undeliverable")
-        ? kinds.has("rejected")
-          ? "rejected"
-          : "undeliverable"
-        : kinds.has("retry.exhausted")
-          ? "retry.exhausted"
-          : kinds.has("duplicate")
-            ? "duplicate"
-            : kinds.has("failed")
-              ? "failed"
-              : kinds.has("sent") || kinds.has("retry.scheduled")
-                ? "in-flight"
-                : "unknown";
+    const outcome = outcomeOf(evs);
     const effects: TraceEffect[] = [];
     const effectKeys = new Set<string>();
     for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
@@ -199,8 +199,6 @@ export function buildTrace(log: EventLog, id: string): Trace {
   };
 }
 
-const MARK: Record<string, string> = { handled: "✓", duplicate: "≡", rejected: "✗", failed: "✗", undeliverable: "✗", "retry.exhausted": "✗", "in-flight": "…", unknown: "?" };
-
 export function renderTrace(t: Trace, source: string): string {
   if (!t.found || !t.root) {
     return `unknown: no recorded event has id ${t.target}.\ncoverage: ${source} (local test and dev runs only; production history isn't available here).`;
@@ -212,7 +210,7 @@ export function renderTrace(t: Trace, source: string): string {
     const target = n.messageId === t.target ? "  ◀ target" : "";
     const retry = n.attempts > 1 ? ` after ${n.attempts - 1} retr${n.attempts === 2 ? "y" : "ies"}` : "";
     const why = n.rejectedReason ? `: ${n.rejectedReason}` : "";
-    lines.push(`${prefix}${branch}${n.from ?? "?"} → ${n.to ?? "?"}  ${n.type ?? "?"}  ${MARK[n.outcome]} ${n.outcome}${why}${retry} (${n.messageId})${target}`);
+    lines.push(`${prefix}${branch}${n.from ?? "?"} → ${n.to ?? "?"}  ${n.type ?? "?"}  ${OUTCOME_MARK[n.outcome]} ${n.outcome}${why}${retry} (${n.messageId})${target}`);
     const inner = prefix + (top ? "" : last ? "   " : "│  ");
     for (const f of n.failures) lines.push(`${inner}  ! ${f}`);
     for (const note of n.notes) lines.push(`${inner}  · ${note}`);

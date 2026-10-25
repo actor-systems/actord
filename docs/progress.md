@@ -5,9 +5,9 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**G6 — The Room** (next). G0, G2–G4 passed; G1 and G5 offline-complete — only their model-backed eval
-checks (`g1.start-session`, `g5.evals.run`) are blocked, awaiting owner approval (ask after G6/G7 so the
-suite measures the final plugin).
+**G7 — Release** (next). G0, G2–G4 passed. G1, G5, G6 offline-complete; their remaining checks need the
+owner: `g1.start-session` and `g5.evals.run` (model-backed eval lane), `g6.acceptance` steps A9 (one model
+turn) and A10 (Desktop app). Ask after G7 so the suite measures the final plugin.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
@@ -37,17 +37,18 @@ suite measures the final plugin).
   (check-on-edit, evidence-gate), userConfig, `actors init/verify/test/hook`, claims classification,
   examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke, verify-blocked.
 
+- **G6 offline-complete** (verify 2026-10-24): the Room (`plugin/hooks/room.tsx`, `types/index.d.ts`):
+  `/actors-room` pane (Topology text/SVG, Mailboxes + trace, Contracts, Evidence; hotkeys 1–4, r), status
+  line, effect guard (prefilter on a generated copy of the pattern table, `actors guard` decides, Refuse
+  default, every failure denies). CLI `actors room [--follow]`, `actors guard`, `events --exclusive`,
+  evidence fingerprint. Monitor (2 entries, one follower per session). 18 mod tests (+ guard mutation
+  checks), fixture schema pin, mod typecheck, no-hooks smoke, acceptance run 9/11 recorded. Decision 0009.
+
 ## Next
-- G6: the Room mod (`plugin/hooks/room.ts`, `types/index.d.ts`, `tests/*.test.ts`): `/actors-room` pane with
-  Topology / Mailboxes / Contracts / Evidence tabs from CLI JSON via `$.process.run`/`spawn`; status line;
-  `tool.call` effect guard on Bash using EFFECT_PATTERNS (needs a CLI `actors guard --json <cmd>` so the mod
-  computes nothing); `.catch` refuses; non-interactive → refuse. Monitor `monitors/monitors.json`
-  (`actors events --follow --notable`, on-skill-invoke reliability + inspect). Use plugin-authoring skill
-  (types saved in scratchpad `plugin-authoring-2.1.310/`; reload skill if gone). Mod tests via
-  `claude plugin test plugin`; surfaces terminal + desktop; /clear; guard refusal cases.
 - G7: README/docs polish, CI workflow (.github/workflows/verify.yml, offline lane), clean-container install
   (ask owner: needs network/docker), `claude plugin tag --dry-run`, final report.
-- Then ASK OWNER: eval lane approval (calibration run ≤$2, then full suite ×2 within $50).
+- Then ASK OWNER: eval lane approval (calibration run ≤$2, then full suite ×2 within $50), and the two
+  Room acceptance steps only a person can run (A9: one model turn holding a deploy; A10: Desktop app).
 
 ## Open issues
 - Eval runs and local port binding are unverified until the first approved eval run (decision 0004).

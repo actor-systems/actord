@@ -13,3 +13,4 @@ plugin/evals/results/
 worker-configuration.d.ts
 plugin/.claude-plugin/types/
 packages/cli/dist/
+plugin/tsconfig.json

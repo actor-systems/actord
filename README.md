@@ -111,11 +111,36 @@ if a hook, mod event, mod call, or monitor command exists in `plugin/` without a
   `.actors/last-check.json`), it blocks the stop once with "run `actors check` and the affected tests before
   reporting". It never blocks twice in a turn.
 
-**Mod events (the Room):** none yet.
+**The Room (a mod, `hooks/room.tsx`; deterministic, no model calls, approves nothing).** Its events, as
+`claude plugin validate plugin` lists them:
+- `session.start`: registers `/actors-room` (or `/actors-room-view` when another plugin owns the name). In an
+  interactive session it runs `actors room --json` once for the status line, for example
+  `3 actors · 5 routes · check ✓`. Headless runs (`-p`, the SDK, evals) run nothing.
+- `classic.SessionStart`: after `/clear`, runs `actors room --json` again so the pane isn't empty.
+- `command.run{command=actors-room}` and `command.run{command=actors-room-view}`: open the pane (only when you
+  run the command) and start `actors room --follow --json`, which prints a new snapshot when the project's
+  files or `.actors/` evidence change.
+- `ui.close{id=actors-room}`: stops that follower.
+- `ui.render{component=Pane, requestId=actors-room}`: draws the Topology, Mailboxes, Contracts, and Evidence
+  tabs from the snapshot. Selecting a message runs `actors trace <id> --json`.
+- `tool.call{tool=Bash}`: the effect guard. A Bash command that matches the deploy, secret, or remote-write
+  patterns (the table in `packages/cli/src/patterns.ts`, copied into `hooks/effect-patterns.ts` at build) is
+  passed to `actors guard --json`. Inside an actor project the guard holds it and asks you, showing the
+  semantic diff summary and deploy plan; the default answer is Refuse. Refusing, dismissing, any failure (the
+  hook's `.catch`), or a session with nobody to ask denies the command. "Run it" passes the command on
+  unchanged, so Claude Code's own permission rules still apply. Other commands pass untouched.
 
-**Mod calls (the Room):** none yet.
+Its calls: `$.process.run` and `$.process.spawn` (only `bin/actors`: `room`, `trace`, `guard`),
+`$.command.list`, `$.command.register`, `$.session.surfaces`, `$.state.get`, `$.state.set`, `$.ui.ask`,
+`$.ui.log`, `$.ui.open`, `$.ui.panes` (after a reload, to restart the follower for a pane still up), `$.ui.resolve`, `$.ui.status`. It never uses `$.model`, `$.http`, `$.fs`,
+`$.prompt.submit`, `$.session.send`, or `tool.check`. Pane state lives in `$.state`; it stores nothing across
+sessions.
 
-**Monitor commands:** none yet.
+**Monitor commands:** `bin/actors events --follow --notable --exclusive`, declared twice (`actor-events` and
+`actor-events-reliability`) because each starts the first time its skill runs (`inspect`, `reliability`).
+It prints one line per notable local event (rejected or undeliverable message, handler failure, exhausted
+retry, in-doubt or failed effect), never one per message. `--exclusive` keeps it to one follower per session
+and project: a second start exits quietly. Monitors run only in interactive sessions.
 
 **Executables:** `bin/actors`, a POSIX `sh` launcher that runs `node dist/actors.mjs` or the project's
 pinned `node_modules/.bin/actors`. It never contacts the network.

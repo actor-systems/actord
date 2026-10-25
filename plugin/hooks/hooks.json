@@ -1,17 +1,36 @@
 {
+  "modules": [
+    "./room.tsx"
+  ],
   "hooks": {
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/actors", "args": ["hook", "check-on-edit"], "timeout": 5 }
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/actors",
+            "args": [
+              "hook",
+              "check-on-edit"
+            ],
+            "timeout": 5
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/actors", "args": ["hook", "evidence-gate"], "timeout": 10 }
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/actors",
+            "args": [
+              "hook",
+              "evidence-gate"
+            ],
+            "timeout": 10
+          }
         ]
       }
     ]

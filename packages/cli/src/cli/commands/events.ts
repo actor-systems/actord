@@ -1,5 +1,6 @@
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { buildTrace, EVENTS_FILE, formatEvent, type LoggedEvent, NOTABLE, parseEvents, readEvents, renderTrace, type Trace } from "../../model/events.ts";
 import type { CommandResult } from "../output.ts";
 import { findProjectRoot } from "../project.ts";
@@ -83,6 +84,67 @@ export async function followEvents(cwd: string, opts: EventFilter & { file?: str
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+}
+
+/**
+ * The plugin's monitor is declared once per skill that starts it (inspect, reliability), so a session can
+ * start it twice. The first follower per Claude Code session and project claims a lock; later ones exit
+ * quietly. Returns false when another live follower holds it.
+ */
+export function claimMonitor(cwd: string): boolean {
+  const root = findProjectRoot(cwd);
+  if (!root) return true; // followEvents reports the missing project
+  const lock = join(root, ".actors", `monitor-${sessionPid()}.pid`);
+  if (!acquireLock(lock, process.pid)) return false;
+  process.on("exit", () => releaseLock(lock, process.pid));
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => process.exit(0));
+  return true;
+}
+
+/** Create the lock holding `pid`, taking it over from a holder that is no longer alive. */
+export function acquireLock(lock: string, pid: number): boolean {
+  mkdirSync(dirname(lock), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(lock, String(pid), { flag: "wx" });
+      return true;
+    } catch {
+      const holder = Number(readFileSync(lock, "utf8"));
+      if (holder && isAlive(holder)) return false;
+      rmSync(lock, { force: true }); // a follower that died without releasing
+    }
+  }
+  return false;
+}
+
+export function releaseLock(lock: string, pid: number): void {
+  try {
+    if (Number(readFileSync(lock, "utf8")) === pid) rmSync(lock);
+  } catch {
+    // already gone
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The nearest ancestor process that is Claude Code (a shell or the launcher may sit between), else the parent. */
+export function sessionPid(): number {
+  let pid = process.ppid;
+  for (let depth = 0; depth < 6 && pid > 1; depth++) {
+    const r = spawnSync("ps", ["-o", "ppid=,comm=", "-p", String(pid)], { encoding: "utf8" });
+    const m = r.status === 0 ? /^\s*(\d+)\s+(.*)$/.exec(r.stdout.trim()) : null;
+    if (!m) break;
+    if (/claude/i.test(m[2]!)) return pid;
+    pid = Number(m[1]);
+  }
+  return process.ppid;
 }
 
 export interface TraceData extends Trace {

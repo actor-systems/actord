@@ -1,9 +1,10 @@
 import { parseArgs } from "node:util";
 import { VERSION } from "../version.ts";
 import { doctor } from "./commands/doctor.ts";
-import { events, followEvents, trace } from "./commands/events.ts";
+import { claimMonitor, events, followEvents, trace } from "./commands/events.ts";
 import { hook } from "./commands/hook.ts";
 import { init } from "./commands/init.ts";
+import { followRoom, guard, room } from "./commands/room.ts";
 import { test, verify } from "./commands/verify.ts";
 import { check, diff, graph } from "./commands/model.ts";
 import { type CommandResult, toJson, UsageError } from "./output.ts";
@@ -22,12 +23,17 @@ Commands:
   diff [--base <ref>]          Classify architectural changes against the committed manifest
        [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
   events [--follow] [--notable] Query or follow local structured events (.actors/events.ndjson);
-         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only
-         [--correlation C] [--file F]
+         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only; --exclusive
+         [--correlation C]     (the monitor's) exits quietly if this session already follows
+         [--file F] [--exclusive] the project
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
   test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
   verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
          [--profile extended]  .actors/evidence.json (verdict pass, fail, or blocked)
+  room [--follow]              The Room's view: topology with changes, mailboxes, contracts, and
+       [--base-file <path>]    evidence; --follow --json prints a snapshot whenever they change
+  guard -- <command>           Whether the Room's effect guard holds a shell command, and the diff
+                               and deploy plan it shows (deploy and remote-write patterns)
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
@@ -58,6 +64,11 @@ const commands: Record<string, Handler> = {
   init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit) }),
   verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
   test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
+  room: ({ cwd, values }) => room(cwd, { baseFile: str(values["base-file"]) }),
+  guard: ({ cwd, positionals }) => {
+    if (positionals.length === 0) throw new UsageError("guard needs the command to judge: actors guard -- <command>");
+    return guard(cwd, positionals.join(" "));
+  },
 };
 
 async function readStdin(): Promise<string> {
@@ -82,6 +93,7 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
         "base-file": { type: "string" },
         follow: { type: "boolean" },
         notable: { type: "boolean" },
+        exclusive: { type: "boolean" },
         actor: { type: "string" },
         kind: { type: "string" },
         correlation: { type: "string" },
@@ -109,9 +121,11 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
     if (!handler) throw new UsageError(`unknown command "${name}"`);
     const json = values.json === true;
     if (name === "events" && values.follow === true) {
+      if (values.exclusive === true && !claimMonitor(io.cwd)) return 0;
       const filter = { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file), json };
       return await followEvents(io.cwd, filter, io.out);
     }
+    if (name === "room" && values.follow === true) return await followRoom(io.cwd, io.out, process.argv[1] ?? "");
     if (name === "events" && json) {
       // NDJSON: one event per line, so the output can be piped and tailed like the log itself.
       const r = events(io.cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) });

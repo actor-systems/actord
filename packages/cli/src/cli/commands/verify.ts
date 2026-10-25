@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ClassifiedClaim, classifyClaims, readClaims, type TestResult } from "../../model/claims.ts";
+import { fingerprint } from "../../model/fingerprint.ts";
 import { SCHEMA_VERSION, VERSION } from "../../version.ts";
 import type { CommandResult } from "../output.ts";
 import { findProjectRoot, readJson } from "../project.ts";
@@ -30,6 +31,8 @@ export interface Evidence {
   claims: ClassifiedClaim[];
   summary: { provedLocally: number; stubOnly: number; notGuaranteed: number; blocked: number; failing: number; untested: number };
   verdict: "pass" | "fail" | "blocked";
+  /** Content hash of the actor files the evidence was produced from; a later edit makes it stale. */
+  fingerprint: string | null;
 }
 
 const SANDBOX_BLOCK = /listen EPERM|operation not permitted.*(listen|bind)|EPERM.*127\.0\.0\.1/i;
@@ -86,7 +89,7 @@ export function runTests(root: string, profile: string): { step: Step; tests: Te
 export async function verify(cwd: string, opts: { out?: string; profile?: string }): Promise<CommandResult<Evidence>> {
   const root = findProjectRoot(cwd);
   const profile = opts.profile === "extended" ? "extended" : "standard";
-  const empty: Evidence = { projectRoot: null, generatedAt: new Date().toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail" };
+  const empty: Evidence = { projectRoot: null, generatedAt: new Date().toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", fingerprint: null };
   if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const steps: Step[] = [];
 
@@ -127,7 +130,7 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   };
   const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
   const verdict: Evidence["verdict"] = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
-  const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: systemName(root), profile, steps, claims, summary, verdict };
+  const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
 
   const outPath = resolve(cwd, opts.out ?? join(root, ".actors/evidence.json"));
   mkdirSync(dirname(outPath), { recursive: true });

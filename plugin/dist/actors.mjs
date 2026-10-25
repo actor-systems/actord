@@ -88,6 +88,9 @@ var EFFECT_PATTERNS = [
     examples: ["cf deploy", "cf previews deploy", "npx void deploy"]
   }
 ];
+function matchEffect(command) {
+  return EFFECT_PATTERNS.filter((p) => p.regex.test(command));
+}
 function askRules() {
   return [...new Set(EFFECT_PATTERNS.flatMap((p) => p.rules))];
 }
@@ -288,8 +291,9 @@ function icon(s) {
 }
 
 // src/cli/commands/events.ts
-import { closeSync, existsSync as existsSync6, openSync, readSync, statSync as statSync3 } from "node:fs";
-import { join as join6, relative as relative3, resolve as resolve4 } from "node:path";
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { closeSync, existsSync as existsSync6, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync7, readSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname3, join as join6, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/model/events.ts
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
@@ -320,6 +324,18 @@ function formatEvent(e) {
   const attempt = e.attempt && e.attempt > 1 ? ` attempt ${e.attempt}` : "";
   return `${e.kind.padEnd(16)} ${what.padEnd(28)} ${route}${e.messageId ? ` (${e.messageId})` : ""}${attempt}${e.reason ? `: ${e.reason}` : ""}`;
 }
+function outcomeOf(evs) {
+  const kinds = new Set(evs.map((e) => e.kind));
+  if (kinds.has("handled")) return "handled";
+  if (kinds.has("rejected")) return "rejected";
+  if (kinds.has("undeliverable")) return "undeliverable";
+  if (kinds.has("retry.exhausted")) return "retry.exhausted";
+  if (kinds.has("duplicate")) return "duplicate";
+  if (kinds.has("failed")) return "failed";
+  if (kinds.has("sent") || kinds.has("retry.scheduled")) return "in-flight";
+  return "unknown";
+}
+var OUTCOME_MARK = { handled: "\u2713", duplicate: "\u2261", rejected: "\u2717", failed: "\u2717", undeliverable: "\u2717", "retry.exhausted": "\u2717", "in-flight": "\u2026", unknown: "?" };
 function buildTrace(log, id) {
   const byMessage = /* @__PURE__ */ new Map();
   const children = /* @__PURE__ */ new Map();
@@ -363,8 +379,7 @@ function buildTrace(log, id) {
     visited.add(mid);
     const evs = byMessage.get(mid) ?? [];
     const first = evs.find((e) => e.type) ?? evs[0];
-    const kinds = new Set(evs.map((e) => e.kind));
-    const outcome = kinds.has("handled") ? "handled" : kinds.has("rejected") || kinds.has("undeliverable") ? kinds.has("rejected") ? "rejected" : "undeliverable" : kinds.has("retry.exhausted") ? "retry.exhausted" : kinds.has("duplicate") ? "duplicate" : kinds.has("failed") ? "failed" : kinds.has("sent") || kinds.has("retry.scheduled") ? "in-flight" : "unknown";
+    const outcome = outcomeOf(evs);
     const effects = [];
     const effectKeys = /* @__PURE__ */ new Set();
     for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
@@ -406,7 +421,6 @@ function buildTrace(log, id) {
     root
   };
 }
-var MARK = { handled: "\u2713", duplicate: "\u2261", rejected: "\u2717", failed: "\u2717", undeliverable: "\u2717", "retry.exhausted": "\u2717", "in-flight": "\u2026", unknown: "?" };
 function renderTrace(t, source) {
   if (!t.found || !t.root) {
     return `unknown: no recorded event has id ${t.target}.
@@ -419,7 +433,7 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
     const target = n.messageId === t.target ? "  \u25C0 target" : "";
     const retry = n.attempts > 1 ? ` after ${n.attempts - 1} retr${n.attempts === 2 ? "y" : "ies"}` : "";
     const why = n.rejectedReason ? `: ${n.rejectedReason}` : "";
-    lines.push(`${prefix}${branch}${n.from ?? "?"} \u2192 ${n.to ?? "?"}  ${n.type ?? "?"}  ${MARK[n.outcome]} ${n.outcome}${why}${retry} (${n.messageId})${target}`);
+    lines.push(`${prefix}${branch}${n.from ?? "?"} \u2192 ${n.to ?? "?"}  ${n.type ?? "?"}  ${OUTCOME_MARK[n.outcome]} ${n.outcome}${why}${retry} (${n.messageId})${target}`);
     const inner = prefix + (top ? "" : last ? "   " : "\u2502  ");
     for (const f of n.failures) lines.push(`${inner}  ! ${f}`);
     for (const note of n.notes) lines.push(`${inner}  \xB7 ${note}`);
@@ -1142,6 +1156,54 @@ async function followEvents(cwd, opts, out) {
     await new Promise((r) => setTimeout(r, 250));
   }
 }
+function claimMonitor(cwd) {
+  const root = findProjectRoot(cwd);
+  if (!root) return true;
+  const lock = join6(root, ".actors", `monitor-${sessionPid()}.pid`);
+  if (!acquireLock(lock, process.pid)) return false;
+  process.on("exit", () => releaseLock(lock, process.pid));
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => process.exit(0));
+  return true;
+}
+function acquireLock(lock, pid) {
+  mkdirSync2(dirname3(lock), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync2(lock, String(pid), { flag: "wx" });
+      return true;
+    } catch {
+      const holder = Number(readFileSync7(lock, "utf8"));
+      if (holder && isAlive(holder)) return false;
+      rmSync(lock, { force: true });
+    }
+  }
+  return false;
+}
+function releaseLock(lock, pid) {
+  try {
+    if (Number(readFileSync7(lock, "utf8")) === pid) rmSync(lock);
+  } catch {
+  }
+}
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function sessionPid() {
+  let pid = process.ppid;
+  for (let depth = 0; depth < 6 && pid > 1; depth++) {
+    const r = spawnSync3("ps", ["-o", "ppid=,comm=", "-p", String(pid)], { encoding: "utf8" });
+    const m = r.status === 0 ? /^\s*(\d+)\s+(.*)$/.exec(r.stdout.trim()) : null;
+    if (!m) break;
+    if (/claude/i.test(m[2])) return pid;
+    pid = Number(m[1]);
+  }
+  return process.ppid;
+}
 function trace(cwd, id, opts) {
   const { path, root } = eventsPath(cwd, opts.file);
   const note = "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record.";
@@ -1156,9 +1218,9 @@ function trace(cwd, id, opts) {
 }
 
 // src/cli/commands/hook.ts
-import { spawnSync as spawnSync3 } from "node:child_process";
-import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
-import { dirname as dirname3, join as join7, relative as relative4 } from "node:path";
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { existsSync as existsSync7, readFileSync as readFileSync8 } from "node:fs";
+import { dirname as dirname4, join as join7, relative as relative4 } from "node:path";
 var RELEVANT2 = /(^|\/)(system\.ts|wrangler\.jsonc?|actors\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
 var BUDGET_MS = 2e3;
 async function hook(name, stdin, env, out, err) {
@@ -1178,7 +1240,7 @@ async function checkOnEdit(input, env, out, err) {
   if (env.CLAUDE_PLUGIN_OPTION_CHECK_ON_EDIT === "false") return 0;
   const file = input.tool_input?.file_path;
   if (!file || !RELEVANT2.test(file.replaceAll("\\", "/"))) return 0;
-  const root = findProjectRoot(dirname3(file));
+  const root = findProjectRoot(dirname4(file));
   if (!root) return 0;
   const timer = new Promise((r) => setTimeout(() => r("timeout"), BUDGET_MS).unref());
   const result2 = await Promise.race([check(root, { changed: [file], format: "brief" }), timer]);
@@ -1201,7 +1263,7 @@ function evidenceGate(input, env, out) {
   if (!root) return 0;
   let last = null;
   try {
-    last = JSON.parse(readFileSync7(join7(root, LAST_CHECK_FILE), "utf8"));
+    last = JSON.parse(readFileSync8(join7(root, LAST_CHECK_FILE), "utf8"));
   } catch {
     last = null;
   }
@@ -1214,16 +1276,16 @@ function evidenceGate(input, env, out) {
   return 0;
 }
 function actorFilesModified(root) {
-  if (!existsSync7(join7(root, ".git")) && spawnSync3("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
-  const r = spawnSync3("git", ["-C", root, "status", "--porcelain", "--", "system.ts", "src/actors", "src/messages", "src/index.ts", "wrangler.jsonc"], {
+  if (!existsSync7(join7(root, ".git")) && spawnSync4("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
+  const r = spawnSync4("git", ["-C", root, "status", "--porcelain", "--", "system.ts", "src/actors", "src/messages", "src/index.ts", "wrangler.jsonc"], {
     encoding: "utf8"
   });
   return r.status === 0 && r.stdout.trim().length > 0;
 }
 
 // src/cli/commands/init.ts
-import { copyFileSync, existsSync as existsSync8, mkdirSync as mkdirSync2, readdirSync as readdirSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename, dirname as dirname4, join as join8, resolve as resolve5 } from "node:path";
+import { copyFileSync, existsSync as existsSync8, mkdirSync as mkdirSync3, readdirSync as readdirSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname5, join as join8, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/templates/project.ts
@@ -1508,7 +1570,7 @@ it("[refuse-invalid] an empty name is refused before any handler runs", async ()
 function bundledTarball() {
   const dirs = [process.env.ACTORS_PLUGIN_DIST];
   try {
-    dirs.push(dirname4(fileURLToPath(import.meta.url)));
+    dirs.push(dirname5(fileURLToPath(import.meta.url)));
   } catch {
   }
   for (const dir of dirs) {
@@ -1528,8 +1590,8 @@ function init(cwd, target, opts) {
       skipped.push(rel);
       return;
     }
-    mkdirSync2(dirname4(path), { recursive: true });
-    writeFileSync2(path, content);
+    mkdirSync3(dirname5(path), { recursive: true });
+    writeFileSync3(path, content);
     created.push(rel);
   };
   if (opts.adopt) {
@@ -1557,7 +1619,7 @@ ${missing.map((r) => `    "${r}"`).join(",\n")}`);
   let toolkit = opts.toolkit ?? VERSION;
   const tgz = opts.toolkit ? null : bundledTarball();
   if (tgz) {
-    mkdirSync2(join8(root, "vendor"), { recursive: true });
+    mkdirSync3(join8(root, "vendor"), { recursive: true });
     copyFileSync(tgz, join8(root, "vendor", basename(tgz)));
     created.push(`vendor/${basename(tgz)}`);
     toolkit = `file:vendor/${basename(tgz)}`;
@@ -1576,20 +1638,311 @@ function result(root, mode, created, skipped, suggestions, toolkit) {
   return { data: { projectRoot: root, mode, created, skipped, suggestions, toolkit }, text, exitCode: 0 };
 }
 
+// src/cli/commands/room.ts
+import { spawnSync as spawnSync5 } from "node:child_process";
+import { existsSync as existsSync9, statSync as statSync4 } from "node:fs";
+import { join as join9, resolve as resolve6 } from "node:path";
+
+// src/model/svg.ts
+function topologyWithChanges(base, head) {
+  const key = (r) => `${r.from} ${r.message} ${r.to}`;
+  const baseActors = new Set(base?.actors.map((a) => a.name) ?? []);
+  const headActors = new Set(head.actors.map((a) => a.name));
+  const baseRoutes = new Set(base?.routes.map(key) ?? []);
+  const headRoutes = new Set(head.routes.map(key));
+  const actors = [
+    ...head.actors.map((a) => ({ name: a.name, kind: a.kind, change: base && !baseActors.has(a.name) ? "added" : null })),
+    ...base?.actors.filter((a) => !headActors.has(a.name)).map((a) => ({ name: a.name, kind: a.kind, change: "removed" })) ?? []
+  ].sort((a, b) => a.name < b.name ? -1 : 1);
+  const routes = [
+    ...head.routes.map((r) => ({ ...r, change: base && !baseRoutes.has(key(r)) ? "added" : null })),
+    ...base?.routes.filter((r) => !headRoutes.has(key(r))).map((r) => ({ ...r, change: "removed" })) ?? []
+  ].sort((a, b) => key(a) < key(b) ? -1 : 1);
+  return { actors, routes };
+}
+var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+var COLOR = { added: "#1a7f37", removed: "#cf222e" };
+function topologySvg(t) {
+  const external = [...new Set(t.routes.map((r) => r.from).filter((f) => f.startsWith("@")))].sort();
+  const depth = new Map(external.map((e) => [e, 0]));
+  for (let pass = 0; pass < t.actors.length + 1; pass++) {
+    for (const r of t.routes) {
+      if (r.from === r.to) continue;
+      const d = (depth.get(r.from) ?? 0) + 1;
+      if (d <= t.actors.length && d > (depth.get(r.to) ?? 0)) depth.set(r.to, d);
+    }
+  }
+  for (const a of t.actors) if (!depth.has(a.name)) depth.set(a.name, 1);
+  const columns = /* @__PURE__ */ new Map();
+  for (const name of [...external, ...t.actors.map((a) => a.name)]) {
+    const d = depth.get(name) ?? 0;
+    columns.set(d, [...columns.get(d) ?? [], name]);
+  }
+  const W2 = 170;
+  const H = 46;
+  const GX = 90;
+  const GY = 34;
+  const pos = /* @__PURE__ */ new Map();
+  for (const [d, names] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+    names.forEach((n, i) => pos.set(n, { x: 20 + d * (W2 + GX), y: 20 + i * (H + GY) }));
+  }
+  const width = Math.max(...[...pos.values()].map((p) => p.x + W2)) + 20;
+  const height = Math.max(...[...pos.values()].map((p) => p.y + H)) + 30;
+  const kind = new Map(t.actors.map((a) => [a.name, a]));
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="ui-sans-serif, system-ui" font-size="12">`,
+    `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>`
+  ];
+  for (const r of t.routes) {
+    const a = pos.get(r.from);
+    const b = pos.get(r.to);
+    if (!a || !b) continue;
+    const color = r.change ? COLOR[r.change] : "#57606a";
+    const dash = r.change === "removed" ? ` stroke-dasharray="5 4"` : "";
+    if (r.from === r.to) {
+      parts.push(
+        `<path d="M${a.x + W2 - 30},${a.y} C${a.x + W2 - 10},${a.y - 28} ${a.x + W2 + 22},${a.y + 4} ${a.x + W2},${a.y + 16}" fill="none" stroke="${color}" color="${color}"${dash} marker-end="url(#arrow)"/>`,
+        `<text x="${a.x + W2 - 4}" y="${a.y - 14}" fill="${color}">${esc(r.message)}</text>`
+      );
+      continue;
+    }
+    const x1 = a.x + W2;
+    const y1 = a.y + H / 2;
+    const x2 = b.x;
+    const y2 = b.y + H / 2;
+    parts.push(
+      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" color="${color}"${dash} marker-end="url(#arrow)"/>`,
+      `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 5}" text-anchor="middle" fill="${color}">${esc(r.message)}</text>`
+    );
+  }
+  for (const [name, p] of pos) {
+    const node = kind.get(name);
+    const color = node?.change ? COLOR[node.change] : name.startsWith("@") ? "#8c959f" : "#24292f";
+    const dash = node?.change === "removed" ? ` stroke-dasharray="5 4"` : "";
+    parts.push(
+      `<rect x="${p.x}" y="${p.y}" width="${W2}" height="${H}" rx="${name.startsWith("@") ? 23 : 8}" fill="none" stroke="${color}" stroke-width="1.5"${dash}/>`,
+      `<text x="${p.x + W2 / 2}" y="${p.y + (node ? 20 : 28)}" text-anchor="middle" font-weight="600" fill="${color}">${esc(name)}</text>`
+    );
+    if (node) parts.push(`<text x="${p.x + W2 / 2}" y="${p.y + 36}" text-anchor="middle" fill="#57606a">${esc(node.kind)}${node.change ? ` \xB7 ${node.change}` : ""}</text>`);
+  }
+  parts.push("</svg>");
+  return parts.join("\n");
+}
+
+// src/cli/commands/room.ts
+var EVIDENCE_FILE = ".actors/evidence.json";
+var MAILBOX_DEPTH = 12;
+var plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+async function room(cwd, opts = {}) {
+  const root = findProjectRoot(cwd);
+  const empty = {
+    projectRoot: null,
+    system: null,
+    status: null,
+    error: null,
+    topology: null,
+    contracts: null,
+    mailboxes: { file: EVENTS_FILE, events: 0, actors: [], notable: [] },
+    evidence: { state: "none", generatedAt: null, profile: null, groups: [] }
+  };
+  if (!root) return { data: empty, text: `No actor project at ${cwd} (no system.ts with a package.json here or above).`, exitCode: EXIT_NO_PROJECT };
+  const print = fingerprint(root);
+  const check2 = readCheck(root, print);
+  const mailboxes = readMailboxes(root);
+  const evidence = readEvidence(root, print);
+  const project = await loadProject(root);
+  const d = await diff(cwd, { baseFile: opts.baseFile });
+  if (!project.manifest || d.exitCode !== 0) {
+    const error = project.loadError ?? d.data.notes[0] ?? "the declaration doesn't load";
+    const data2 = { ...empty, projectRoot: root, error, status: "declaration doesn't load", mailboxes, evidence };
+    return { data: data2, text: `\u2717 ${error}`, exitCode: 1 };
+  }
+  const head = project.manifest;
+  const base = d.data.base.source === "none" ? null : baseManifest(root, d.data.base.source, cwd);
+  const t = topologyWithChanges(base, head);
+  const changes = d.data.changes.length;
+  const sign = (c) => c === "added" ? "+ " : c === "removed" ? "- " : "  ";
+  const lines = [
+    ...t.routes.map((r) => `${sign(r.change)}${r.from} \u2500\u2500${r.message}\u2500\u2500\u25B6 ${r.to}`),
+    "",
+    ...t.actors.map((a) => `${sign(a.change)}${a.name} (${a.kind})${a.change ? ` \xB7 ${a.change}` : ""}`)
+  ];
+  const checkMark = { pass: "check \u2713", fail: `check \u2717 ${check2.errors}`, stale: "check stale", none: "check \u2013" }[check2.state];
+  const status = [plural(head.actors.length, "actor"), plural(head.routes.length, "route"), checkMark, changes ? `${plural(changes, "change")} vs ${d.data.base.source.replace(/^git:/, "")}` : null].filter(Boolean).join(" \xB7 ");
+  const data = {
+    projectRoot: root,
+    system: head.system.name,
+    status,
+    error: null,
+    topology: {
+      ...t,
+      base: d.data.base.source,
+      lines,
+      svg: topologySvg(t),
+      alt: `${head.system.name}: ${plural(t.actors.length, "actor")}, ${plural(t.routes.length, "route")}${changes ? `, ${plural(changes, "change")} against ${d.data.base.source}` : ""}`,
+      changes
+    },
+    contracts: {
+      messages: head.messages.map((m) => ({
+        name: m.name,
+        version: m.version,
+        description: m.description,
+        routes: head.routes.filter((r) => r.message === m.name).map((r) => `${r.from} \u2192 ${r.to}`)
+      })),
+      check: check2
+    },
+    mailboxes,
+    evidence
+  };
+  const text = [
+    `${head.system.name} \xB7 ${status}`,
+    "",
+    "Topology",
+    ...lines.map((l) => `  ${l}`),
+    "",
+    "Mailboxes",
+    ...mailboxes.actors.length ? mailboxes.actors.flatMap((a) => [`  ${a.name} (${a.received})`, ...a.messages.map((m) => `    ${m.mark} ${m.type ?? "?"} ${m.from ?? "?"} \u2192 ${m.to} (${m.messageId})`)]) : ["  no local events yet"],
+    "",
+    `Evidence: ${evidence.state}${evidence.generatedAt ? ` (${evidence.generatedAt})` : ""}`,
+    ...evidence.groups.flatMap((g) => g.claims.map((c) => `  ${g.label}: ${c.id}`))
+  ].join("\n");
+  return { data, text, exitCode: 0 };
+}
+function baseManifest(root, source, cwd) {
+  if (source.startsWith("file:")) return readJson(resolve6(cwd, source.slice(5)));
+  if (!source.startsWith("git:")) return null;
+  const top = spawnSync5("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  if (top.status !== 0) return null;
+  const rel = join9(root, "actors.manifest.json").slice(top.stdout.trim().length + 1);
+  const r = spawnSync5("git", ["-C", root, "show", `${source.slice(4)}:${rel}`], { encoding: "utf8" });
+  try {
+    return r.status === 0 ? JSON.parse(r.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+function readCheck(root, print) {
+  const last = readJson(join9(root, LAST_CHECK_FILE));
+  if (!last) return { state: "none", errors: 0, warnings: 0, codes: [], checkedAt: null };
+  const state = last.fingerprint !== print ? "stale" : last.ok ? "pass" : "fail";
+  return { state, errors: last.errors ?? 0, warnings: last.warnings ?? 0, codes: last.codes ?? [], checkedAt: last.checkedAt ?? null };
+}
+function readMailboxes(root) {
+  const log = readEvents(join9(root, EVENTS_FILE));
+  if (!log) return { file: EVENTS_FILE, events: 0, actors: [], notable: [] };
+  const byMessage = /* @__PURE__ */ new Map();
+  for (const e of log.events) if (e.messageId && e.to) byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
+  const boxes = /* @__PURE__ */ new Map();
+  for (const [id, evs] of byMessage) {
+    const first = evs.find((e) => e.type) ?? evs[0];
+    const outcome = outcomeOf(evs);
+    const to = first.to;
+    const entry = {
+      messageId: id,
+      type: first.type ?? null,
+      from: first.from ?? null,
+      to,
+      outcome,
+      mark: OUTCOME_MARK[outcome],
+      attempts: Math.max(1, ...evs.map((e) => e.attempt ?? 1)),
+      reason: evs.find((e) => e.reason && (NOTABLE.has(e.kind) || e.kind === "retry.scheduled"))?.reason ?? null
+    };
+    const actor = to.split(":")[0];
+    boxes.set(actor, [...boxes.get(actor) ?? [], entry]);
+  }
+  const actors = [...boxes.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([name, messages]) => ({ name, received: messages.length, messages: messages.slice(-MAILBOX_DEPTH) }));
+  const notable = log.events.filter((e) => NOTABLE.has(e.kind)).map((e) => `${e.kind} ${e.type ?? e.effect ?? ""} at ${e.to ?? e.actor}${e.reason ? `: ${e.reason}` : ""}`);
+  return { file: EVENTS_FILE, events: log.events.length, actors, notable: notable.slice(-MAILBOX_DEPTH) };
+}
+var GROUPS = [
+  ["proved-locally", "Proved locally"],
+  ["stub-only", "Stub only"],
+  ["not-guaranteed", "Not guaranteed"],
+  ["blocked", "Blocked"],
+  ["failing", "Failing"],
+  ["untested", "Untested"]
+];
+function readEvidence(root, print) {
+  const ev = readJson(
+    join9(root, EVIDENCE_FILE)
+  );
+  if (!ev) return { state: "none", generatedAt: null, profile: null, groups: [] };
+  const stale = ev.fingerprint !== void 0 && ev.fingerprint !== null && ev.fingerprint !== print;
+  const state = stale ? "stale" : ev.verdict === "pass" ? "pass" : ev.verdict === "blocked" ? "blocked" : "fail";
+  const groups = GROUPS.map(([status, label]) => ({
+    status,
+    label,
+    claims: (ev.claims ?? []).filter((c) => c.status === status).map((c) => ({ id: c.id, statement: c.statement, why: c.why ?? null }))
+  })).filter((g) => g.claims.length > 0);
+  return { state, generatedAt: ev.generatedAt ?? null, profile: ev.profile ?? null, groups };
+}
+function roomSignature(root) {
+  const stamp = (f) => {
+    const p = join9(root, f);
+    return existsSync9(p) ? `${statSync4(p).size}:${statSync4(p).mtimeMs}` : "-";
+  };
+  return [fingerprint(root), stamp(EVENTS_FILE), stamp(LAST_CHECK_FILE), stamp(EVIDENCE_FILE), stamp("actors.manifest.json")].join("|");
+}
+async function followRoom(cwd, out, entry) {
+  const root = findProjectRoot(cwd);
+  if (!root) {
+    out.write(`${JSON.stringify({ projectRoot: null })}
+`);
+    return EXIT_NO_PROJECT;
+  }
+  let last = "";
+  for (; ; ) {
+    const sig = roomSignature(root);
+    if (sig !== last) {
+      last = sig;
+      const r = spawnSync5(process.execPath, [entry, "room", "--json"], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+      try {
+        out.write(`${JSON.stringify(JSON.parse(r.stdout))}
+`);
+      } catch {
+        out.write(`${JSON.stringify({ projectRoot: root, error: (r.stderr || "actors room failed").trim().slice(0, 500) })}
+`);
+      }
+    }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+}
+async function guard(cwd, command) {
+  const matches = matchEffect(command).map((p) => ({ id: p.id, kind: p.kind, description: p.description }));
+  const root = findProjectRoot(cwd);
+  const none = { projectRoot: root, command, matches, hold: false, question: null, refusal: null };
+  if (matches.length === 0) return { data: none, text: "No deployment or remote-write pattern matches.", exitCode: 0 };
+  if (!root) return { data: none, text: `Matches ${matches.map((m) => m.id).join(", ")}, but ${cwd} isn't an actor project; the Room doesn't hold it.`, exitCode: 0 };
+  const d = await diff(root, {});
+  const what = [...new Set(matches.map((m) => m.description.charAt(0).toLowerCase() + m.description.slice(1)))].join("; ");
+  const summary = d.exitCode !== 0 ? `The declaration doesn't load, so there is no plan: ${d.data.notes[0] ?? "unknown error"}.` : d.data.changes.length === 0 ? `${d.data.head.system}: no architectural changes against ${d.data.base.source}.` : `${d.data.head.system}: ${plural(d.data.changes.length, "change")} against ${d.data.base.source} (${d.data.summary.breaking} breaking, ${d.data.summary.risky} risky${d.data.summary.irreversible ? ", IRREVERSIBLE steps" : ""}${d.data.summary.requiresApproval ? ", needs approval" : ""}).`;
+  const changes = (d.data.changes ?? []).slice(0, 6).map((c) => `  ${c.kind} ${c.subject} [${c.compatibility}]`);
+  const plan2 = (d.data.plan ?? []).slice(0, 6).map((s, i) => `  ${i + 1}. ${s.text}`);
+  const question = [
+    `This command would ${what}: ${command.length > 160 ? `${command.slice(0, 157)}...` : command}`,
+    summary,
+    ...changes.length ? ["Changes:", ...changes] : [],
+    ...plan2.length ? ["Deploy plan:", ...plan2] : [],
+    "Claude Code's own permission check still runs after this. Run it?"
+  ].join("\n");
+  const refusal = `The actors Room held \`${command}\` (${what}) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (\`actors diff\`) and let them run it or approve it themselves.`;
+  return { data: { ...none, hold: true, question, refusal }, text: question, exitCode: 0 };
+}
+
 // src/cli/commands/verify.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync9, writeFileSync as writeFileSync3 } from "node:fs";
-import { dirname as dirname5, join as join10, relative as relative5, resolve as resolve6 } from "node:path";
+import { spawnSync as spawnSync6 } from "node:child_process";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
+import { dirname as dirname6, join as join11, relative as relative5, resolve as resolve7 } from "node:path";
 
 // src/model/claims.ts
-import { existsSync as existsSync9, readFileSync as readFileSync8 } from "node:fs";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync9 } from "node:fs";
+import { join as join10 } from "node:path";
 var CLAIMS_FILE = "actors.claims.json";
 function readClaims(root) {
-  const path = join9(root, CLAIMS_FILE);
-  if (!existsSync9(path)) return { claims: [], error: null };
+  const path = join10(root, CLAIMS_FILE);
+  if (!existsSync10(path)) return { claims: [], error: null };
   try {
-    const doc = JSON.parse(readFileSync8(path, "utf8"));
+    const doc = JSON.parse(readFileSync9(path, "utf8"));
     return { claims: doc.claims ?? [], error: null };
   } catch (e) {
     return { claims: [], error: `${CLAIMS_FILE} doesn't parse: ${e.message}` };
@@ -1626,13 +1979,13 @@ var SANDBOX_BLOCK = /listen EPERM|operation not permitted.*(listen|bind)|EPERM.*
 var TEST_RESULTS = ".actors/vitest-results.json";
 function run2(cmd, args, cwd, extraEnv = {}) {
   const started = Date.now();
-  const r = spawnSync4(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync6(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
   return { code: r.status ?? 1, output: `${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started };
 }
 var tail = (s, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
 function runTests(root, profile) {
-  const out = join10(root, TEST_RESULTS);
-  mkdirSync3(dirname5(out), { recursive: true });
+  const out = join11(root, TEST_RESULTS);
+  mkdirSync4(dirname6(out), { recursive: true });
   const args = ["--no-install", "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
   if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
   const r = run2("npx", args, root, { ACTORS_FAULT_PROFILE: profile });
@@ -1646,7 +1999,7 @@ function runTests(root, profile) {
   }
   let tests = null;
   try {
-    const doc = JSON.parse(readFileSync9(out, "utf8"));
+    const doc = JSON.parse(readFileSync10(out, "utf8"));
     tests = doc.testResults.flatMap((f) => f.assertionResults.map((a) => ({ name: a.fullName ?? a.title, status: a.status })));
   } catch {
     tests = null;
@@ -1670,10 +2023,10 @@ function runTests(root, profile) {
 async function verify(cwd, opts) {
   const root = findProjectRoot(cwd);
   const profile = opts.profile === "extended" ? "extended" : "standard";
-  const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail" };
+  const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", fingerprint: null };
   if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const steps = [];
-  const pkg = readJson(join10(root, "package.json"));
+  const pkg = readJson(join11(root, "package.json"));
   const tc = pkg?.scripts?.typecheck ? run2("npm", ["run", "--silent", "typecheck"], root) : run2("npx", ["--no-install", "tsc", "--noEmit"], root);
   steps.push({
     id: "typecheck",
@@ -1708,10 +2061,10 @@ async function verify(cwd, opts) {
   };
   const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
   const verdict = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
-  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: systemName(root), profile, steps, claims, summary, verdict };
-  const outPath = resolve6(cwd, opts.out ?? join10(root, ".actors/evidence.json"));
-  mkdirSync3(dirname5(outPath), { recursive: true });
-  writeFileSync3(
+  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
+  const outPath = resolve7(cwd, opts.out ?? join11(root, ".actors/evidence.json"));
+  mkdirSync4(dirname6(outPath), { recursive: true });
+  writeFileSync4(
     outPath,
     `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "verify", toolkitVersion: VERSION, volatile: ["projectRoot", "generatedAt", "steps[].durationMs"], ...evidence }, null, 2)}
 `
@@ -1732,7 +2085,7 @@ function statusMark(s) {
   return { "proved-locally": "\u2713", "stub-only": "~", "not-guaranteed": "\xB7", blocked: "\u2298", failing: "\u2717", untested: "?" }[s] ?? "?";
 }
 function systemName(root) {
-  const m = readJson(join10(root, "actors.manifest.json"));
+  const m = readJson(join11(root, "actors.manifest.json"));
   return m?.system?.name ?? null;
 }
 function test(cwd, opts) {
@@ -1759,12 +2112,17 @@ Commands:
   diff [--base <ref>]          Classify architectural changes against the committed manifest
        [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
   events [--follow] [--notable] Query or follow local structured events (.actors/events.ndjson);
-         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only
-         [--correlation C] [--file F]
+         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only; --exclusive
+         [--correlation C]     (the monitor's) exits quietly if this session already follows
+         [--file F] [--exclusive] the project
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
   test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
   verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
          [--profile extended]  .actors/evidence.json (verdict pass, fail, or blocked)
+  room [--follow]              The Room's view: topology with changes, mailboxes, contracts, and
+       [--base-file <path>]    evidence; --follow --json prints a snapshot whenever they change
+  guard -- <command>           Whether the Room's effect guard holds a shell command, and the diff
+                               and deploy plan it shows (deploy and remote-write patterns)
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
@@ -1783,7 +2141,12 @@ var commands = {
   trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
   init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit) }),
   verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
-  test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) })
+  test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
+  room: ({ cwd, values }) => room(cwd, { baseFile: str(values["base-file"]) }),
+  guard: ({ cwd, positionals }) => {
+    if (positionals.length === 0) throw new UsageError("guard needs the command to judge: actors guard -- <command>");
+    return guard(cwd, positionals.join(" "));
+  }
 };
 async function readStdin() {
   if (process.stdin.isTTY) return "";
@@ -1806,6 +2169,7 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
         "base-file": { type: "string" },
         follow: { type: "boolean" },
         notable: { type: "boolean" },
+        exclusive: { type: "boolean" },
         actor: { type: "string" },
         kind: { type: "string" },
         correlation: { type: "string" },
@@ -1835,9 +2199,11 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
     if (!handler) throw new UsageError(`unknown command "${name}"`);
     const json = values.json === true;
     if (name === "events" && values.follow === true) {
+      if (values.exclusive === true && !claimMonitor(io.cwd)) return 0;
       const filter = { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file), json };
       return await followEvents(io.cwd, filter, io.out);
     }
+    if (name === "room" && values.follow === true) return await followRoom(io.cwd, io.out, process.argv[1] ?? "");
     if (name === "events" && json) {
       const r = events(io.cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) });
       io.out.write(r.data.events.map((e) => `${JSON.stringify(e)}

@@ -38,7 +38,11 @@ test("every mod event and mod call is listed", (t) => {
   if (r.error) return t.skip("claude not on PATH");
   const out = `${r.stdout}${r.stderr}`;
   const items = (label) =>
-    [...out.matchAll(new RegExp(`${label}: (.+)$`, "gm"))].flatMap((m) => m[1].split(/,\s*/)).map((s) => s.replace(/ \(via .*\)$/, "").trim());
+    [...out.matchAll(new RegExp(`^\\s*❯ \\S+\\.(?:tsx?|jsx?|mjs) ${label}: (.+)$`, "gm"))].flatMap((m) => m[1].split(/,\s*/)).map((s) => s.replace(/ \(via .*\)$/, "").trim());
+  assert.ok(items("hooks").length > 0 && items("calls").length > 0, "claude plugin validate listed no mod hooks or calls");
   for (const event of items("hooks")) assert.ok(trust.includes(event), `trust section doesn't name mod event ${event}`);
   for (const call of items("calls")) assert.ok(trust.includes(call), `trust section doesn't name mod call ${call}`);
+  // The charter's limits on the mod: no model, network, file, prompt, or cross-session calls, no tool.check.
+  const forbidden = /^\$\.(model|http|fs|prompt\.submit|session\.send|tool)\b|^tool\.check/;
+  for (const item of [...items("hooks"), ...items("calls")]) assert.ok(!forbidden.test(item), `the Room must not use ${item}`);
 });

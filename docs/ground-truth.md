@@ -81,12 +81,22 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
     on throw**, while plain awaits on other DOs let calls interleave (probes; decision 0007).
 17. **An RPC method can't be named `name`**; the stub's own property shadows it.
 
+18. **A monitor's `when` names one skill.** `on-skill-invoke:<skill>` takes a single skill, so "starts with
+    `inspect` or `reliability`" is two entries running the same follower. `actors events --follow
+    --exclusive` holds a per-session lock (keyed by the Claude Code process) so a session that runs both
+    skills gets one follower (`tests/monitor.test.mjs`).
+19. **A mod's spawned children end when the module reloads**, and a reload re-runs `session.start` while the
+    pane stays up. `$.ui.panes()` lists panes that survived the reload; the Room restarts its follower from
+    there (found in the acceptance run, then tested).
+20. **The terminal has no `Svg` element**; Desktop, VS Code, and mobile do. The Room draws text on the
+    terminal and the CLI's SVG elsewhere (mod tests on both surfaces).
+
 ## Assumptions not yet verified (each has an owner gate)
 
 | Assumption | How it will be settled | Gate |
 | --- | --- | --- |
 | Eval runs deny local binding, as the default sandbox does | first approved `claude plugin eval` run, `actors verify` records `blocked` vs `passed` | G5 |
 | The plugin's `bin/actors` is on `PATH` inside eval runs | eval case `tool_used` grader on `actors check` | G5 |
-| In `-p`/eval runs the mod's `tool.call` guard runs and `$.ui.ask` cannot be answered | mod test with a non-interactive surface stub + eval deploy case | G5/G6 |
-| `claude plugin test` can render the Desktop surface (SVG) | mod tests per surface | G6 |
+| In `-p`/eval runs the mod's `tool.call` guard runs and `$.ui.ask` cannot be answered | mod test passes (no surfaces → refused, never asked); the eval deploy case confirms it in a real headless run | G5/G6 (mod side settled) |
+| The Desktop app draws the Room's SVG as the desktop-surface test expects | `claude plugin test` validates the desktop tree (settled for the tree); acceptance step A10 in the Desktop app | G6 (owner) |
 | Clean install from the marketplace in a container | G7 clean-container script | G7 |

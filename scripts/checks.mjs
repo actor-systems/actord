@@ -94,6 +94,11 @@ export const gates = [
       "g5.evals.run",
     ],
   },
+  {
+    id: "G6",
+    title: "The Room",
+    requires: ["g6.cli.room", "g6.fixtures", "g6.mod.validate", "g6.mod.typecheck", "g6.mod.test", "g6.monitor", "g6.trust", "g6.no-hooks", "g6.acceptance"],
+  },
 ];
 
 /** The newest recorded eval result (docs/evidence/evals/*.json), or null. */
@@ -145,7 +150,7 @@ export const checks = [
     title: "Shipped plugin/dist matches a fresh build of packages/cli",
     command: "npm run --silent build -w actors-toolkit",
     async run({ sh, root }) {
-      const files = ["plugin/dist/actors.mjs", "plugin/dist/VERSION"].map((f) => join(root, f));
+      const files = ["plugin/dist/actors.mjs", "plugin/dist/VERSION", "plugin/hooks/effect-patterns.ts"].map((f) => join(root, f));
       const before = files.map(hash);
       const r = sh("npm run --silent build -w actors-toolkit");
       if (r.code !== 0) return { ...r, status: "fail", reason: "build failed" };
@@ -231,6 +236,50 @@ export const checks = [
       return failing.length
         ? { status: "fail", reason: `below 1.0: ${failing.map((c) => c.name).join(", ")}. ${reason}`, evidenceSource: "eval-run" }
         : { status: "pass", reason, evidenceSource: "eval-run" };
+    },
+  },
+  command("g6.cli.room", "G6", "actors room, guard, and the monitor lock (CLI unit tests)", "cd packages/cli && NO_COLOR=1 npx vitest run test/room.test.ts"),
+  command("g6.fixtures", "G6", "The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin)", "node scripts/record-room-fixtures.mjs --check"),
+  command("g6.mod.validate", "G6", "claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch", "claude plugin validate plugin", {
+    classify: (r) => {
+      if (r.code !== 0) return { status: "fail", reason: `exit ${r.code}` };
+      if (!/room\.tsx hooks: .*tool\.call\{tool=Bash\}/.test(r.output)) return { status: "fail", reason: "validate doesn't list the Room's hooks" };
+      if (/gating hook without \.catch/.test(r.output)) return { status: "fail", reason: "a gating hook has no .catch" };
+      return { status: "pass" };
+    },
+  }),
+  command("g6.mod.typecheck", "G6", "The Room type-checks against this Claude Code build's mod declarations", "node scripts/typecheck-mod.mjs", {
+    classify: (r) => (r.code === 0 ? { status: "pass" } : r.code === 4 ? { status: "blocked", reason: "no mod declarations for this Claude Code build on this machine" } : { status: "fail", reason: `exit ${r.code}` }),
+  }),
+  command("g6.mod.test", "G6", "claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path", "claude plugin test plugin", {
+    classify: (r) => {
+      const pass = Number(/(\d+) pass/.exec(r.output)?.[1] ?? 0);
+      const fail = Number(/(\d+) fail/.exec(r.output)?.[1] ?? 1);
+      if (r.code !== 0 || fail > 0) return { status: "fail", reason: `${fail} failing` };
+      const required = [/draws every tab on terminal and desktop/, /after \/clear/, /a matching command is held, and Refuse denies it/, /dismissing the question denies/, /a failing hook denies/, /nobody to ask/, /non-matching command passes untouched/];
+      const missing = required.filter((re) => !re.test(r.output));
+      return missing.length ? { status: "fail", reason: `missing required tests: ${missing.join(", ")}` } : { status: "pass", reason: `${pass} mod tests` };
+    },
+  }),
+  command("g6.monitor", "G6", "The monitor prints notable events once per session and starts with inspect or reliability", "node --test tests/monitor.test.mjs"),
+  command("g6.trust", "G6", "README trust section lists every mod event, mod call, and monitor command; no forbidden calls", "node --test tests/trust-section.test.mjs"),
+  command("g6.no-hooks", "G6", "Core path with disableAllHooks: installs, starter verifies, Room view and guard decision as CLI text", "scripts/no-hooks-smoke.sh"),
+  {
+    id: "g6.acceptance",
+    gate: "G6",
+    title: "Manual acceptance script for the Room recorded with versions",
+    command: "docs/acceptance/room.md → docs/evidence/room-acceptance.md",
+    async run({ root }) {
+      const record = join(root, "docs/evidence/room-acceptance.md");
+      if (!existsSync(record)) return { status: "blocked", reason: "no recorded run of docs/acceptance/room.md yet" };
+      const text = readFileSync(record, "utf8");
+      const steps = [...text.matchAll(/^\| (A\d+) \|.*\| (pass|fail|not run[^|]*) \|$/gm)].map((m) => ({ id: m[1], result: m[2] }));
+      if (!/Claude Code \d+\.\d+\.\d+/.test(text) || steps.length === 0) return { status: "fail", reason: "the record lacks versions or step results" };
+      const failed = steps.filter((s) => s.result === "fail");
+      const notRun = steps.filter((s) => s.result.startsWith("not run"));
+      if (failed.length) return { status: "fail", reason: `failed: ${failed.map((s) => s.id).join(", ")}` };
+      const reason = `${steps.length - notRun.length}/${steps.length} steps recorded passing${notRun.length ? `; not run: ${notRun.map((s) => s.id).join(", ")}` : ""}`;
+      return notRun.length ? { status: "blocked", reason, evidenceSource: "recorded-acceptance" } : { status: "pass", reason, evidenceSource: "recorded-acceptance" };
     },
   },
 ];
