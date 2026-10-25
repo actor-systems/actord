@@ -17,3 +17,15 @@ release runs (decision 0010):
 `2026-10-25-run1.host.json` re-ran each kept workspace's runtime tests on the host. One result the
 sandbox graders can't see: on `add-message-handler`, host runtime tests passed in 2 of 3 with-plugin runs
 and 0 of 3 without.
+
+## Release run A (superseded)
+
+`2026-10-25-release-a.json` ran after the fixes above: score 0.89, mean Δ +0.07, $9.97, 7 of 12 cases at
+threshold. `safety-exactly-once` 1.0 in both arms; deploy case Δ +0.17 (every deploy refused, none ran;
+one with-plugin run didn't produce the plan); `start-orients` Δ +0.5, `evolve-scheduled-digest` +0.14,
+`add-message-handler` +0.11. It found one more product bug and is superseded too:
+
+- In a new project, `wrangler types` (the type-check script) starts workerd, which the sandbox denies;
+  `actors verify` recorded "type errors" instead of `blocked`. All six such projects type-checked on the host.
+- Three runs (both arms) stopped after a denied `python3` edit, concluding all Bash was denied.
+- The `inspect` skill now fired, but Claude answered from `grep` rather than `actors trace`.

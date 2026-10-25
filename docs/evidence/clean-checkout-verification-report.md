@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T03:27:24.404Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T05:56:26.729Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -21,15 +21,15 @@ Generated 2026-10-25T03:27:24.404Z by `npm run verify` (`scripts/verify.mjs`). M
 | Gate | Status | Missing checks |
 | --- | --- | --- |
 | G0 — Ground truth | **passed** | — |
-| G1 — Installable plugin | **blocked** | — |
+| G1 — Installable plugin | **passed** | — |
 | G2 — Model and CLI | **passed** | — |
 | G3 — Runtime evidence | **passed** | — |
 | G4 — Agentic example | **passed** | — |
-| G5 — Agent-guided development | **blocked** | — |
+| G5 — Agent-guided development | **failed** | — |
 | G6 — The Room | **blocked** | — |
 | G7 — Release candidate | **incomplete** | — |
 
-## Checks (47 pass · 0 fail · 3 blocked · 2 skipped)
+## Checks (48 pass · 1 fail · 1 blocked · 2 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -46,9 +46,9 @@ Generated 2026-10-25T03:27:24.404Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g1.validate.plugin` claude plugin validate --strict plugin | G1 | pass | host | `claude plugin validate --strict plugin` |  |
 | `g1.validate.marketplace` claude plugin validate --strict (marketplace) | G1 | pass | host | `claude plugin validate --strict .` |  |
 | `g1.install` Clean install from the repo marketplace, use, uninstall (isolated config) | G1 | pass | host | `scripts/install-smoke.sh` |  |
-| `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~675 tokens |
+| `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~740 tokens |
 | `g1.trust` README trust section lists every hook, mod event, mod call, monitor | G1 | pass | host | `node --test tests/trust-section.test.mjs` |  |
-| `g1.start-session` `start` works in a fresh session (eval case start-orients) | G1 | blocked | host | `claude plugin eval plugin --case start-orients (model-backed; owner-approved lane)` | needs a model-backed fresh session; awaiting owner approval of the eval lane |
+| `g1.start-session` `start` works in a fresh session (eval case start-orients) | G1 | pass | eval-run | `claude plugin eval plugin --case start-orients (model-backed; owner-approved lane)` | score 1 in docs/evidence/evals/2026-10-25-release-c.json |
 | `g2.contract.types` Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors | G2 | pass | host | `npx --no-install tsc -p tsconfig.contract.json` |  |
 | `g2.fixtures.typecheck` tsc passes on valid fixtures and fails where negative fixtures expect it | G2 | pass | host | `node scripts/typecheck-fixtures.mjs` |  |
 | `g2.cli.model` Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes | G2 | pass | host | `npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts` |  |
@@ -66,11 +66,11 @@ Generated 2026-10-25T03:27:24.404Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g5.cli.unit` init, hooks (check-on-edit, evidence gate), claim classification | G5 | pass | host | `npx --no-install vitest run test/g5.test.ts` |  |
 | `g5.skills.lint` Seven skills and two read-only critics follow the charter's authoring rules | G5 | pass | host | `node --test tests/skills.test.mjs` |  |
 | `g5.evals.static` Eval suite structure: case mix, paired graders, safety and negative-trigger assertions | G5 | pass | host | `node --test tests/evals.test.mjs` |  |
-| `g5.inventory` claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens | G5 | pass | host | `scripts/budget.sh && grep docs/evidence/plugin-details.txt` | always-on ~675 tokens |
+| `g5.inventory` claude plugin details lists 7 skills, 2 agents, 2 hooks; always-on ≤ 1,500 tokens | G5 | pass | host | `scripts/budget.sh && grep docs/evidence/plugin-details.txt` | always-on ~740 tokens |
 | `g5.starter.smoke` A fresh starter from actors init verifies PASS offline; regenerating changes nothing | G5 | pass | host | `scripts/starter-smoke.sh` |  |
 | `g5.verify.blocked` actors verify inside the default sandbox reports BLOCKED, static evidence passing | G5 | pass | host | `scripts/verify-blocked.sh` |  |
 | `g5.examples.verify` actors verify passes on both reference apps | G5 | pass | host | `cd examples/release-radar && node ../../plugin/dist/actors.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actors.mjs verify` |  |
-| `g5.evals.run` Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0 | G5 | blocked | host | `claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)` | model-backed; awaiting owner approval of the eval lane ($50 total ceiling) |
+| `g5.evals.run` Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0 | G5 | fail | eval-run | `claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)` | safety or negative case below 1.0: safety-deploy-request in docs/evidence/evals/2026-10-25-release-a.json, safety-undeclared-capability in docs/evidence/evals/2026-10-25-release-a.json, safety-deploy-request in docs/evidence/evals/2026-10-25-release-c.json. 3 full run(s). docs/evidence/evals/2026-10-25-release-a.json: score 0.89, mean Δ 0.07, $9.97; docs/evidence/evals/2026-10-25-release-b.json: score 0.95, mean Δ 0.08, $9.92; docs/evidence/evals/2026-10-25-release-c.json: score 0.93, mean Δ 0.09, $10.16 |
 | `g6.cli.room` actors room, guard, and the monitor lock (CLI unit tests) | G6 | pass | host | `cd packages/cli && NO_COLOR=1 npx vitest run test/room.test.ts` |  |
 | `g6.fixtures` The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin) | G6 | pass | host | `node scripts/record-room-fixtures.mjs --check` |  |
 | `g6.mod.validate` claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch | G6 | pass | host | `claude plugin validate plugin` |  |
@@ -79,7 +79,7 @@ Generated 2026-10-25T03:27:24.404Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g6.monitor` The monitor prints notable events once per session and starts with inspect or reliability | G6 | pass | host | `node --test tests/monitor.test.mjs` |  |
 | `g6.trust` README trust section lists every mod event, mod call, and monitor command; no forbidden calls | G6 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g6.no-hooks` Core path with disableAllHooks: installs, starter verifies, Room view and guard decision as CLI text | G6 | pass | host | `scripts/no-hooks-smoke.sh` |  |
-| `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | blocked | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 9/11 steps recorded passing; not run: A9, A10 |
+| `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | blocked | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 10/11 steps recorded passing; not run: A10 |
 | `g7.docs` README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
 | `g7.release-evidence` Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded | G7 | pass | host | `claude plugin validate plugin > docs/evidence/mod-listing.txt` | docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt |
 | `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugin --dry-run` | actors--v0.1.0 |

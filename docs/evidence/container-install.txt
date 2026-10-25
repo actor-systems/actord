@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at bbee8ce Make evidence portable: no machine paths in snapshots or reports
+== repository at 4f37b15 Record release eval runs B and C
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
