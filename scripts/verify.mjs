@@ -8,6 +8,7 @@
 //   node scripts/verify.mjs --versions      print tool versions as JSON
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checks, gates } from "./checks.mjs";
@@ -30,9 +31,12 @@ export function sh(cmd, opts = {}) {
 }
 
 function clean(text) {
+  // Reports are committed evidence: strip colors, redact secret-looking values, and drop machine paths.
   return text
     .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")
-    .replace(/((?:TOKEN|SECRET|API_KEY|PASSWORD)[A-Z_]*\s*[=:]\s*)\S+/gi, "$1[redacted]");
+    .replace(/((?:TOKEN|SECRET|API_KEY|PASSWORD)[A-Z_]*\s*[=:]\s*)\S+/gi, "$1[redacted]")
+    .replaceAll(root, "<repo>")
+    .replaceAll(homedir(), "~");
 }
 
 function tail(text, lines = 40) {

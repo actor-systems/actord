@@ -41,7 +41,8 @@ describe("actors trace", () => {
     const target = fetchEffect.result.children.flatMap((c: { children: unknown[] }) => c.children).find((n: { messageId: string }) => n.messageId === significant);
     expect(target).toMatchObject({ type: "release.significant", outcome: "handled" });
     expect(target.effects[0]).toMatchObject({ effect: "notify.digest", outcome: "confirmed" });
-    expect(run("trace", significant, "--file", flow).out).toMatchSnapshot("trace text");
+    // The coverage line names the log by path; normalize the checkout location so the snapshot is portable.
+    expect(run("trace", significant, "--file", flow).out.replaceAll(repo, "<repo>")).toMatchSnapshot("trace text");
   });
 
   it("reports an unknown id as unknown, with its coverage, and exits 1", () => {

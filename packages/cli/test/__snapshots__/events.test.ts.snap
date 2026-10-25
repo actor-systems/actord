@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`actors trace > follows a known message from its root cause through effects to its consequences > trace text 1`] = `
-"trace 1i6hflvldpajf · correlation 2z8ig0agbnj3l · coverage: /Users/jaredmcfarland/Developer/actors-plugin/fixtures/events/release-radar-flow.ndjson (local only)
+"trace 1i6hflvldpajf · correlation 2z8ig0agbnj3l · coverage: <repo>/fixtures/events/release-radar-flow.ndjson (local only)
   @clock → FeedPoller:workers-sdk  feed.poll.due  ✓ handled (2z8ig0agbnj3l)
   └─ effect feed.fetch [poll-1792887998597]  ✓ confirmed
      └─ FeedPoller:workers-sdk → FeedPoller:workers-sdk  feed.fetched  ✓ handled (3eadtkrf02yzd)
