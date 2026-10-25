@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-25T00:46:08.927Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-25T00:57:22.222Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -24,8 +24,9 @@ Generated 2026-10-25T00:46:08.927Z by `npm run verify` (`scripts/verify.mjs`). M
 | G1 — Installable plugin | **blocked** | — |
 | G2 — Model and CLI | **passed** | — |
 | G3 — Runtime evidence | **passed** | — |
+| G4 — Agentic example | **passed** | — |
 
-## Checks (24 pass · 0 fail · 1 blocked · 0 skipped)
+## Checks (29 pass · 0 fail · 1 blocked · 0 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -51,7 +52,12 @@ Generated 2026-10-25T00:46:08.927Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g2.negative.unchanged` No file under fixtures/negative differs from the last commit | G2 | pass | host | `git diff --exit-code --stat HEAD -- fixtures/negative && test -z "$(git status --porcelain -- fixtures/negative)"` |  |
 | `g3.radar.typecheck` Release Radar typechecks (wrangler types + tsc) | G3 | pass | host | `npm run --silent typecheck -w release-radar` |  |
 | `g3.radar.check` actors check passes on Release Radar (declaration, config, exports, manifest) | G3 | pass | host | `node ../../plugin/dist/actors.mjs check` |  |
-| `g3.radar.runtime` Release Radar fault matrix passes in workerd | G3 | pass | host | `node scripts/run-example-tests.mjs examples/release-radar duplicate-input duplicate-delivery malformed unauthorized-route unknown-message out-of-order crash-before-mutation crash-after-mutation delivery-retry restart retry-exhausted scheduled-wake lost-ack-idempotent` |  |
+| `g3.radar.runtime` Release Radar fault matrix passes in workerd | G3 | pass | host | `node scripts/run-example-tests.mjs examples/release-radar` |  |
 | `g3.radar.trace` A real significant release traces from @clock to a confirmed notification | G3 | pass | host | `scripts/trace-smoke.sh` |  |
 | `g3.cli.events` actors events/trace on recorded logs: known, unknown, truncated, retries, follow | G3 | pass | host | `npx --no-install vitest run test/events.test.ts` |  |
+| `g4.desk.typecheck` Briefing Desk typechecks, including the live Anthropic adapter | G4 | pass | host | `npm run --silent typecheck -w briefing-desk` |  |
+| `g4.desk.check` actors check passes on Briefing Desk | G4 | pass | host | `node ../../plugin/dist/actors.mjs check` |  |
+| `g4.desk.runtime` Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt) | G4 | pass | host | `node scripts/run-example-tests.mjs examples/briefing-desk` |  |
+| `g4.desk.trace` The stale model result traces to its cancelled item | G4 | pass | host | `scripts/trace-stale-smoke.sh` |  |
+| `g4.runtime.probe` Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts | G4 | pass | host | `npx --no-install vitest run --config vitest.runtime.config.ts` |  |
 
