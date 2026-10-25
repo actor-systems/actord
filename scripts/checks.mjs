@@ -1,7 +1,7 @@
 // Registry of verification checks, grouped by charter gate. Each check returns
 // { status: pass|fail|blocked|skipped, reason?, output?, command?, ms?, evidenceSource? }.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 function command(id, gate, title, cmd, opts = {}) {
@@ -98,6 +98,11 @@ export const gates = [
     id: "G6",
     title: "The Room",
     requires: ["g6.cli.room", "g6.fixtures", "g6.mod.validate", "g6.mod.typecheck", "g6.mod.test", "g6.monitor", "g6.trust", "g6.no-hooks", "g6.acceptance"],
+  },
+  {
+    id: "G7",
+    title: "Release candidate",
+    requires: ["g7.docs", "g7.release-evidence", "g7.tag", "g7.clean-checkout", "g7.container"],
   },
 ];
 
@@ -280,6 +285,48 @@ export const checks = [
       if (failed.length) return { status: "fail", reason: `failed: ${failed.map((s) => s.id).join(", ")}` };
       const reason = `${steps.length - notRun.length}/${steps.length} steps recorded passing${notRun.length ? `; not run: ${notRun.map((s) => s.id).join(", ")}` : ""}`;
       return notRun.length ? { status: "blocked", reason, evidenceSource: "recorded-acceptance" } : { status: "pass", reason, evidenceSource: "recorded-acceptance" };
+    },
+  },
+  command("g7.docs", "G7", "README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow", "node --test tests/release.test.mjs"),
+  {
+    id: "g7.release-evidence",
+    gate: "G7",
+    title: "Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded",
+    command: "claude plugin validate plugin > docs/evidence/mod-listing.txt",
+    async run({ sh, root }) {
+      const r = sh("claude plugin validate plugin");
+      const listing = r.output.split("\n").filter((l) => /room\.tsx|types \.\/types|Validation passed/.test(l)).map((l) => l.trim());
+      if (r.code !== 0 || !listing.some((l) => / hooks: /.test(l)) || !listing.some((l) => / calls: /.test(l))) return { ...r, status: "fail", reason: "validate didn't list the mod's hooks and calls" };
+      writeFileSync(join(root, "docs/evidence/mod-listing.txt"), `# claude plugin validate plugin (Claude Code ${(sh("claude --version").output.trim().split(" ")[0])})\n${listing.join("\n")}\n`);
+      const details = existsSync(join(root, "docs/evidence/plugin-details.txt")) ? readFileSync(join(root, "docs/evidence/plugin-details.txt"), "utf8") : "";
+      if (!/Skills \(7\)/.test(details) || !/Agents \(2\)/.test(details)) return { ...r, status: "fail", reason: "docs/evidence/plugin-details.txt is missing or incomplete (g1.budget writes it)" };
+      return { ...r, status: "pass", reason: "docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt" };
+    },
+  },
+  command("g7.tag", "G7", "claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag", "claude plugin tag plugin --dry-run", {
+    classify: (r) => (r.code === 0 && /would create tag actors--v\d+\.\d+\.\d+/.test(r.output) ? { status: "pass", reason: /tag (actors--v[\d.]+)/.exec(r.output)[1] } : { status: "fail", reason: `exit ${r.code}` }),
+  }),
+  {
+    id: "g7.clean-checkout",
+    gate: "G7",
+    title: "A clean clone installs from the lockfile, rebuilds plugin/dist byte-for-byte, and passes npm run verify",
+    command: "scripts/clean-checkout.sh",
+    async run({ sh }) {
+      if (process.env.ACTORS_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };
+      const r = sh("ACTORS_NESTED_VERIFY=1 scripts/clean-checkout.sh", { timeoutMs: 1_200_000 });
+      return r.code === 0 ? { ...r, status: "pass" } : { ...r, status: "fail", reason: `exit ${r.code}` };
+    },
+  },
+  {
+    id: "g7.container",
+    gate: "G7",
+    title: "Clean-container install from the marketplace: install, starter verifies in workerd, uninstall",
+    command: "scripts/container-install.sh",
+    async run({ sh }) {
+      if (process.env.ACTORS_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };
+      if (sh("docker info >/dev/null 2>&1").code !== 0) return { status: "blocked", reason: "Docker isn't available here" };
+      const r = sh("scripts/container-install.sh", { timeoutMs: 900_000 });
+      return r.code === 0 ? { ...r, status: "pass" } : r.code === 4 ? { ...r, status: "blocked", reason: "the container image isn't available locally" } : { ...r, status: "fail", reason: `exit ${r.code}` };
     },
   },
 ];

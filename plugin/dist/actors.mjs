@@ -2061,7 +2061,7 @@ async function verify(cwd, opts) {
   };
   const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
   const verdict = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
-  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
+  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
   const outPath = resolve7(cwd, opts.out ?? join11(root, ".actors/evidence.json"));
   mkdirSync4(dirname6(outPath), { recursive: true });
   writeFileSync4(
@@ -2084,9 +2084,9 @@ async function verify(cwd, opts) {
 function statusMark(s) {
   return { "proved-locally": "\u2713", "stub-only": "~", "not-guaranteed": "\xB7", blocked: "\u2298", failing: "\u2717", untested: "?" }[s] ?? "?";
 }
-function systemName(root) {
+async function systemName(root) {
   const m = readJson(join11(root, "actors.manifest.json"));
-  return m?.system?.name ?? null;
+  return m?.system?.name ?? (await loadProject(root)).manifest?.system.name ?? null;
 }
 function test(cwd, opts) {
   const root = findProjectRoot(cwd);

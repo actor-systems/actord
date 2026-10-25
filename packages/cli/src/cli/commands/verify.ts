@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { type ClassifiedClaim, classifyClaims, readClaims, type TestResult } from "../../model/claims.ts";
 import { fingerprint } from "../../model/fingerprint.ts";
+import { loadProject } from "../../model/load.ts";
 import { SCHEMA_VERSION, VERSION } from "../../version.ts";
 import type { CommandResult } from "../output.ts";
 import { findProjectRoot, readJson } from "../project.ts";
@@ -130,7 +131,7 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   };
   const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
   const verdict: Evidence["verdict"] = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
-  const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
+  const evidence: Evidence = { projectRoot: root, generatedAt: new Date().toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, fingerprint: fingerprint(root) };
 
   const outPath = resolve(cwd, opts.out ?? join(root, ".actors/evidence.json"));
   mkdirSync(dirname(outPath), { recursive: true });
@@ -157,9 +158,9 @@ function statusMark(s: string): string {
   return { "proved-locally": "✓", "stub-only": "~", "not-guaranteed": "·", blocked: "⊘", failing: "✗", untested: "?" }[s] ?? "?";
 }
 
-function systemName(root: string): string | null {
+async function systemName(root: string): Promise<string | null> {
   const m = readJson<{ system?: { name?: string } }>(join(root, "actors.manifest.json"));
-  return m?.system?.name ?? null;
+  return m?.system?.name ?? (await loadProject(root)).manifest?.system.name ?? null;
 }
 
 export function test(cwd: string, opts: { profile?: string }): CommandResult<{ projectRoot: string | null; step: Step | null }> {

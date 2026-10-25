@@ -1,0 +1,40 @@
+# The offline verification lane: the same `npm run verify` as local development, on a clean checkout,
+# with no credentials and no model calls. It fails on any failing check; checks that need the owner
+# (model-backed evals, interactive acceptance) report "blocked" and don't fail the run.
+# Model-backed evals are a separate, manually approved lane (README, Evaluations).
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    # macOS: the sandbox checks (g0.sandbox, g5.verify.blocked) use Seatbelt through sandbox-runtime.
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CLAUDE_CODE_VERSION: 2.1.310
+      DISABLE_TELEMETRY: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+      - name: Build reproduces the committed plugin/dist
+        run: npm run --silent build -w actors-toolkit && git diff --exit-code -- plugin/dist plugin/hooks/effect-patterns.ts
+      - run: npm run verify
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-report
+          path: |
+            verify-report.json
+            docs/verification-report.md

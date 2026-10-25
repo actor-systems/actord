@@ -1,0 +1,63 @@
+== container: Linux aarch64, node v24.22.1, npm 11.19.1
+== repository at cf80848 G6: the Room (pane, effect guard, monitor) and its tests
+== install Claude Code 2.1.310 from npm
+2.1.310 (Claude Code)
+== marketplace add + install
+Adding marketplace…✔ Successfully added marketplace: actors-toolkit (declared in user settings)
+Installing plugin "actors@actors-toolkit"...✔ Successfully installed plugin: actors@actors-toolkit (scope: user)
+3 userConfig options not yet set — run /plugin configure actors@actors-toolkit in Claude Code, or pass --config KEY=VALUE.
+actors@actors-toolkit 0.1.0 enabled
+Actor-Native Cloudflare Toolkit (actors) 0.1.0
+  Description: Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.
+  Source: actors@actors-toolkit
+
+Component inventory
+  Skills (7)  design, evolve, implement, inspect, reliability, setup, start
+  Agents (2)  delivery-auditor, boundary-critic
+  Hooks (2)  PostToolUse, Stop  (harness-only — no model context cost)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+== launcher and doctor (no project, no credentials)
+0.1.0
+✓ Node.js 24.22.1
+✓ actors-toolkit 0.1.0 (plugin bundle)
+✓ Claude Code 2.1.310 (the Room and plugin evals are available)
+· Cloudflare credentials not checked: actors never reads them; wrangler owns authentication and deploys
+· No actor project here (no system.ts with a package.json in this directory or above)
+    fix: Create one with `actors init <dir>`, or study examples/release-radar and examples/briefing-desk.
+
+3 ok · 0 warn · 0 error
+== starter project from the installed plugin
+create 16 files
+== verify in workerd
+actors verify: system · PASS · evidence in .actors/evidence.json
+  ✓ typecheck no type errors
+  ✓ check     0 error(s), 1 warning(s)
+  ✓ tests     3 passed, 0 failed, 0 skipped (workerd)
+
+Claims: 3 proved locally · 0 stub only · 1 not guaranteed · 0 blocked · 0 failing · 0 untested
+  ✓ proved-locally end-to-end: A greeting request reaches the guestbook.
+  ✓ proved-locally dedupe-delivery: A redelivered message is recorded once.
+  ✓ proved-locally refuse-invalid: Invalid payloads are refused before any handler runs.
+  · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)
+evidence verdict pass {
+  provedLocally: 3,
+  stubOnly: 0,
+  notGuaranteed: 1,
+  blocked: 0,
+  failing: 0,
+  untested: 0
+}
+container-app · 2 actors · 2 routes · check ✓ · 6 changes vs none
+
+Topology
+    @ingress ──greeting.requested──▶ Greeter
+    Greeter ──greeting.recorded──▶ Guestbook
+  
+== uninstall
+✔ Successfully uninstalled plugin: actors (scope: user)
+✔ Successfully removed marketplace: actors-toolkit
+not installed
+container-install: ok
