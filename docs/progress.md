@@ -36,7 +36,7 @@ requests. Report: `docs/implementation-report.md`.
   runtime: background effects (fixed head-of-line blocking), orphan recovery, ctx.approve/deny;
   `packages/cli/test-runtime` probe tests; `actors.claims.json` per example drives required test tags.
 
-- **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok), 2 read-only critics, hooks
+- **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok at G5; ~740 after the eval fixes), 2 read-only critics, hooks
   (check-on-edit, evidence-gate), userConfig, `actors init/verify/test/hook`, claims classification,
   examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke, verify-blocked.
 
