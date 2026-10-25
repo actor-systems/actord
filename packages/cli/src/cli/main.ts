@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { VERSION } from "../version.ts";
 import { doctor } from "./commands/doctor.ts";
+import { events, followEvents, trace } from "./commands/events.ts";
 import { check, diff, graph } from "./commands/model.ts";
 import { type CommandResult, toJson, UsageError } from "./output.ts";
 
@@ -15,6 +16,10 @@ Commands:
   graph [--write]              Print the topology; --write updates actors.manifest.json
   diff [--base <ref>]          Classify architectural changes against the committed manifest
        [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
+  events [--follow] [--notable] Query or follow local structured events (.actors/events.ndjson);
+         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only
+         [--correlation C] [--file F]
+  trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
@@ -39,6 +44,9 @@ const commands: Record<string, Handler> = {
     check(cwd, { changed: [...((values.changed as string[] | undefined) ?? []), ...(values.changed !== undefined ? positionals : [])], format: str(values.format) }),
   graph: ({ cwd, values }) => graph(cwd, { write: values.write === true }),
   diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) }),
+  events: ({ cwd, values }) =>
+    events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
+  trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
 };
 
 export async function main(argv: string[], io = { out: process.stdout, err: process.stderr, cwd: process.cwd() }): Promise<number> {
@@ -54,6 +62,12 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
         write: { type: "boolean" },
         base: { type: "string" },
         "base-file": { type: "string" },
+        follow: { type: "boolean" },
+        notable: { type: "boolean" },
+        actor: { type: "string" },
+        kind: { type: "string" },
+        correlation: { type: "string" },
+        file: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -70,6 +84,16 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
     const handler = commands[name];
     if (!handler) throw new UsageError(`unknown command "${name}"`);
     const json = values.json === true;
+    if (name === "events" && values.follow === true) {
+      const filter = { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file), json };
+      return await followEvents(io.cwd, filter, io.out);
+    }
+    if (name === "events" && json) {
+      // NDJSON: one event per line, so the output can be piped and tailed like the log itself.
+      const r = events(io.cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) });
+      io.out.write(r.data.events.map((e) => `${JSON.stringify(e)}\n`).join(""));
+      return r.exitCode;
+    }
     const result = await handler({ positionals: rest, json, cwd: io.cwd, values: values as Args["values"] });
     io.out.write(json ? toJson(name, result.data) : result.text ? `${result.text}\n` : "");
     return result.exitCode;

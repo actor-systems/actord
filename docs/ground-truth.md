@@ -75,6 +75,12 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
     file using `import` fails with "Cannot use import statement outside a module".
 14. **zod 4.6.7 implements Standard Schema `validate` and Standard JSON Schema** (`~standard.jsonSchema`).
 
+15. **Vitest 5 hides console output from passing tests by default**; `silent: false` restores it and lets
+    `onConsoleLog` capture DO event lines (decision 0007).
+16. **An async `ctx.storage.transaction()` on a SQLite DO holds the input gate across awaits and rolls back
+    on throw**, while plain awaits on other DOs let calls interleave (probes; decision 0007).
+17. **An RPC method can't be named `name`**; the stub's own property shadows it.
+
 ## Assumptions not yet verified (each has an owner gate)
 
 | Assumption | How it will be settled | Gate |

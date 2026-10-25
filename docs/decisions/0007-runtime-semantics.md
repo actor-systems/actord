@@ -1,0 +1,49 @@
+# 0007 — Runtime semantics: transactional handlers, effects after commit, events as console JSON
+
+- **Date:** 2026-10-24 · **Gate:** G3 · **Status:** accepted · **Reversibility:** moderate (the guarantees
+  are documented and tested; the internals can change behind them)
+
+## Verified platform behavior (probes in `spikes/do-messaging/test/probe.test.ts`, workerd 1.20261019.1)
+- While one RPC method awaits an RPC to another DO, a second call to the same DO **interleaves**
+  (order `first:start, second, first:end`).
+- `ctx.storage.transaction(async …)` on a SQLite DO **rolls back** SQL writes when the closure throws, even
+  after an awaited RPC inside it. While it runs it **holds the input gate**: a concurrent call blocked until
+  it finished, and that call's write survived the rollback.
+- `ctx.id.name` is the name passed to `getByName`, so an actor knows its own key.
+- An RPC method named `name` collides with the stub's own property (`stub.name is not a function`).
+- Vitest 5 hides console output of passing tests unless `silent: false`. With it, `onConsoleLog` in the
+  Node process receives DO `console.log` lines.
+
+## Decisions
+1. **A native DO composes `actorRuntime(...)`; there's no base class.** The class exposes `receive(envelope)`
+   and forwards `alarm()`. Everything else stays native (`ctx.sql`, extra RPC methods for reads).
+2. **Each handler runs in one storage transaction.** Its writes, the inbox mark, its outgoing messages, and
+   its effect intents commit together. A throw anywhere, including an injected crash after the writes, rolls
+   back everything, and the sender retries. Because the transaction holds the input gate, handlers must
+   stay storage-only. Release Radar's `[crash-after-mutation]` test proves the rollback.
+3. **External work is an effect that runs after commit, outside any transaction**, so other messages
+   (cancel, control) interleave while it waits. An effect may declare `result: "<message>"`. Its outcome
+   then comes back as that message on a declared self-route: the await point is an explicit, traceable
+   message boundary. That's the charter's "one message at a time without blocking control events".
+4. **Effect honesty.** If an attempt fails without proof of non-delivery, it's retried (same key) only when
+   the effect declares `idempotency: "key"`. Otherwise it's reconciled if the adapter can, or recorded as
+   `in_doubt`, never reported as delivered. An adapter throws `EffectNotDelivered` for a request that
+   provably never reached the destination, and `EffectRejected` for a definitive refusal. `approval: "human"`
+   parks the effect until `decide(key, "approve" | "deny")`.
+5. **Delivery is at least once.** Outbox rows are delivered right after commit (the caller's call returns
+   once downstream receivers have committed) and retried from the alarm with exponential backoff, up to 6
+   attempts, then dead-lettered with `retry.exhausted`. A receiver whose handler throws returns `failed`,
+   not an exception. One drain runs at a time per instance.
+6. **Ids are derived from causal position** (FNV-1a of parent id, index, type, target), so a re-executed
+   handler produces the same outgoing ids and traces are reproducible.
+7. **Events are one JSON `console.log` line each** (`{"$actors":1,…}`), which is what Workers Logs ingests in
+   production. Locally, `actors-toolkit/vitest` appends them to `.actors/events.ndjson`, emptied at the start
+   of each run. Payloads aren't logged, only their top-level keys.
+8. **Test seams are explicit and inert in production.** `injectFault` (before-handler, after-handler,
+   deliver), `overrideEffect`, `settle` (deliver everything, fast-forwarding backoff) and `tick` (a
+   distinct scheduled wake) live in `actors-toolkit/testing` and use a global that only tests set.
+
+## Not guaranteed (and documented as such)
+Exactly-once external effects; global or cross-sender ordering; ordering across retries; cross-actor
+transactions; dedupe beyond inbox retention (7 days by default); routes as a security boundary (any code
+with the binding can call `receive`).

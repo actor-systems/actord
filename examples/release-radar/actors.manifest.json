@@ -1,0 +1,311 @@
+{
+  "$comment": "Derived from system.ts by `actors graph --write`. Do not edit; `actors check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "release-radar",
+    "description": "Polls release feeds, records what it has seen, and notifies the owner once per significant release"
+  },
+  "actors": [
+    {
+      "binding": "DIGEST_WRITER",
+      "budget": null,
+      "effects": [
+        "notify.digest"
+      ],
+      "justification": [
+        "isolation",
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "DigestWriter",
+      "purpose": "Records significant findings and notifies the owner once per finding",
+      "receives": [
+        "release.significant"
+      ],
+      "schedule": null,
+      "sends": []
+    },
+    {
+      "binding": "FEED_POLLER",
+      "budget": null,
+      "effects": [
+        "feed.fetch"
+      ],
+      "justification": [
+        "identity",
+        "scheduling"
+      ],
+      "kind": "deterministic",
+      "name": "FeedPoller",
+      "purpose": "Watches one feed (one instance per feed id) and reports every item it sees",
+      "receives": [
+        "feed.fetched",
+        "feed.poll.due",
+        "feed.watch"
+      ],
+      "schedule": {
+        "every": "15m",
+        "everyMs": 900000,
+        "message": "feed.poll.due"
+      },
+      "sends": [
+        "feed.fetched",
+        "release.observed"
+      ]
+    },
+    {
+      "binding": "RELEASE_LEDGER",
+      "budget": null,
+      "effects": [],
+      "justification": [
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "ReleaseLedger",
+      "purpose": "Owns the record of every release seen; deduplicates and classifies new ones by rule",
+      "receives": [
+        "release.observed"
+      ],
+      "schedule": null,
+      "sends": [
+        "release.significant"
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "description": "Outcome of the feed.fetch effect, delivered back to the poller",
+      "name": "feed.fetched",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "confirmed",
+              "failed",
+              "in_doubt"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "itemId": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "publishedAt": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "format": "uri",
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "itemId",
+                    "title",
+                    "version",
+                    "url",
+                    "publishedAt"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "key",
+          "status"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The schedule says it's time to poll",
+      "name": "feed.poll.due",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Start watching a feed (from the Worker's HTTP entry point)",
+      "name": "feed.watch",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "feedId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedId",
+          "url"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "A feed item was seen (possibly again)",
+      "name": "release.observed",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "feedId": {
+            "type": "string"
+          },
+          "itemId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "publishedAt": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "title",
+          "version",
+          "url",
+          "publishedAt",
+          "feedId"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "A newly seen release matches a significance rule",
+      "name": "release.significant",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "feedId": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "major",
+              "security"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedId",
+          "itemId",
+          "title",
+          "version",
+          "severity",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@clock",
+      "message": "feed.poll.due",
+      "to": "FeedPoller"
+    },
+    {
+      "from": "@ingress",
+      "message": "feed.watch",
+      "to": "FeedPoller"
+    },
+    {
+      "from": "FeedPoller",
+      "message": "feed.fetched",
+      "to": "FeedPoller"
+    },
+    {
+      "from": "FeedPoller",
+      "message": "release.observed",
+      "to": "ReleaseLedger"
+    },
+    {
+      "from": "ReleaseLedger",
+      "message": "release.significant",
+      "to": "DigestWriter"
+    }
+  ],
+  "effects": [
+    {
+      "approval": "none",
+      "description": "Read a feed over HTTP (a read: safe to retry)",
+      "idempotency": "key",
+      "name": "feed.fetch",
+      "reconcile": false,
+      "result": "feed.fetched"
+    },
+    {
+      "approval": "none",
+      "description": "Send one finding to the owner through the notification gateway, deduplicated by item id",
+      "idempotency": "key",
+      "name": "notify.digest",
+      "reconcile": false,
+      "result": null
+    }
+  ]
+}

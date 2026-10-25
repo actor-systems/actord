@@ -1,0 +1,22 @@
+{
+  "name": "release-radar",
+  "private": true,
+  "type": "module",
+  "description": "Reference app: a scheduled release monitor built from three communicating Durable Object actors",
+  "scripts": {
+    "types": "wrangler types",
+    "typecheck": "wrangler types >/dev/null && tsc --noEmit",
+    "test": "vitest run",
+    "check": "actors check",
+    "verify": "npm run typecheck && actors check && vitest run",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "actors-toolkit": "0.1.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "wrangler": "4.152.0",
+    "zod": "4.6.7"
+  }
+}

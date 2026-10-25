@@ -8,5 +8,11 @@
     "outDir": "dist/types",
     "rootDir": "src"
   },
-  "include": ["src/system.ts"]
+  "include": [
+    "src/system.ts",
+    "src/runtime/index.ts",
+    "src/testing.ts",
+    "src/vitest.ts",
+    "src/cloudflare-test.d.ts"
+  ]
 }

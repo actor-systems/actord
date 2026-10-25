@@ -70,6 +70,27 @@ export const gates = [
     title: "Model and CLI",
     requires: ["g2.contract.types", "g2.fixtures.typecheck", "g2.cli.model", "g2.negative.unchanged"],
   },
+  {
+    id: "G3",
+    title: "Runtime evidence",
+    requires: ["g3.radar.typecheck", "g3.radar.check", "g3.radar.runtime", "g3.radar.trace", "g3.cli.events"],
+  },
+];
+
+const RADAR_TAGS = [
+  "duplicate-input",
+  "duplicate-delivery",
+  "malformed",
+  "unauthorized-route",
+  "unknown-message",
+  "out-of-order",
+  "crash-before-mutation",
+  "crash-after-mutation",
+  "delivery-retry",
+  "restart",
+  "retry-exhausted",
+  "scheduled-wake",
+  "lost-ack-idempotent",
 ];
 
 export const checks = [
@@ -150,4 +171,9 @@ export const checks = [
   command("g2.fixtures.typecheck", "G2", "tsc passes on valid fixtures and fails where negative fixtures expect it", "node scripts/typecheck-fixtures.mjs"),
   command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes", "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts", { cwd: "packages/cli" }),
   command("g2.negative.unchanged", "G2", "No file under fixtures/negative differs from the last commit", "git diff --exit-code --stat HEAD -- fixtures/negative && test -z \"$(git status --porcelain -- fixtures/negative)\""),
+  command("g3.radar.typecheck", "G3", "Release Radar typechecks (wrangler types + tsc)", "npm run --silent typecheck -w release-radar"),
+  command("g3.radar.check", "G3", "actors check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugin/dist/actors.mjs check", { cwd: "examples/release-radar" }),
+  command("g3.radar.runtime", "G3", "Release Radar fault matrix passes in workerd", `node scripts/run-example-tests.mjs examples/release-radar ${RADAR_TAGS.join(" ")}`),
+  command("g3.radar.trace", "G3", "A real significant release traces from @clock to a confirmed notification", "scripts/trace-smoke.sh"),
+  command("g3.cli.events", "G3", "actors events/trace on recorded logs: known, unknown, truncated, retries, follow", "npx --no-install vitest run test/events.test.ts", { cwd: "packages/cli" }),
 ];

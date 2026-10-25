@@ -54,9 +54,28 @@ Run `/actors:start` in a session. It runs `actors doctor`, explains what it foun
 | `actors graph [--write] [--json]` | Prints the topology; `--write` updates the derived `actors.manifest.json` |
 | `actors diff [--base <ref>] [--base-file <path>] [--json]` | Classifies architectural changes against the manifest committed at `<ref>` (default `HEAD`): compatible, breaking, or risky; approval-required; irreversible. Ends with a deploy plan, never a deploy |
 
+| `actors events [--follow] [--notable] [--json]` | Queries or follows the local structured event log (`.actors/events.ndjson`, written by tests); `--json` prints NDJSON, `--notable` keeps faults only |
+| `actors trace <message-id> [--json]` | Follows a message's causes and consequences, with outcomes, retries, and effects; says *unknown* where recorded coverage ends and never invents production history |
+
 Every command offers `--json` with a `schemaVersion` and a `volatile` list naming the machine-dependent
 fields. Exit status: 0 ok, 1 hard errors, 2 usage, 3 not in an actor project. Read-only commands never
 contact Cloudflare.
+
+## The runtime helper (`actors-toolkit/runtime`)
+
+Actors stay native Durable Object classes that compose `actorRuntime(...)`. What it guarantees, each
+backed by tests in workerd (see `examples/release-radar/tests/`):
+
+| Guarantee | How |
+| --- | --- |
+| Refuses malformed, unauthorized-route, wrong-version, and invalid-payload messages | Envelope checks against `system.ts`; Standard Schema validation |
+| Handles a message id at most once per actor | SQLite inbox, retained 7 days |
+| A handler's writes, its outgoing messages, and its effect intents commit together or not at all | `ctx.storage.transaction()` around each handler |
+| Delivers at least once, then dead-letters | SQLite outbox; alarm retries with backoff, up to 6 attempts |
+| Never reports an unacknowledged external effect as delivered | Retries only with an idempotency key; otherwise `in_doubt` |
+
+Not guaranteed: exactly-once external effects, global ordering, cross-actor transactions, or a route as a
+security boundary. Decision 0007 has the details and the platform behavior they rest on.
 
 ## Trust and safety
 

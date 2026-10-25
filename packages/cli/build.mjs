@@ -1,6 +1,6 @@
 // Bundles the CLI into one dependency-free ESM file for npm (dist/cli.mjs) and for the plugin
 // (plugin/dist/actors.mjs). The plugin copy is what ships; tests run against it.
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -23,18 +23,17 @@ await build({
   logLevel: "warning",
 });
 // Library entry points for projects: plain ESM (Node won't strip types under node_modules) plus .d.ts.
-await build({
-  entryPoints: { system: join(here, "src/system.ts") },
-  outdir: join(here, "dist"),
-  outExtension: { ".js": ".mjs" },
-  bundle: true,
-  platform: "neutral",
-  format: "esm",
-  target: "es2022",
-  legalComments: "none",
-  logLevel: "warning",
-});
+const library = { outdir: join(here, "dist"), outExtension: { ".js": ".mjs" }, bundle: true, format: "esm", target: "es2022", legalComments: "none", logLevel: "warning" };
+await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), runtime: join(here, "src/runtime/index.ts") }, platform: "neutral" });
+await build({ ...library, entryPoints: { testing: join(here, "src/testing.ts") }, platform: "neutral", external: ["cloudflare:test"] });
+await build({ ...library, entryPoints: { vitest: join(here, "src/vitest.ts") }, platform: "node" });
 execFileSync("npx", ["--no-install", "tsc", "-p", join(here, "tsconfig.build.json")], { cwd: here, stdio: "inherit" });
+// Declarations keep the source's relative ".ts" specifiers; projects resolve ".js" to ".d.ts" reliably.
+for (const file of readdirSync(join(here, "dist/types"), { recursive: true })) {
+  if (!String(file).endsWith(".d.ts")) continue;
+  const path = join(here, "dist/types", String(file));
+  writeFileSync(path, readFileSync(path, "utf8").replace(/(from\s+["']\.{1,2}\/[^"']+)\.ts(["'])/g, "$1.js$2"));
+}
 mkdirSync(pluginDist, { recursive: true });
 copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actors.mjs"));
 writeFileSync(join(pluginDist, "VERSION"), `${pkg.version}\n`);

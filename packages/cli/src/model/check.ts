@@ -74,6 +74,12 @@ export function checkProject(project: Project): Diagnostic[] {
       add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
   }
   for (const e of m.effects) {
+    if (e.result) {
+      if (!messages.has(e.result)) add("error", "EFFECT_RESULT_UNKNOWN_MESSAGE", e.name, `${e.name} delivers its outcome as ${e.result}, which isn't a declared message`);
+      for (const a of m.actors.filter((a) => a.effects.includes(e.name)))
+        if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
+          add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
+    }
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)
       add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
@@ -124,8 +130,13 @@ function checkManifest(project: Project, m: Manifest, add: (s: Severity, c: stri
 
 /** Elementary cycles among actors (excluding self-loops through @clock), each reported once from its smallest name. */
 function findCycles(m: Manifest): string[][] {
+  // A self-route carrying an effect's declared result is the designed way back from an external wait.
+  const results = new Set(m.effects.map((e) => e.result).filter(Boolean));
   const edges = new Map<string, Set<string>>();
-  for (const r of m.routes) if (!r.from.startsWith("@")) edges.set(r.from, (edges.get(r.from) ?? new Set()).add(r.to));
+  for (const r of m.routes) {
+    if (r.from.startsWith("@") || (r.from === r.to && results.has(r.message))) continue;
+    edges.set(r.from, (edges.get(r.from) ?? new Set()).add(r.to));
+  }
   const cycles: string[][] = [];
   const names = [...edges.keys()].sort();
   for (const start of names) {

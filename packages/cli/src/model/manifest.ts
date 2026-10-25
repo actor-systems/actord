@@ -39,6 +39,7 @@ export interface ManifestEffect {
   idempotency: string;
   reconcile: boolean;
   approval: string;
+  result: string | null;
 }
 
 export interface Manifest {
@@ -82,6 +83,7 @@ export function normalize(system: System): Manifest {
       idempotency: e.idempotency,
       reconcile: e.reconcile ?? false,
       approval: e.approval ?? "none",
+      result: e.result ?? null,
     }))
     .sort(byName);
   return {

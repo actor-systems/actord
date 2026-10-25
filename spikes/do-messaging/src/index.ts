@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+export { Gate, Slow, Tx } from "./probe.ts";
 
 export interface Envelope {
   id: string;

@@ -70,6 +70,11 @@ export interface EffectSpec {
   readonly reconcile?: boolean;
   /** "human": the effect goes through an approval gateway before it runs. */
   readonly approval?: "human" | "none";
+  /**
+   * A message delivered back to the requesting actor with the outcome ({ key, status, value | error }),
+   * on a route from the actor to itself. This makes the external wait an explicit message boundary.
+   */
+  readonly result?: string;
 }
 
 /** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron). */
@@ -151,9 +156,11 @@ export type MessageName<S extends AnySystem> = Extract<keyof S["messages"], stri
 export type EffectName<S extends AnySystem> = Extract<keyof NonNullable<S["effects"]>, string>;
 
 /** Messages an actor receives: those on a route whose `to` is the actor. */
-export type MessagesTo<S extends AnySystem, A extends string> = Extract<S["routes"][number], { to: A }>["message"];
+export type MessagesTo<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { to: A }>["message"], MessageName<S>>;
 /** Messages an actor may send: those on a route whose `from` is the actor. */
-export type MessagesFrom<S extends AnySystem, A extends string> = Extract<S["routes"][number], { from: A }>["message"];
+export type MessagesFrom<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: A }>["message"], MessageName<S>>;
+/** Messages the Worker may send to actor A from its own code (route sender "@ingress"). */
+export type IngressMessages<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: "@ingress"; to: A }>["message"], MessageName<S>>;
 /** The receivers of message M from actor A. */
 export type Receivers<S extends AnySystem, A extends string, M extends string> = Extract<S["routes"][number], { from: A; message: M }>["to"];
 

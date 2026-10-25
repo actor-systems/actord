@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "release-radar",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "FEED_POLLER", "class_name": "FeedPoller" },
+      { "name": "RELEASE_LEDGER", "class_name": "ReleaseLedger" },
+      { "name": "DIGEST_WRITER", "class_name": "DigestWriter" }
+    ]
+  },
+  "exports": {
+    "FeedPoller": { "type": "durable-object", "storage": "sqlite" },
+    "ReleaseLedger": { "type": "durable-object", "storage": "sqlite" },
+    "DigestWriter": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

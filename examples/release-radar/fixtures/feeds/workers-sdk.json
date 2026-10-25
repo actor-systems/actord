@@ -1,0 +1,8 @@
+{
+  "items": [
+    { "itemId": "wsdk-4.150.0", "title": "wrangler 4.150.0", "version": "4.150.0", "url": "https://example.test/releases/4.150.0", "publishedAt": "2026-10-01T10:00:00Z" },
+    { "itemId": "wsdk-4.151.0-rc.1", "title": "wrangler 4.151.0-rc.1", "version": "4.151.0-rc.1", "url": "https://example.test/releases/4.151.0-rc.1", "publishedAt": "2026-10-08T10:00:00Z" },
+    { "itemId": "wsdk-4.151.1", "title": "wrangler 4.151.1: security fix for CVE-2026-1234", "version": "4.151.1", "url": "https://example.test/releases/4.151.1", "publishedAt": "2026-10-15T10:00:00Z" },
+    { "itemId": "wsdk-5.0.0", "title": "wrangler 5.0.0", "version": "5.0.0", "url": "https://example.test/releases/5.0.0", "publishedAt": "2026-10-22T10:00:00Z" }
+  ]
+}

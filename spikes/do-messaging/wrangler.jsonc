@@ -6,11 +6,17 @@
   "durable_objects": {
     "bindings": [
       { "name": "SENDER", "class_name": "Sender" },
-      { "name": "RECEIVER", "class_name": "Receiver" }
+      { "name": "RECEIVER", "class_name": "Receiver" },
+      { "name": "GATE", "class_name": "Gate" },
+      { "name": "SLOW", "class_name": "Slow" },
+      { "name": "TX", "class_name": "Tx" }
     ]
   },
   "exports": {
     "Sender": { "type": "durable-object", "storage": "sqlite" },
-    "Receiver": { "type": "durable-object", "storage": "sqlite" }
+    "Receiver": { "type": "durable-object", "storage": "sqlite" },
+    "Gate": { "type": "durable-object", "storage": "sqlite" },
+    "Slow": { "type": "durable-object", "storage": "sqlite" },
+    "Tx": { "type": "durable-object", "storage": "sqlite" }
   }
 }

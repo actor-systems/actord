@@ -287,9 +287,164 @@ function icon(s) {
   return { ok: "\u2713", warn: "!", error: "\u2717", info: "\xB7" }[s];
 }
 
+// src/cli/commands/events.ts
+import { closeSync, existsSync as existsSync5, openSync, readSync, statSync as statSync2 } from "node:fs";
+import { join as join5, relative as relative2, resolve as resolve4 } from "node:path";
+
+// src/model/events.ts
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+var EVENTS_FILE = ".actors/events.ndjson";
+var NOTABLE = /* @__PURE__ */ new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"]);
+function readEvents(file) {
+  if (!existsSync3(file)) return null;
+  return parseEvents(readFileSync3(file, "utf8"));
+}
+function parseEvents(text) {
+  const events2 = [];
+  let unparseable = 0;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e.$actors === 1 && typeof e.kind === "string") events2.push(e);
+      else unparseable++;
+    } catch {
+      unparseable++;
+    }
+  }
+  return { events: events2, unparseable };
+}
+function formatEvent(e) {
+  const route = e.from && e.to ? `${e.from} \u2192 ${e.to}` : e.actor;
+  const what = e.effect ? `effect ${e.effect}${e.effectKey ? ` [${e.effectKey}]` : ""}` : `${e.type ?? ""}${e.version ? `@${e.version}` : ""}`;
+  const attempt = e.attempt && e.attempt > 1 ? ` attempt ${e.attempt}` : "";
+  return `${e.kind.padEnd(16)} ${what.padEnd(28)} ${route}${e.messageId ? ` (${e.messageId})` : ""}${attempt}${e.reason ? `: ${e.reason}` : ""}`;
+}
+function buildTrace(log, id) {
+  const byMessage = /* @__PURE__ */ new Map();
+  const children = /* @__PURE__ */ new Map();
+  const effectsBy = /* @__PURE__ */ new Map();
+  for (const e of log.events) {
+    if (e.messageId && e.kind !== "scheduled" && !(e.kind.startsWith("effect.") && !e.messageId)) {
+      byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
+      if (e.causationId) children.set(e.causationId, (children.get(e.causationId) ?? /* @__PURE__ */ new Set()).add(e.messageId));
+    }
+    if (e.effect && e.effectKey && e.kind.startsWith("effect.")) {
+      const k = `${e.effect}:${e.effectKey}`;
+      effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
+    }
+    if (e.kind === "retry.scheduled" && e.effect && e.effectKey) {
+      const k = `${e.effect}:${e.effectKey}`;
+      effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
+    }
+  }
+  if (!byMessage.has(id)) return { found: false, target: id, correlationId: null, rootCauseUnknown: false, root: null };
+  let rootId = id;
+  let rootCauseUnknown = false;
+  const seen = /* @__PURE__ */ new Set();
+  for (; ; ) {
+    seen.add(rootId);
+    const cause = byMessage.get(rootId)?.find((e) => e.causationId)?.causationId ?? null;
+    if (!cause) break;
+    if (!byMessage.has(cause) || seen.has(cause)) {
+      rootCauseUnknown = !byMessage.has(cause);
+      break;
+    }
+    rootId = cause;
+  }
+  const resultOf = /* @__PURE__ */ new Map();
+  for (const [mid, evs] of byMessage) {
+    const sent = evs.find((e) => e.kind === "sent" && e.effect && e.effectKey);
+    if (sent) resultOf.set(`${sent.effect}:${sent.effectKey}`, mid);
+  }
+  const resultIds = new Set(resultOf.values());
+  const visited = /* @__PURE__ */ new Set();
+  const node = (mid) => {
+    visited.add(mid);
+    const evs = byMessage.get(mid) ?? [];
+    const first = evs.find((e) => e.type) ?? evs[0];
+    const kinds = new Set(evs.map((e) => e.kind));
+    const outcome = kinds.has("handled") ? "handled" : kinds.has("rejected") || kinds.has("undeliverable") ? kinds.has("rejected") ? "rejected" : "undeliverable" : kinds.has("retry.exhausted") ? "retry.exhausted" : kinds.has("duplicate") ? "duplicate" : kinds.has("failed") ? "failed" : kinds.has("sent") || kinds.has("retry.scheduled") ? "in-flight" : "unknown";
+    const effects = [];
+    const effectKeys = /* @__PURE__ */ new Set();
+    for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
+    for (const k of effectKeys) {
+      const evs2 = effectsBy.get(k) ?? [];
+      const last = [...evs2].reverse().find((e) => e.kind !== "effect.requested" && e.kind !== "retry.scheduled");
+      const [effect, ...rest] = k.split(":");
+      const rid = resultOf.get(k);
+      effects.push({
+        effect,
+        key: rest.join(":"),
+        outcome: last ? last.kind.replace("effect.", "") : "pending",
+        attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
+        reason: last?.reason ?? null,
+        result: rid && !visited.has(rid) ? node(rid) : null
+      });
+    }
+    const kids = [...children.get(mid) ?? []].filter((c) => !visited.has(c) && !resultIds.has(c));
+    return {
+      messageId: mid,
+      type: first?.type ?? null,
+      from: first?.from ?? null,
+      to: first?.to ?? null,
+      outcome,
+      attempts: Math.max(1, ...evs.map((e) => e.attempt ?? 1)),
+      failures: [...new Set(evs.filter((e) => e.kind === "failed" || e.kind === "retry.scheduled").map((e) => e.reason ?? e.kind))],
+      rejectedReason: evs.find((e) => e.kind === "rejected" || e.kind === "undeliverable")?.reason ?? null,
+      notes: evs.filter((e) => e.kind === "note").map((e) => e.reason ?? ""),
+      effects,
+      children: kids.sort().map((c) => node(c))
+    };
+  };
+  const root = node(rootId);
+  return {
+    found: true,
+    target: id,
+    correlationId: byMessage.get(id)?.find((e) => e.correlationId)?.correlationId ?? null,
+    rootCauseUnknown,
+    root
+  };
+}
+var MARK = { handled: "\u2713", duplicate: "\u2261", rejected: "\u2717", failed: "\u2717", undeliverable: "\u2717", "retry.exhausted": "\u2717", "in-flight": "\u2026", unknown: "?" };
+function renderTrace(t, source) {
+  if (!t.found || !t.root) {
+    return `unknown: no recorded event has id ${t.target}.
+coverage: ${source} (local test and dev runs only; production history isn't available here).`;
+  }
+  const lines = [`trace ${t.target} \xB7 correlation ${t.correlationId ?? "?"} \xB7 coverage: ${source} (local only)`];
+  if (t.rootCauseUnknown) lines.push("  ? earlier cause unknown: outside recorded coverage");
+  const walk = (n, prefix, last, top) => {
+    const branch = top ? "" : last ? "\u2514\u2500 " : "\u251C\u2500 ";
+    const target = n.messageId === t.target ? "  \u25C0 target" : "";
+    const retry = n.attempts > 1 ? ` after ${n.attempts - 1} retr${n.attempts === 2 ? "y" : "ies"}` : "";
+    const why = n.rejectedReason ? `: ${n.rejectedReason}` : "";
+    lines.push(`${prefix}${branch}${n.from ?? "?"} \u2192 ${n.to ?? "?"}  ${n.type ?? "?"}  ${MARK[n.outcome]} ${n.outcome}${why}${retry} (${n.messageId})${target}`);
+    const inner = prefix + (top ? "" : last ? "   " : "\u2502  ");
+    for (const f of n.failures) lines.push(`${inner}  ! ${f}`);
+    for (const note of n.notes) lines.push(`${inner}  \xB7 ${note}`);
+    const items = [
+      ...n.effects.map((e) => ({ kind: "effect", e })),
+      ...n.children.map((c) => ({ kind: "node", n: c }))
+    ];
+    items.forEach((it, i) => {
+      const isLast = i === items.length - 1;
+      if (it.kind === "node") walk(it.n, inner, isLast, false);
+      else {
+        const e = it.e;
+        const mark = e.outcome === "confirmed" ? "\u2713" : e.outcome === "pending" || e.outcome === "awaiting_approval" ? "\u2026" : "\u2717";
+        lines.push(`${inner}${isLast ? "\u2514\u2500 " : "\u251C\u2500 "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
+        if (e.result) walk(e.result, inner + (isLast ? "   " : "\u2502  "), true, false);
+      }
+    });
+  };
+  walk(t.root, "  ", true, true);
+  return lines.join("\n");
+}
+
 // src/cli/commands/model.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { readFileSync as readFileSync4, writeFileSync } from "node:fs";
+import { readFileSync as readFileSync5, writeFileSync } from "node:fs";
 import { join as join4, relative, resolve as resolve3 } from "node:path";
 
 // src/cli/output.ts
@@ -351,7 +506,8 @@ function normalize(system) {
     description: e.description ?? "",
     idempotency: e.idempotency,
     reconcile: e.reconcile ?? false,
-    approval: e.approval ?? "none"
+    approval: e.approval ?? "none",
+    result: e.result ?? null
   })).sort(byName);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
@@ -434,6 +590,12 @@ function checkProject(project) {
       add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
   }
   for (const e of m.effects) {
+    if (e.result) {
+      if (!messages.has(e.result)) add("error", "EFFECT_RESULT_UNKNOWN_MESSAGE", e.name, `${e.name} delivers its outcome as ${e.result}, which isn't a declared message`);
+      for (const a of m.actors.filter((a2) => a2.effects.includes(e.name)))
+        if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
+          add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
+    }
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)
       add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
@@ -479,8 +641,12 @@ function checkManifest(project, m, add) {
   }
 }
 function findCycles(m) {
+  const results = new Set(m.effects.map((e) => e.result).filter(Boolean));
   const edges = /* @__PURE__ */ new Map();
-  for (const r of m.routes) if (!r.from.startsWith("@")) edges.set(r.from, (edges.get(r.from) ?? /* @__PURE__ */ new Set()).add(r.to));
+  for (const r of m.routes) {
+    if (r.from.startsWith("@") || r.from === r.to && results.has(r.message)) continue;
+    edges.set(r.from, (edges.get(r.from) ?? /* @__PURE__ */ new Set()).add(r.to));
+  }
   const cycles = [];
   const names = [...edges.keys()].sort();
   for (const start of names) {
@@ -670,7 +836,7 @@ function plan(changes, head) {
 }
 
 // src/model/load.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3, statSync } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync4, statSync } from "node:fs";
 import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 import { pathToFileURL } from "node:url";
 async function loadProject(root) {
@@ -699,7 +865,7 @@ async function loadProject(root) {
     project.loadError = explainLoadError(err);
   }
   for (const file of ["wrangler.jsonc", "wrangler.json"]) {
-    if (existsSync3(join3(root, file))) {
+    if (existsSync4(join3(root, file))) {
       project.configFile = file;
       project.config = readJsonc(join3(root, file));
       break;
@@ -710,8 +876,8 @@ async function loadProject(root) {
     project.entryExports = collectExports(resolve2(root, project.config.main), /* @__PURE__ */ new Set());
   }
   const manifestPath = join3(root, MANIFEST_FILE);
-  if (existsSync3(manifestPath)) {
-    project.committedManifestRaw = readFileSync3(manifestPath, "utf8");
+  if (existsSync4(manifestPath)) {
+    project.committedManifestRaw = readFileSync4(manifestPath, "utf8");
     project.committedManifest = readJson(manifestPath);
   }
   return project;
@@ -727,9 +893,9 @@ function explainLoadError(err) {
 var EXPORT_RE = /export\s+(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]*)\}(?:\s*from\s*["']([^"']+)["'])?|export\s*\*\s*from\s*["']([^"']+)["']/g;
 function collectExports(file, seen) {
   const names = /* @__PURE__ */ new Set();
-  if (seen.has(file) || !existsSync3(file) || !statSync(file).isFile()) return names;
+  if (seen.has(file) || !existsSync4(file) || !statSync(file).isFile()) return names;
   seen.add(file);
-  const source = readFileSync3(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  const source = readFileSync4(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   for (const m of source.matchAll(EXPORT_RE)) {
     if (m[1]) names.add(m[1]);
     if (m[2] !== void 0) {
@@ -751,7 +917,7 @@ function resolveRelative(dir, spec) {
   if (!spec.startsWith(".")) return null;
   const base = resolve2(dir, spec);
   for (const candidate of [base, base.replace(/\.js$/, ".ts"), `${base}.ts`, join3(base, "index.ts")]) {
-    if (existsSync3(candidate) && statSync(candidate).isFile()) return candidate;
+    if (existsSync4(candidate) && statSync(candidate).isFile()) return candidate;
   }
   return null;
 }
@@ -837,7 +1003,7 @@ async function diff(cwd, opts) {
   let base = EMPTY_MANIFEST;
   let source = "none";
   if (opts.baseFile) {
-    base = JSON.parse(readFileSync4(resolve3(cwd, opts.baseFile), "utf8"));
+    base = JSON.parse(readFileSync5(resolve3(cwd, opts.baseFile), "utf8"));
     source = `file:${opts.baseFile}`;
   } else {
     const ref = opts.base ?? "HEAD";
@@ -872,6 +1038,82 @@ function renderDiff(d) {
   return lines.join("\n");
 }
 
+// src/cli/commands/events.ts
+function eventsPath(cwd, file) {
+  if (file) return { path: resolve4(cwd, file), root: findProjectRoot(cwd) };
+  const root = findProjectRoot(cwd);
+  return { path: root ? join5(root, EVENTS_FILE) : null, root };
+}
+function keep(e, f) {
+  if (f.notable && !NOTABLE.has(e.kind)) return false;
+  if (f.actor && !e.actor.startsWith(f.actor) && !(e.to ?? "").startsWith(f.actor)) return false;
+  if (f.kind && e.kind !== f.kind) return false;
+  if (f.correlation && e.correlationId !== f.correlation) return false;
+  return true;
+}
+var NO_EVENTS = "No local events yet. Run the tests (they record through actors-toolkit/vitest) to produce .actors/events.ndjson. Production history isn't available to this command.";
+function events(cwd, opts) {
+  const { path, root } = eventsPath(cwd, opts.file);
+  if (!path) return { data: { projectRoot: null, file: null, count: 0, unparseable: 0, events: [] }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  const log = readEvents(path);
+  const file = root ? relative2(root, path) : path;
+  if (!log) return { data: { projectRoot: root, file, count: 0, unparseable: 0, events: [] }, text: NO_EVENTS, exitCode: 0 };
+  const selected = log.events.filter((e) => keep(e, opts));
+  return {
+    data: { projectRoot: root, file, count: selected.length, unparseable: log.unparseable, events: selected },
+    text: selected.length ? selected.map(formatEvent).join("\n") : "No matching events.",
+    exitCode: 0
+  };
+}
+async function followEvents(cwd, opts, out) {
+  const { path } = eventsPath(cwd, opts.file);
+  if (!path) {
+    out.write(`No actor project at ${cwd}; pass --file <events.ndjson>.
+`);
+    return EXIT_NO_PROJECT;
+  }
+  let offset = 0;
+  let partial = "";
+  const print = (e) => out.write(opts.json ? `${JSON.stringify(e)}
+` : `${formatEvent(e)}
+`);
+  for (; ; ) {
+    if (existsSync5(path)) {
+      const size = statSync2(path).size;
+      if (size < offset) {
+        offset = 0;
+        partial = "";
+        if (!opts.notable) out.write(opts.json ? `${JSON.stringify({ $actors: 1, kind: "log.reset", at: Date.now(), actor: "actors-cli" })}
+` : "\u2500\u2500 new run \u2500\u2500\n");
+      }
+      if (size > offset) {
+        const fd = openSync(path, "r");
+        const buf = Buffer.alloc(size - offset);
+        readSync(fd, buf, 0, buf.length, offset);
+        closeSync(fd);
+        offset = size;
+        const text = partial + buf.toString("utf8");
+        const cut = text.lastIndexOf("\n");
+        partial = text.slice(cut + 1);
+        for (const e of parseEvents(text.slice(0, cut + 1)).events) if (keep(e, opts)) print(e);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+function trace(cwd, id, opts) {
+  const { path, root } = eventsPath(cwd, opts.file);
+  const note = "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record.";
+  const empty = (file2, events2) => ({ projectRoot: root, found: false, target: id ?? "", correlationId: null, rootCauseUnknown: false, root: null, coverage: { file: file2, events: events2, note } });
+  if (!id) return { data: empty(null, 0), text: "usage: actors trace <message-id> [--json] [--file <events.ndjson>]", exitCode: 2 };
+  if (!path) return { data: empty(null, 0), text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  const file = root ? relative2(root, path) : path;
+  const log = readEvents(path);
+  if (!log) return { data: empty(file, 0), text: `unknown: ${id}. ${NO_EVENTS}`, exitCode: 1 };
+  const t = buildTrace(log, id);
+  return { data: { projectRoot: root, ...t, coverage: { file, events: log.events.length, note } }, text: renderTrace(t, file), exitCode: t.found ? 0 : 1 };
+}
+
 // src/cli/main.ts
 var HELP = `actors ${VERSION}: conventions, checks, and inspection for actor systems on Cloudflare
 
@@ -884,6 +1126,10 @@ Commands:
   graph [--write]              Print the topology; --write updates actors.manifest.json
   diff [--base <ref>]          Classify architectural changes against the committed manifest
        [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
+  events [--follow] [--notable] Query or follow local structured events (.actors/events.ndjson);
+         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only
+         [--correlation C] [--file F]
+  trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
 
 Options:
   --json            Print machine-readable output (with schemaVersion)
@@ -897,7 +1143,9 @@ var commands = {
   doctor: ({ cwd }) => doctor(cwd),
   check: ({ cwd, values, positionals }) => check(cwd, { changed: [...values.changed ?? [], ...values.changed !== void 0 ? positionals : []], format: str(values.format) }),
   graph: ({ cwd, values }) => graph(cwd, { write: values.write === true }),
-  diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) })
+  diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) }),
+  events: ({ cwd, values }) => events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
+  trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) })
 };
 async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: process.cwd() }) {
   try {
@@ -912,6 +1160,12 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
         write: { type: "boolean" },
         base: { type: "string" },
         "base-file": { type: "string" },
+        follow: { type: "boolean" },
+        notable: { type: "boolean" },
+        actor: { type: "string" },
+        kind: { type: "string" },
+        correlation: { type: "string" },
+        file: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" }
       }
@@ -930,6 +1184,16 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
     const handler = commands[name];
     if (!handler) throw new UsageError(`unknown command "${name}"`);
     const json = values.json === true;
+    if (name === "events" && values.follow === true) {
+      const filter = { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file), json };
+      return await followEvents(io.cwd, filter, io.out);
+    }
+    if (name === "events" && json) {
+      const r = events(io.cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) });
+      io.out.write(r.data.events.map((e) => `${JSON.stringify(e)}
+`).join(""));
+      return r.exitCode;
+    }
     const result = await handler({ positionals: rest, json, cwd: io.cwd, values });
     io.out.write(json ? toJson(name, result.data) : result.text ? `${result.text}
 ` : "");

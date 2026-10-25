@@ -40,3 +40,9 @@ is refused. Use `git commit -F <file>` or the Grep tool instead.
 - PreToolUse hook parser: more precise, but it's custom code and still bypassable. Rules are the
   documented mechanism.
 - `disableBypassPermissionsMode`: would break the owner's working mode. Deny rules already hold there.
+
+## Amendment (G3): narrower secret-read rule
+`Bash(*cat *.env*)` refused every heredoc that wrote Worker code mentioning `this.env`. It became
+`Bash(*cat *.env)` plus `Bash(*cat *.env *)`, which still refuse `cat .env` and `cat .env | …`. The `Read`
+deny rules still cover the Read tool. Lesson: a deny rule with a wildcard on both sides matches inside
+file contents passed on the command line.
