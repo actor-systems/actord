@@ -67,6 +67,14 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
     loaded with `--plugin-dir` in an interactive session; `claude plugin validate` prints the `hooks:` and
     `calls:` listing.
 
+12. **Durable Object lifecycle uses the declarative `exports` map** (`"exports": { "Class": { "type":
+    "durable-object", "storage": "sqlite" } }`). The `migrations` array the charter era assumed is now
+    "legacy" and can't be combined with `exports`. Deleting a class through `exports` destroys data with
+    no trash. Verified locally: `wrangler types`, vitest-plugin, `wrangler dev` (decision 0006).
+13. **Node 24 loads `.ts` files natively** when the package is `"type": "module"`; without it, a `.ts`
+    file using `import` fails with "Cannot use import statement outside a module".
+14. **zod 4.6.7 implements Standard Schema `validate` and Standard JSON Schema** (`~standard.jsonSchema`).
+
 ## Assumptions not yet verified (each has an owner gate)
 
 | Assumption | How it will be settled | Gate |

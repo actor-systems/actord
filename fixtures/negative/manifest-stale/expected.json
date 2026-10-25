@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "MANIFEST_STALE"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": true
+}

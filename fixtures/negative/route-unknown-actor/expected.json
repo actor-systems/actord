@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "ROUTE_UNKNOWN_ACTOR"
+    ]
+  },
+  "typecheck": "fail",
+  "stale": false
+}

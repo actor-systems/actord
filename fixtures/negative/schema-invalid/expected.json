@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "MESSAGE_SCHEMA_INVALID"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

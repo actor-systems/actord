@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "DECLARATION_LOAD_FAILED"
+    ]
+  },
+  "typecheck": "fail",
+  "stale": false
+}

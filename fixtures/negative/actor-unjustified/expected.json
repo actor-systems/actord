@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "ACTOR_UNJUSTIFIED"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

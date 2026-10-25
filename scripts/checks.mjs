@@ -65,6 +65,11 @@ export const gates = [
       "g1.start-session",
     ],
   },
+  {
+    id: "G2",
+    title: "Model and CLI",
+    requires: ["g2.contract.types", "g2.fixtures.typecheck", "g2.cli.model", "g2.negative.unchanged"],
+  },
 ];
 
 export const checks = [
@@ -97,7 +102,7 @@ export const checks = [
     },
   }),
   command("g1.cli.typecheck", "G1", "CLI typechecks (TypeScript 7)", "npm run --silent typecheck -w actors-toolkit"),
-  command("g1.cli.unit", "G1", "CLI unit tests (doctor, effect pattern table)", "npm test --silent -w actors-toolkit"),
+  command("g1.cli.unit", "G1", "CLI unit tests (doctor, effect pattern table)", "npx --no-install vitest run test/doctor.test.ts test/patterns.test.ts", { cwd: "packages/cli" }),
   {
     id: "g1.dist.fresh",
     gate: "G1",
@@ -141,4 +146,8 @@ export const checks = [
         : { status: "fail", reason: `score ${score} in ${rec.file}`, evidenceSource: "eval-run" };
     },
   },
+  command("g2.contract.types", "G2", "Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors", "npx --no-install tsc -p tsconfig.contract.json", { cwd: "packages/cli" }),
+  command("g2.fixtures.typecheck", "G2", "tsc passes on valid fixtures and fails where negative fixtures expect it", "node scripts/typecheck-fixtures.mjs"),
+  command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes", "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts", { cwd: "packages/cli" }),
+  command("g2.negative.unchanged", "G2", "No file under fixtures/negative differs from the last commit", "git diff --exit-code --stat HEAD -- fixtures/negative && test -z \"$(git status --porcelain -- fixtures/negative)\""),
 ];

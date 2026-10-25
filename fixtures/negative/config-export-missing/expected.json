@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "CONFIG_EXPORT_MISSING"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

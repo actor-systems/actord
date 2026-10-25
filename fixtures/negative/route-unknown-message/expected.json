@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "ROUTE_UNKNOWN_MESSAGE"
+    ]
+  },
+  "typecheck": "fail",
+  "stale": false
+}

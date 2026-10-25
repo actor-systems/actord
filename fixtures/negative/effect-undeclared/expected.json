@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "EFFECT_UNDECLARED"
+    ]
+  },
+  "typecheck": "fail",
+  "stale": false
+}

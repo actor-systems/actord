@@ -9,5 +9,8 @@
       { "name": "RECEIVER", "class_name": "Receiver" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sender", "Receiver"] }]
+  "exports": {
+    "Sender": { "type": "durable-object", "storage": "sqlite" },
+    "Receiver": { "type": "durable-object", "storage": "sqlite" }
+  }
 }

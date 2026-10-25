@@ -50,8 +50,13 @@ Run `/actors:start` in a session. It runs `actors doctor`, explains what it foun
 | Command | What it does |
 | --- | --- |
 | `actors doctor [--json]` | Checks Node, Claude Code, the project, CLI version pinning, Worker config, the verify skill, and permission rules, and reports actionable fixes |
+| `actors check [--changed <file>...] [--format brief] [--json]` | Validates what the compiler can't: routes, schemas, schedules, effects, budgets, `wrangler.jsonc` bindings and `exports`, Worker entry exports, and manifest freshness. Hard errors exit 1; warnings advise |
+| `actors graph [--write] [--json]` | Prints the topology; `--write` updates the derived `actors.manifest.json` |
+| `actors diff [--base <ref>] [--base-file <path>] [--json]` | Classifies architectural changes against the manifest committed at `<ref>` (default `HEAD`): compatible, breaking, or risky; approval-required; irreversible. Ends with a deploy plan, never a deploy |
 
-Every command offers `--json` with a `schemaVersion`. Read-only commands never contact Cloudflare.
+Every command offers `--json` with a `schemaVersion` and a `volatile` list naming the machine-dependent
+fields. Exit status: 0 ok, 1 hard errors, 2 usage, 3 not in an actor project. Read-only commands never
+contact Cloudflare.
 
 ## Trust and safety
 

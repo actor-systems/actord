@@ -8,8 +8,15 @@ export interface CommandResult<T> {
   exitCode: number;
 }
 
+/** Fields whose values depend on the machine or environment rather than the input. */
+const VOLATILE: Record<string, string[]> = {
+  doctor: ["projectRoot", "findings[].message"],
+  default: ["projectRoot"],
+};
+
 export function toJson(command: string, data: object): string {
-  return `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command, toolkitVersion: VERSION, ...data }, null, 2)}\n`;
+  const volatile = VOLATILE[command] ?? VOLATILE.default;
+  return `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command, toolkitVersion: VERSION, volatile, ...data }, null, 2)}\n`;
 }
 
 /** Stable key order for anything that reaches JSON output, so identical input gives identical bytes. */

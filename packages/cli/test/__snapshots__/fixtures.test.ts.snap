@@ -1,0 +1,475 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`valid fixtures > diff classifies evolved against minimal, with a plan and no deploy > diff evolved vs minimal 1`] = `
+{
+  "base": {
+    "source": "file:../minimal/actors.manifest.json",
+    "system": "minimal",
+  },
+  "changes": [
+    {
+      "compatibility": "compatible",
+      "detail": "New actor Auditor (deterministic); its namespace is provisioned on the next deploy",
+      "irreversible": false,
+      "kind": "actor.added",
+      "requiresApproval": false,
+      "subject": "Auditor",
+    },
+    {
+      "compatibility": "risky",
+      "detail": "New external effect notify.operator (idempotency: key); a person must approve the new capability",
+      "irreversible": false,
+      "kind": "effect.added",
+      "requiresApproval": true,
+      "subject": "notify.operator",
+    },
+    {
+      "compatibility": "breaking",
+      "detail": "payload.origin is a new required property; bump the version or keep accepting the old shape",
+      "irreversible": false,
+      "kind": "message.payload",
+      "requiresApproval": false,
+      "subject": "ping.sent",
+    },
+    {
+      "compatibility": "compatible",
+      "detail": "New route Ponger → ping.sent → Auditor",
+      "irreversible": false,
+      "kind": "route.added",
+      "requiresApproval": false,
+      "subject": "Ponger → ping.sent → Auditor",
+    },
+  ],
+  "command": "diff",
+  "head": {
+    "system": "minimal",
+  },
+  "notes": [],
+  "plan": [
+    {
+      "kind": "verify",
+      "text": "Run \`actors check\` and \`npm run verify\`; deploy nothing unless both pass.",
+    },
+    {
+      "kind": "config",
+      "text": "Declare Auditor in wrangler.jsonc: binding { "name": "AUDITOR", "class_name": "Auditor" } and exports.Auditor = { "type": "durable-object", "storage": "sqlite" } (\`actors check\` confirms both).",
+    },
+    {
+      "kind": "drain",
+      "text": "Drain first: changes to ping.sent affect what in-flight messages may look like or where they may go. Deploy when outboxes are empty, or version the message and accept both shapes.",
+    },
+    {
+      "kind": "approval",
+      "text": "A person must approve: New external effect notify.operator (idempotency: key); a person must approve the new capability.",
+    },
+    {
+      "kind": "lifecycle",
+      "text": "Durable Object lifecycle changes apply only through \`wrangler deploy\` (not \`wrangler versions upload\`); a later rollback can't cross them, and gradual deployment isn't available for them.",
+    },
+    {
+      "kind": "deploy",
+      "text": "Deploying is a person's decision. After approval, they run \`npx wrangler deploy\`; the toolkit never deploys.",
+    },
+  ],
+  "schemaVersion": 1,
+  "summary": {
+    "breaking": 1,
+    "irreversible": false,
+    "requiresApproval": true,
+    "risky": 1,
+    "total": 4,
+  },
+  "toolkitVersion": "0.1.0",
+  "volatile": [
+    "projectRoot",
+  ],
+}
+`;
+
+exports[`valid fixtures > evolved: check, graph, and diff are deterministic and snapshot-stable > check --json 1`] = `
+{
+  "command": "check",
+  "diagnostics": [],
+  "errors": 0,
+  "ok": true,
+  "schemaVersion": 1,
+  "skipped": false,
+  "toolkitVersion": "0.1.0",
+  "volatile": [
+    "projectRoot",
+  ],
+  "warnings": 0,
+}
+`;
+
+exports[`valid fixtures > evolved: check, graph, and diff are deterministic and snapshot-stable > graph --json 1`] = `
+{
+  "command": "graph",
+  "manifest": {
+    "$comment": "Derived from system.ts by \`actors graph --write\`. Do not edit; \`actors check\` fails when it is stale.",
+    "actors": [
+      {
+        "binding": "AUDITOR",
+        "budget": null,
+        "effects": [
+          "notify.operator",
+        ],
+        "justification": [
+          "isolation",
+          "state",
+        ],
+        "kind": "deterministic",
+        "name": "Auditor",
+        "purpose": "Reports gaps in the ping sequence to an operator",
+        "receives": [
+          "ping.sent",
+        ],
+        "schedule": null,
+        "sends": [],
+      },
+      {
+        "binding": "PINGER",
+        "budget": null,
+        "effects": [],
+        "justification": [
+          "scheduling",
+          "state",
+        ],
+        "kind": "deterministic",
+        "name": "Pinger",
+        "purpose": "Sends a numbered ping on a schedule or on request",
+        "receives": [
+          "ping.due",
+          "ping.kicked",
+        ],
+        "schedule": {
+          "every": "5m",
+          "everyMs": 300000,
+          "message": "ping.due",
+        },
+        "sends": [
+          "ping.sent",
+        ],
+      },
+      {
+        "binding": "PONGER",
+        "budget": null,
+        "effects": [],
+        "justification": [
+          "state",
+        ],
+        "kind": "deterministic",
+        "name": "Ponger",
+        "purpose": "Records each ping exactly once",
+        "receives": [
+          "ping.sent",
+        ],
+        "schedule": null,
+        "sends": [
+          "ping.sent",
+        ],
+      },
+    ],
+    "effects": [
+      {
+        "approval": "none",
+        "description": "Message the operator about a sequence gap",
+        "idempotency": "key",
+        "name": "notify.operator",
+        "reconcile": false,
+      },
+    ],
+    "messages": [
+      {
+        "description": "The schedule says it's time to ping",
+        "name": "ping.due",
+        "payload": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "at": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "at",
+          ],
+          "type": "object",
+        },
+        "version": 1,
+      },
+      {
+        "description": "Someone asked for an immediate ping",
+        "name": "ping.kicked",
+        "payload": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "reason": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "reason",
+          ],
+          "type": "object",
+        },
+        "version": 1,
+      },
+      {
+        "description": "A ping carrying a sequence number",
+        "name": "ping.sent",
+        "payload": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "note": {
+              "type": "string",
+            },
+            "origin": {
+              "type": "string",
+            },
+            "seq": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "seq",
+            "origin",
+          ],
+          "type": "object",
+        },
+        "version": 1,
+      },
+    ],
+    "routes": [
+      {
+        "from": "@clock",
+        "message": "ping.due",
+        "to": "Pinger",
+      },
+      {
+        "from": "@ingress",
+        "message": "ping.kicked",
+        "to": "Pinger",
+      },
+      {
+        "from": "Pinger",
+        "message": "ping.sent",
+        "to": "Ponger",
+      },
+      {
+        "from": "Ponger",
+        "message": "ping.sent",
+        "to": "Auditor",
+      },
+    ],
+    "schemaVersion": 1,
+    "system": {
+      "description": "Two actors: a scheduled pinger and a ponger that records pings",
+      "name": "minimal",
+    },
+  },
+  "schemaVersion": 1,
+  "toolkitVersion": "0.1.0",
+  "volatile": [
+    "projectRoot",
+  ],
+  "written": null,
+}
+`;
+
+exports[`valid fixtures > evolved: check, graph, and diff are deterministic and snapshot-stable > graph 1`] = `
+"minimal · 3 actors · 4 routes · 3 messages · 1 effect
+
+Routes
+  @clock    ──ping.due@1──▶  Pinger
+  @ingress  ──ping.kicked@1──▶  Pinger
+  Pinger    ──ping.sent@1──▶  Ponger
+  Ponger    ──ping.sent@1──▶  Auditor
+
+Actors
+  Auditor (AUDITOR): deterministic · effects notify.operator · justified by isolation, state
+    Reports gaps in the ping sequence to an operator
+  Pinger (PINGER): deterministic · every 5m · justified by scheduling, state
+    Sends a numbered ping on a schedule or on request
+  Ponger (PONGER): deterministic · justified by state
+    Records each ping exactly once
+
+Effects
+  notify.operator: idempotency key, approval none. Message the operator about a sequence gap
+"
+`;
+
+exports[`valid fixtures > minimal: check, graph, and diff are deterministic and snapshot-stable > check --json 1`] = `
+{
+  "command": "check",
+  "diagnostics": [],
+  "errors": 0,
+  "ok": true,
+  "schemaVersion": 1,
+  "skipped": false,
+  "toolkitVersion": "0.1.0",
+  "volatile": [
+    "projectRoot",
+  ],
+  "warnings": 0,
+}
+`;
+
+exports[`valid fixtures > minimal: check, graph, and diff are deterministic and snapshot-stable > graph --json 1`] = `
+{
+  "command": "graph",
+  "manifest": {
+    "$comment": "Derived from system.ts by \`actors graph --write\`. Do not edit; \`actors check\` fails when it is stale.",
+    "actors": [
+      {
+        "binding": "PINGER",
+        "budget": null,
+        "effects": [],
+        "justification": [
+          "scheduling",
+          "state",
+        ],
+        "kind": "deterministic",
+        "name": "Pinger",
+        "purpose": "Sends a numbered ping on a schedule or on request",
+        "receives": [
+          "ping.due",
+          "ping.kicked",
+        ],
+        "schedule": {
+          "every": "5m",
+          "everyMs": 300000,
+          "message": "ping.due",
+        },
+        "sends": [
+          "ping.sent",
+        ],
+      },
+      {
+        "binding": "PONGER",
+        "budget": null,
+        "effects": [],
+        "justification": [
+          "state",
+        ],
+        "kind": "deterministic",
+        "name": "Ponger",
+        "purpose": "Records each ping exactly once",
+        "receives": [
+          "ping.sent",
+        ],
+        "schedule": null,
+        "sends": [],
+      },
+    ],
+    "effects": [],
+    "messages": [
+      {
+        "description": "The schedule says it's time to ping",
+        "name": "ping.due",
+        "payload": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "at": {
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "at",
+          ],
+          "type": "object",
+        },
+        "version": 1,
+      },
+      {
+        "description": "Someone asked for an immediate ping",
+        "name": "ping.kicked",
+        "payload": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "reason": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "reason",
+          ],
+          "type": "object",
+        },
+        "version": 1,
+      },
+      {
+        "description": "A ping carrying a sequence number",
+        "name": "ping.sent",
+        "payload": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "note": {
+              "type": "string",
+            },
+            "seq": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "seq",
+          ],
+          "type": "object",
+        },
+        "version": 1,
+      },
+    ],
+    "routes": [
+      {
+        "from": "@clock",
+        "message": "ping.due",
+        "to": "Pinger",
+      },
+      {
+        "from": "@ingress",
+        "message": "ping.kicked",
+        "to": "Pinger",
+      },
+      {
+        "from": "Pinger",
+        "message": "ping.sent",
+        "to": "Ponger",
+      },
+    ],
+    "schemaVersion": 1,
+    "system": {
+      "description": "Two actors: a scheduled pinger and a ponger that records pings",
+      "name": "minimal",
+    },
+  },
+  "schemaVersion": 1,
+  "toolkitVersion": "0.1.0",
+  "volatile": [
+    "projectRoot",
+  ],
+  "written": null,
+}
+`;
+
+exports[`valid fixtures > minimal: check, graph, and diff are deterministic and snapshot-stable > graph 1`] = `
+"minimal · 2 actors · 3 routes · 3 messages · 0 effects
+
+Routes
+  @clock    ──ping.due@1──▶  Pinger
+  @ingress  ──ping.kicked@1──▶  Pinger
+  Pinger    ──ping.sent@1──▶  Ponger
+
+Actors
+  Pinger (PINGER): deterministic · every 5m · justified by scheduling, state
+    Sends a numbered ping on a schedule or on request
+  Ponger (PONGER): deterministic · justified by state
+    Records each ping exactly once
+"
+`;

@@ -3,6 +3,7 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { build } from "esbuild";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,19 @@ await build({
   legalComments: "none",
   logLevel: "warning",
 });
+// Library entry points for projects: plain ESM (Node won't strip types under node_modules) plus .d.ts.
+await build({
+  entryPoints: { system: join(here, "src/system.ts") },
+  outdir: join(here, "dist"),
+  outExtension: { ".js": ".mjs" },
+  bundle: true,
+  platform: "neutral",
+  format: "esm",
+  target: "es2022",
+  legalComments: "none",
+  logLevel: "warning",
+});
+execFileSync("npx", ["--no-install", "tsc", "-p", join(here, "tsconfig.build.json")], { cwd: here, stdio: "inherit" });
 mkdirSync(pluginDist, { recursive: true });
 copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actors.mjs"));
 writeFileSync(join(pluginDist, "VERSION"), `${pkg.version}\n`);

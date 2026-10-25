@@ -1,0 +1,14 @@
+{
+  "name": "fixture-config-binding-missing",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "PONGER", "class_name": "Ponger" }
+    ]
+  },
+  "exports": {
+    "Pinger": { "type": "durable-object", "storage": "sqlite" },
+    "Ponger": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

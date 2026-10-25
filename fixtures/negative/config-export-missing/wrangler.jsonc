@@ -1,0 +1,14 @@
+{
+  "name": "fixture-config-export-missing",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "PINGER", "class_name": "Pinger" },
+      { "name": "PONGER", "class_name": "Ponger" }
+    ]
+  },
+  "exports": {
+    "Ponger": { "type": "durable-object", "storage": "sqlite" }
+  }
+}
