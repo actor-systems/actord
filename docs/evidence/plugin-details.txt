@@ -15,7 +15,7 @@ Projected token cost
 Per-component (rounded)
   component         always-on  on-invoke
   design                  ~90       ~770
-  inspect                ~110       ~420
+  inspect                ~110       ~470
   setup                   ~80       ~560
   start                   ~70       ~510
   evolve                 ~100       ~600

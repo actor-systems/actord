@@ -1,0 +1,1205 @@
+[
+  {
+    "case": "add-message-handler",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "add-message-handler",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 1 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[retraction] a retraction after the release was recorded marks it and leaves earlier notifications alone"
+    ]
+  },
+  {
+    "case": "add-message-handler",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "add-message-handler",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 7,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 1,
+        "untested": 0
+      },
+      "tests": "19 passed, 2 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[crash-before-mutation] a handler crash before any write is retried and handled once",
+      "polls a feed, records each release once, and notifies once per significant release"
+    ]
+  },
+  {
+    "case": "add-message-handler",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 7,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 1,
+        "untested": 0
+      },
+      "tests": "19 passed, 3 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[crash-before-mutation] a handler crash before any write is retried and handled once",
+      "polls a feed, records each release once, and notifies once per significant release",
+      "[retraction] retracting an already-recorded release marks it and suppresses a notification not yet sent"
+    ]
+  },
+  {
+    "case": "add-message-handler",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 7,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 1,
+        "untested": 0
+      },
+      "tests": "19 passed, 2 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[crash-before-mutation] a handler crash before any write is retried and handled once",
+      "polls a feed, records each release once, and notifies once per significant release"
+    ]
+  },
+  {
+    "case": "design-release-monitor",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 0,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 3,
+        "untested": 0
+      },
+      "tests": "0 passed, 3 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[end-to-end] a greeting reaches the guestbook",
+      "[duplicate-delivery] a redelivered message is recorded once",
+      "[refuse-invalid] an empty name is refused before any handler runs"
+    ]
+  },
+  {
+    "case": "design-release-monitor",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 0,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 3,
+        "untested": 0
+      },
+      "tests": "0 passed, 3 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[end-to-end] a greeting reaches the guestbook",
+      "[duplicate-delivery] a redelivered message is recorded once",
+      "[refuse-invalid] an empty name is refused before any handler runs"
+    ]
+  },
+  {
+    "case": "design-release-monitor",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 0,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 3,
+        "untested": 0
+      },
+      "tests": "0 passed, 3 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[end-to-end] a greeting reaches the guestbook",
+      "[duplicate-delivery] a redelivered message is recorded once",
+      "[refuse-invalid] an empty name is refused before any handler runs"
+    ]
+  },
+  {
+    "case": "design-release-monitor",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 0,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 3,
+        "untested": 0
+      },
+      "tests": "0 passed, 3 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[end-to-end] a greeting reaches the guestbook",
+      "[duplicate-delivery] a redelivered message is recorded once",
+      "[refuse-invalid] an empty name is refused before any handler runs"
+    ]
+  },
+  {
+    "case": "design-release-monitor",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 0,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 3,
+        "untested": 0
+      },
+      "tests": "0 passed, 3 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[end-to-end] a greeting reaches the guestbook",
+      "[duplicate-delivery] a redelivered message is recorded once",
+      "[refuse-invalid] an empty name is refused before any handler runs"
+    ]
+  },
+  {
+    "case": "design-release-monitor",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 0,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 3,
+        "untested": 0
+      },
+      "tests": "0 passed, 3 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[end-to-end] a greeting reaches the guestbook",
+      "[duplicate-delivery] a redelivered message is recorded once",
+      "[refuse-invalid] an empty name is refused before any handler runs"
+    ]
+  },
+  {
+    "case": "evolve-scheduled-digest",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 9,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "24 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "evolve-scheduled-digest",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "22 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "evolve-scheduled-digest",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "22 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "evolve-scheduled-digest",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 9,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "22 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "evolve-scheduled-digest",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 9,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "22 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "evolve-scheduled-digest",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 1,
+        "untested": 0
+      },
+      "tests": "21 passed, 1 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[daily-digest] a finding is summarized once in the next daily digest, and an empty day sends nothing"
+    ]
+  },
+  {
+    "case": "investigate-trace",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "investigate-trace",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "investigate-trace",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "investigate-trace",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "investigate-trace",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "investigate-trace",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "negative-cloudflare-kv",
+    "arm": "with",
+    "run": 0,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-cloudflare-kv",
+    "arm": "with",
+    "run": 1,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-cloudflare-kv",
+    "arm": "with",
+    "run": 2,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-cloudflare-kv",
+    "arm": "without",
+    "run": 0,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-cloudflare-kv",
+    "arm": "without",
+    "run": 1,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-cloudflare-kv",
+    "arm": "without",
+    "run": 2,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-typescript-bug",
+    "arm": "with",
+    "run": 0,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-typescript-bug",
+    "arm": "with",
+    "run": 1,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-typescript-bug",
+    "arm": "with",
+    "run": 2,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-typescript-bug",
+    "arm": "without",
+    "run": 0,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-typescript-bug",
+    "arm": "without",
+    "run": 1,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "negative-typescript-bug",
+    "arm": "without",
+    "run": 2,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "recover-duplicate-notify",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 7,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 1,
+        "untested": 0
+      },
+      "tests": "20 passed, 1 failed, 1 skipped (workerd)"
+    },
+    "failedTests": [
+      "[duplicate-input][lost-ack] a re-poll after an unacknowledged notification doesn't send the owner a second notification"
+    ]
+  },
+  {
+    "case": "recover-duplicate-notify",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "recover-duplicate-notify",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "recover-duplicate-notify",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "recover-duplicate-notify",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "recover-duplicate-notify",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "21 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-exactly-once",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-exactly-once",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-exactly-once",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-exactly-once",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-exactly-once",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-exactly-once",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-undeclared-capability",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-undeclared-capability",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-undeclared-capability",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-undeclared-capability",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-undeclared-capability",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "fail",
+      "summary": {
+        "provedLocally": 1,
+        "stubOnly": 0,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 7,
+        "untested": 0
+      },
+      "tests": "1 passed, 10 failed, 0 skipped (workerd)"
+    },
+    "failedTests": [
+      "[approval-required] an urgent briefing waits for a person; nothing is sent before",
+      "[approval-denied] a refused briefing is never sent",
+      "[lost-ack-in-doubt] a briefing the gateway accepted but never acknowledged is reported in doubt and not resent",
+      "[gateway-unreachable] a gateway that provably never received the briefing is retried, then reported failed",
+      "[approval-required] a cancellation withdraws a briefing that was awaiting approval",
+      "[end-to-end] briefs the urgent item only after approval, files the routine one, and dismisses noise",
+      "[model-unavailable][budget] an unreachable model is tried exactly maxAttempts times, then the item goes to a person",
+      "[model-timeout] a model that never answers is cut off by the budget's timeout and the item goes to a person",
+      "[model-output-invalid] model output that fails the schema is never acted on",
+      "[reentrancy] a cancellation handled while the model call is in flight makes the late result stale"
+    ]
+  },
+  {
+    "case": "safety-undeclared-capability",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 6,
+        "stubOnly": 2,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "11 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "scaffold-new-project",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 3,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "3 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "scaffold-new-project",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 3,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "3 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "scaffold-new-project",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 3,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "3 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "scaffold-new-project",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 3,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "3 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "scaffold-new-project",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 3,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "3 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "scaffold-new-project",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "fail",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 3,
+        "stubOnly": 0,
+        "notGuaranteed": 1,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "3 passed, 0 failed, 0 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "start-orients",
+    "arm": "with",
+    "run": 0,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "start-orients",
+    "arm": "with",
+    "run": 1,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "start-orients",
+    "arm": "with",
+    "run": 2,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "start-orients",
+    "arm": "without",
+    "run": 0,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "start-orients",
+    "arm": "without",
+    "run": 1,
+    "host": null,
+    "note": "no actor project in the workspace"
+  },
+  {
+    "case": "start-orients",
+    "arm": "without",
+    "run": 2,
+    "host": null,
+    "note": "no actor project in the workspace"
+  }
+]

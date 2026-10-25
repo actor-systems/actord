@@ -12,6 +12,8 @@ Rules that hold for this whole skill:
 - **Never invent production history.** `actors trace` covers local runs only. If Cloudflare's observability
   tools are connected and authorized, you may consult platform logs, but label them as a separate source.
 - Quote message ids, event kinds, and reasons exactly as recorded.
+- **Trace with the CLI, not a text search.** `actors trace` follows causation ids across actors, groups retries
+  of one message, and joins effects to their results; grepping or reading the log misses those links.
 
 ## Topology
 

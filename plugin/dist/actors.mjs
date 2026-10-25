@@ -2075,12 +2075,13 @@ async function verify(cwd, opts) {
   const pkg = readJson(join11(root, "package.json"));
   const script = pkg?.scripts?.typecheck;
   const tc = script ? runScript(root, script) : runBin(root, "typescript", "tsc", ["--noEmit"]);
+  const tcBlocked = tc.code !== 0 && (tc.spawnBlocked || SANDBOX_BLOCK.test(tc.output));
   steps.push({
     id: "typecheck",
-    status: tc.code === 0 ? "pass" : tc.spawnBlocked ? "blocked" : "fail",
+    status: tc.code === 0 ? "pass" : tcBlocked ? "blocked" : "fail",
     command: script ? `npm run typecheck (${script})` : "tsc --noEmit",
     durationMs: tc.ms,
-    summary: tc.code === 0 ? "no type errors" : tc.spawnBlocked ? "blocked: the sandbox refused to start the type checker" : "type errors",
+    summary: tc.code === 0 ? "no type errors" : tc.spawnBlocked ? "blocked: the sandbox refused to start the type checker" : tcBlocked ? "blocked: the sandbox denies the local port `wrangler types` needs (see docs on network.allowLocalBinding)" : "type errors",
     ...tc.code === 0 ? {} : { detail: { output: tail(tc.output, 25) } }
   });
   const started = Date.now();

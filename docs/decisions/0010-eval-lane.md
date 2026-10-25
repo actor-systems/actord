@@ -20,13 +20,19 @@ wrong thing.
 2. **Process graders may read the trace.** A `regex` over `target: trace`, anchored to tool inputs
    (`"name":"Read","input":…`), counts as a process grader, so reading a file through `cat` and through the
    Read tool both count.
-3. **Rubrics grade what the evidence can show.** A judge isn't asked for claims no log line supports.
+3. **Rubrics grade what the evidence can show.** A judge isn't asked for claims no log line supports. A new
+   project can't be type-checked inside the eval sandbox (`wrangler types` starts workerd, which needs the
+   denied loopback port), so `scaffold-new-project` accepts a `blocked` type check and the host re-run
+   supplies the real verdict.
 4. **Grants are equal for both arms and cover ordinary file-local shell** (`cd`, `grep`, `find`, `sed`,
-   `mkdir`, `mv`, `cp`, `cat`, `ls`, read-only git) besides the actors, npm-script, vitest, and tsc
-   commands. No `python3`, `node`, `rm`, or network tools; the OS sandbox still confines writes and denies
+   `mkdir`, `mv`, `cp`, `cat`, `ls`, read-only git, and `python3`, which agents use for multi-line edits)
+   besides the actors, npm-script, vitest, and tsc commands. An agent denied one command in don't-ask mode
+   sometimes concludes all Bash is denied and stops, in either arm; release run A lost three runs that way
+   to a denied `python3`. No `node`, `rm`, or network tools; the OS sandbox still confines writes and denies
    the network.
 5. **Host verdicts sit beside sandbox scores.** Every kept workspace is re-run on the host by case and arm
    (`scripts/rerun-eval-workspaces.sh`), because the sandbox blocks workerd and so can't see runtime
    failures.
-6. **The release gate is two full runs on the final plugin** (`scripts/eval-suite.sh`); runs made before a
+6. **The release gate is two full runs on the final plugin** (release run A, `2026-10-25-release-a`, found
+   the type-check classification bug and is superseded too) (`scripts/eval-suite.sh`); runs made before a
    fix are kept under `superseded/` and don't count.

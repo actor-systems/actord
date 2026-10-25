@@ -47,6 +47,22 @@ describe("actors init", () => {
     expect(run(tmp, ["init", "taken"]).code).toBe(2);
   });
 
+  it("verify records a type check the sandbox blocked as blocked, and a real type error as fail", () => {
+    const dir = join(tmp, "sandboxed");
+    run(tmp, ["init", "sandboxed", "--toolkit", "0.1.0"]);
+    const pkgPath = join(dir, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    const step = (script: string) => {
+      writeFileSync(pkgPath, JSON.stringify({ ...pkg, scripts: { ...pkg.scripts, typecheck: script } }));
+      run(dir, ["verify", "--json"]);
+      return JSON.parse(readFileSync(join(dir, ".actors/evidence.json"), "utf8")).steps.find((s: { id: string }) => s.id === "typecheck");
+    };
+    const blocked = step("echo 'Error: listen EPERM: operation not permitted 127.0.0.1' >&2; exit 1");
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.summary).toMatch(/wrangler types/);
+    expect(step("echo 'src/a.ts(1,1): error TS2322' >&2; exit 2").status).toBe("fail");
+  });
+
   it("refuses a non-empty directory instead of overwriting it", () => {
     const r = run(tmp, ["init", "fresh"]);
     expect(r.code).toBe(2);

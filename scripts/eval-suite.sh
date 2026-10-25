@@ -16,7 +16,7 @@ claude plugin eval plugin --scaffold --no-publish --trust-plugin --keep-temp \
   "Bash(npx vitest *)" "Bash(npx tsc *)" "Bash(git diff*)" "Bash(git status*)" "Bash(git log*)" \
   "Bash(git show*)" "Bash(git ls-files*)" "Bash(ls*)" "Bash(cat *)" "Bash(head *)" "Bash(tail *)" "Bash(wc *)" \
   "Bash(cd *)" "Bash(grep *)" "Bash(find *)" "Bash(sed *)" "Bash(mkdir *)" "Bash(mv *)" "Bash(cp *)" \
-  "Bash(echo *)" "Bash(printf *)" "Bash(test *)" \
+  "Bash(echo *)" "Bash(printf *)" "Bash(test *)" "Bash(python3 *)" \
   --json "$out" 2>"$log"
 status=$?
 "$root/scripts/rerun-eval-workspaces.sh" "$out" "$root/docs/evidence/evals/$label.host.json"
