@@ -4,7 +4,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { askRules } from "../../patterns.ts";
-import { claudeMd, settingsJson, starterFiles, verifySkill } from "../../templates/project.ts";
+import { starterFiles } from "../../templates/project.ts";
+import { agentHost, hostFiles, projectHost } from "../../templates/host.ts";
 import { VERSION } from "../../version.ts";
 import { type CommandResult, UsageError } from "../output.ts";
 import { readJson } from "../project.ts";
@@ -33,8 +34,11 @@ function bundledTarball(): string | null {
   return null;
 }
 
-export function init(cwd: string, target: string | undefined, opts: { adopt?: boolean; name?: string; toolkit?: string }): CommandResult<InitData> {
+export function init(cwd: string, target: string | undefined, opts: { adopt?: boolean; name?: string; toolkit?: string; host?: string }): CommandResult<InitData> {
   const root = resolve(cwd, target ?? ".");
+  let host;
+  try { host = agentHost(opts.host ?? process.env.ACTORS_HOST ?? projectHost(root)); }
+  catch (error) { throw new UsageError((error as Error).message); }
   const created: string[] = [];
   const skipped: string[] = [];
   const suggestions: string[] = [];
@@ -52,17 +56,15 @@ export function init(cwd: string, target: string | undefined, opts: { adopt?: bo
   if (opts.adopt) {
     if (!existsSync(join(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
     const name = opts.name ?? readJson<{ name?: string }>(join(root, "package.json"))?.name ?? basename(root);
-    write(".claude/skills/verify/SKILL.md", verifySkill());
-    write(".claude/settings.json", settingsJson());
-    write("CLAUDE.md", claudeMd(name));
-    if (skipped.includes(".claude/settings.json")) {
+    for (const [rel, content] of Object.entries(hostFiles(host, name))) write(rel, content);
+    if (host === "claude" && skipped.includes(".claude/settings.json")) {
       const ask = readJson<{ permissions?: { ask?: string[] } }>(join(root, ".claude/settings.json"))?.permissions?.ask ?? [];
       const missing = askRules().filter((r) => !ask.includes(r));
       if (missing.length) suggestions.push(`.claude/settings.json exists, so it wasn't changed. Add these to permissions.ask:\n${missing.map((r) => `    "${r}"`).join(",\n")}`);
     }
     const pkg = readJson<{ scripts?: Record<string, string>; devDependencies?: Record<string, string> }>(join(root, "package.json"));
     if (!pkg?.scripts?.verify) suggestions.push(`Add a script to package.json: "verify": "actors verify"`);
-    if (!pkg?.devDependencies?.["actors-toolkit"]) suggestions.push(`Pin the CLI so CI and Claude run the same version: npm install -D -E actors-toolkit@${VERSION}`);
+    if (!pkg?.devDependencies?.["actors-toolkit"]) suggestions.push(`Pin the CLI so CI and the coding agent run the same version: npm install -D -E actors-toolkit@${VERSION}`);
     if (!existsSync(join(root, "actors.manifest.json"))) suggestions.push("Run `npx actors graph --write` and commit actors.manifest.json.");
     return result(root, "adopt", created, skipped, suggestions, "unchanged");
   }
@@ -80,7 +82,7 @@ export function init(cwd: string, target: string | undefined, opts: { adopt?: bo
     created.push(`vendor/${basename(tgz)}`);
     toolkit = `file:vendor/${basename(tgz)}`;
   }
-  for (const [rel, content] of Object.entries(starterFiles(name, toolkit))) write(rel, content);
+  for (const [rel, content] of Object.entries(starterFiles(name, toolkit, host))) write(rel, content);
   suggestions.push("cd into the project, then: npm install && npx actors graph --write && npm run verify");
   return result(root, "create", created, skipped, suggestions, toolkit);
 }

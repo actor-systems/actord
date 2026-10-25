@@ -16,7 +16,7 @@ Usage: actors <command> [options]
 Commands:
   doctor                       Check the environment, project, pins, and Cloudflare tooling
   init [dir] [--adopt]         Create a starter project in an empty dir, or add the verify skill,
-       [--name N]              permission rules, and CLAUDE.md to an existing one (never overwrites)
+       [--name N] [--host H]   host guidance (claude, codex, none) to an existing one (never overwrites)
   check [--changed <file>...]  Validate the declaration, routes, schemas, config, and manifest
         [--format brief]       (brief: hard errors only, silent when clean; for hooks)
   graph [--write]              Print the topology; --write updates actors.manifest.json
@@ -62,7 +62,7 @@ const commands: Record<string, Handler> = {
   events: ({ cwd, values }) =>
     events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
   trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
-  init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit) }),
+  init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit), host: str(values.host) }),
   verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
   test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
   room: ({ cwd, values }) => room(cwd, { baseFile: str(values["base-file"]) }),
@@ -103,6 +103,7 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
         adopt: { type: "boolean" },
         name: { type: "string" },
         toolkit: { type: "string" },
+        host: { type: "string" },
         out: { type: "string" },
         profile: { type: "string" },
         help: { type: "boolean", short: "h" },

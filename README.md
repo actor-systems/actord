@@ -68,6 +68,18 @@ Run `/actors:start` in a session. It runs `actors doctor`, explains what it foun
 | Options (`userConfig`) | `check_on_edit` (true), `strict_evidence` (false), `fault_profile` (`standard` or `extended`); no credentials |
 | `bin/actors` | The deterministic machine interface, on `PATH` while the plugin is enabled. It prefers a project's pinned `actors-toolkit` (`node_modules/.bin/actors`), so Claude and CI run the same version; otherwise it runs the bundled single-file build in `dist/` |
 
+## Shared core and host adapters
+
+`packages/cli` is also the single core used by the sibling Codex adapter in `../actors/`.
+That adapter bundles the same CLI/runtime with recorded provenance and keeps its portable manifest,
+skills and launcher separate. Refresh it from the owning source with `npm run core:sync` in that repository.
+
+`actors init --host codex` writes `AGENTS.md` and `.agents/skills/verify/SKILL.md`;
+`--host claude` writes this plugin's original guidance and permission rules; `--host none` writes neither.
+Adoption preserves existing files. The host launchers select their profiles through `ACTORS_HOST`.
+Runtime, type contracts, checks, events and reliability claims are shared across hosts.
+See [decision 0012](docs/decisions/0012-shared-core-host-adapters.md).
+
 ## The `actors` CLI
 
 | Command | What it does |

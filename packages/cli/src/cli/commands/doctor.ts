@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { askRules } from "../../patterns.ts";
 import { VERSION } from "../../version.ts";
+import { projectHost } from "../../templates/host.ts";
 import type { CommandResult } from "../output.ts";
 import { findProjectRoot, readJson } from "../project.ts";
 
@@ -52,19 +53,27 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
     });
   }
 
-  const claude = run("claude", ["--version"]);
-  const claudeVersion = claude?.match(/\d+\.\d+\.\d+/)?.[0];
-  if (!claudeVersion) {
-    add({ id: "claude", status: "info", message: "Claude Code not found on PATH; the CLI works without it" });
-  } else if (compare(parse(claudeVersion), parse(MODS_FLOOR)) >= 0) {
-    add({ id: "claude", status: "ok", message: `Claude Code ${claudeVersion} (the Room and plugin evals are available)` });
-  } else {
-    add({
-      id: "claude",
-      status: "warn",
-      message: `Claude Code ${claudeVersion}: the Room needs ${MODS_FLOOR}+${compare(parse(claudeVersion), parse(EVAL_FLOOR)) < 0 ? `, plugin evals need ${EVAL_FLOOR}+` : ""}`,
-      fix: "Run `claude update`. Everything else works through CLI text output.",
-    });
+  const host = env.ACTORS_HOST ?? projectHost(findProjectRoot(cwd) ?? cwd);
+  if (host === "codex") {
+    const codex = run("codex", ["--version"]);
+    add({ id: "codex", status: "info", message: codex?.trim() ?? "Codex not found on PATH; the CLI works without it" });
+  }
+  if (host === "claude") {
+    const claude = run("claude", ["--version"]);
+    const claudeVersion = claude?.match(/\d+\.\d+\.\d+/)?.[0];
+    if (!claudeVersion) {
+      add({ id: "claude", status: "info", message: "Claude Code not found on PATH; the CLI works without it" });
+    } else if (compare(parse(claudeVersion), parse(MODS_FLOOR)) >= 0) {
+      add({ id: "claude", status: "ok", message: `Claude Code ${claudeVersion} (the Room and plugin evals are available)` });
+    } else {
+      add({
+        id: "claude",
+        status: "warn",
+        message: `Claude Code ${claudeVersion}: the Room needs ${MODS_FLOOR}+${compare(parse(claudeVersion), parse(EVAL_FLOOR)) < 0 ? `, plugin evals need ${EVAL_FLOOR}+` : ""}`,
+        fix: "Run `claude update`. Everything else works through CLI text output.",
+      });
+    }
+
   }
 
   add({
@@ -82,7 +91,7 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
       fix: "Create one with `actors init <dir>`, or study examples/release-radar and examples/briefing-desk.",
     });
   } else {
-    projectFindings(root, add);
+    projectFindings(root, add, host);
   }
 
   const summary = { ok: 0, warn: 0, error: 0, info: 0 };
@@ -95,7 +104,7 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
   return { data: { projectRoot: root, findings, summary }, text, exitCode: summary.error > 0 ? 1 : 0 };
 }
 
-function projectFindings(root: string, add: (f: Finding) => void): void {
+function projectFindings(root: string, add: (f: Finding) => void, host: string): void {
   add({ id: "project", status: "ok", message: `Actor project at ${root}` });
   const pkg = readJson<{ devDependencies?: Record<string, string>; dependencies?: Record<string, string> }>(join(root, "package.json"));
   const pin = pkg?.devDependencies?.["actors-toolkit"] ?? pkg?.dependencies?.["actors-toolkit"];
@@ -103,7 +112,7 @@ function projectFindings(root: string, add: (f: Finding) => void): void {
     add({
       id: "project.pin",
       status: "warn",
-      message: "package.json doesn't pin actors-toolkit, so CI and Claude may run different versions",
+      message: "package.json doesn't pin actors-toolkit, so CI and the coding agent may run different versions",
       fix: `Run \`npm install -D -E actors-toolkit@${VERSION}\`.`,
     });
   } else if (/^[\^~>=<*]|^latest$/.test(pin)) {
@@ -129,35 +138,45 @@ function projectFindings(root: string, add: (f: Finding) => void): void {
       ? { id: "project.config", status: "ok", message: `Worker config ${config}` }
       : { id: "project.config", status: "error", message: "No wrangler.jsonc", fix: "Run `actors init --adopt` or add one." },
   );
-  add(
-    existsSync(join(root, ".claude", "skills", "verify", "SKILL.md"))
-      ? { id: "project.verify-skill", status: "ok", message: "Project verify skill present" }
-      : {
-          id: "project.verify-skill",
-          status: "warn",
-          message: "No .claude/skills/verify/SKILL.md, so sessions without the plugin won't run `npm run verify` before commits",
-          fix: "Run `actors init --adopt` to add it (existing .claude/ files are never overwritten).",
-        },
-  );
-  const settingsPath = join(root, ".claude", "settings.json");
-  const ask = (readJson<{ permissions?: { ask?: string[] } }>(settingsPath)?.permissions?.ask ?? []) as string[];
-  const missing = askRules().filter((r) => !ask.includes(r));
-  if (!existsSync(settingsPath)) {
-    add({
-      id: "project.permissions",
-      status: "warn",
-      message: "No .claude/settings.json: deploy and remote-write commands won't prompt",
-      fix: "Run `actors init --adopt` to create it.",
-    });
-  } else if (missing.length > 0) {
-    add({
-      id: "project.permissions",
-      status: "warn",
-      message: `.claude/settings.json lacks ${missing.length} ask rule(s): ${missing.join(", ")}`,
-      fix: "Add them to permissions.ask; `actors init --adopt` prints the full list.",
-    });
-  } else {
-    add({ id: "project.permissions", status: "ok", message: "Deploy and remote-write commands require approval" });
+  if (host === "codex") {
+    for (const rel of ["AGENTS.md", ".agents/skills/verify/SKILL.md"]) {
+      add(existsSync(join(root, rel))
+        ? { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "ok", message: `${rel} present` }
+        : { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "warn", message: `${rel} missing`, fix: "Run `actors init --adopt --host codex` (existing files are preserved)." });
+    }
+  }
+  if (host === "claude") {
+    add(
+      existsSync(join(root, ".claude", "skills", "verify", "SKILL.md"))
+        ? { id: "project.verify-skill", status: "ok", message: "Project verify skill present" }
+        : {
+            id: "project.verify-skill",
+            status: "warn",
+            message: "No .claude/skills/verify/SKILL.md, so sessions without the plugin won't run `npm run verify` before commits",
+            fix: "Run `actors init --adopt` to add it (existing .claude/ files are never overwritten).",
+          },
+    );
+    const settingsPath = join(root, ".claude", "settings.json");
+    const ask = (readJson<{ permissions?: { ask?: string[] } }>(settingsPath)?.permissions?.ask ?? []) as string[];
+    const missing = askRules().filter((r) => !ask.includes(r));
+    if (!existsSync(settingsPath)) {
+      add({
+        id: "project.permissions",
+        status: "warn",
+        message: "No .claude/settings.json: deploy and remote-write commands won't prompt",
+        fix: "Run `actors init --adopt` to create it.",
+      });
+    } else if (missing.length > 0) {
+      add({
+        id: "project.permissions",
+        status: "warn",
+        message: `.claude/settings.json lacks ${missing.length} ask rule(s): ${missing.join(", ")}`,
+        fix: "Add them to permissions.ask; `actors init --adopt` prints the full list.",
+      });
+    } else {
+      add({ id: "project.permissions", status: "ok", message: "Deploy and remote-write commands require approval" });
+    }
+
   }
   if (existsSync(join(root, "system.ts")) && readFileSync(join(root, "system.ts"), "utf8").trim() === "") {
     add({ id: "project.declaration", status: "error", message: "system.ts is empty" });

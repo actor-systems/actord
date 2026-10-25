@@ -101,3 +101,8 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0008](decisions/0008-agent-guided-development.md) | Skills, critics, hooks, claims, evals |
 | [0009](decisions/0009-the-room.md) | The Room: one CLI document, a prefiltered guard, a deduplicated monitor |
 | [0010](decisions/0010-eval-lane.md) | The eval lane: what the graders measure; the deploy case asserts no deploy ran |
+| [0011](decisions/0011-payload-compatibility.md) | Payload compatibility: "compatible" is a proof, and the plan drains what isn't |
+
+## Coding-host adapters
+
+The core in `packages/cli` is shared with the sibling Codex adapter in `../actors/`. Host profiles select project guidance only; native runtime, type contracts and evidence are the same. Claude integration stays in `plugin/`; Codex keeps its portable manifest, skills and launcher in its own distribution. See [decision 0012](decisions/0012-shared-core-host-adapters.md).

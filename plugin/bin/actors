@@ -6,7 +6,8 @@ plugin_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 bundle="$plugin_root/dist/actors.mjs"
 ACTORS_PLUGIN_VERSION=$(cat "$plugin_root/dist/VERSION" 2>/dev/null || echo unknown)
 ACTORS_PLUGIN_DIST="$plugin_root/dist"
-export ACTORS_PLUGIN_VERSION ACTORS_PLUGIN_DIST
+ACTORS_HOST=claude
+export ACTORS_PLUGIN_VERSION ACTORS_PLUGIN_DIST ACTORS_HOST
 dir=$(pwd)
 while :; do
   if [ -x "$dir/node_modules/.bin/actors" ]; then
