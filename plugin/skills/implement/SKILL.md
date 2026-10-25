@@ -8,6 +8,11 @@ allowed-tools: Bash(npx --no-install actors check *) Bash(actors check *) Bash(a
 # Implement actor behavior
 
 Rules that hold for this whole skill:
+- **Keep what already works.** Preserve existing public read methods and their return shapes. Keep
+  existing tests, and add a focused test that proves the requested change. An incompatible contract change
+  follows `/actors:evolve`: a version bump alone refuses every queued copy.
+- **Run the tests before reporting.** Run the affected workerd tests. If the host blocks them, report the
+  change as unverified and give the exact command to run on the host.
 - **Change the declaration first.** Edit `system.ts`, then let the compiler and `actors check` show every
   handler and send that no longer fits.
 - **Handlers are storage-only.** Each handler runs inside one storage transaction, so its writes, outgoing
@@ -32,7 +37,7 @@ Rules that hold for this whole skill:
 
 1. Read the diagnostics above. Fix every `error` before adding anything.
 2. Update `system.ts` and `src/messages/` for the change: new messages start at version 1, and a changed
-   contract gets a new version or stays backward compatible.
+   contract stays backward compatible (`actors diff` checks), or follow `/actors:evolve`.
 3. Implement handlers with `actorRuntime(...)` (API: `references/runtime.md`). The class keeps a public
    `receive(envelope)` and forwards `alarm()`. Add the binding and `exports` entry to `wrangler.jsonc`, and
    export the class from the Worker entry.

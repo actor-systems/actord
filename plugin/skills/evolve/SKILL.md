@@ -7,6 +7,10 @@ allowed-tools: Bash(npx --no-install actors diff *) Bash(actors diff *) Bash(act
 # Evolve a running actor system
 
 Rules that hold for this whole skill:
+- **Keep what already works.** Preserve existing public read methods and their return shapes. Keep
+  existing tests, and add a focused test that proves the requested change.
+- **Run the tests before reporting.** Run the affected workerd tests. If the host blocks them, report the
+  change as unverified and give the exact command to run on the host.
 - **Produce a deploy plan, never a deploy.** Don't run `wrangler deploy`, `wrangler versions …`, secrets, or
   remote writes. If asked to deploy, show the plan and say a person runs it after approval. The project's
   permission rules (and the Room's guard, where it's active) will ask anyway.
@@ -23,8 +27,10 @@ Rules that hold for this whole skill:
 
 1. **State the change** and what must keep working (running schedules, queued messages, stored state).
 2. **Change the declaration first** (`system.ts`, `src/messages/`). Prefer additive changes: new optional
-   fields, new messages, new routes. For an incompatible payload change, bump the message version and
-   accept both shapes until queues drain.
+   fields, new messages, new routes. A receiver accepts one version of a message at a time, so a version
+   bump refuses every queued copy. For an incompatible payload change, keep the new schema accepting the
+   old shape, or add a new message beside the old one and retire the old one in a later deploy; otherwise
+   the plan drains outboxes first.
 3. **Ask the critics:** `boundary-critic` for new or removed actors and routes, and `delivery-auditor` for
    changed handlers and effects. Resolve each objection with code or a test.
 4. **Implement and test:** follow `/actors:implement`, and add tests for the new behavior and for what must
