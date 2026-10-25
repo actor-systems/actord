@@ -3,7 +3,7 @@
 // graders all read. It never deploys and never contacts Cloudflare.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { type ClassifiedClaim, classifyClaims, readClaims, type TestResult } from "../../model/claims.ts";
 import { fingerprint } from "../../model/fingerprint.ts";
 import { loadProject } from "../../model/load.ts";
@@ -42,7 +42,40 @@ const TEST_RESULTS = ".actors/vitest-results.json";
 function run(cmd: string, args: string[], cwd: string, extraEnv: Record<string, string> = {}) {
   const started = Date.now();
   const r = spawnSync(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
-  return { code: r.status ?? 1, output: `${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started };
+  // A child that never started (or was killed) leaves no output of its own; say why instead of nothing.
+  const why = r.error ? `actors verify couldn't run \`${cmd} ${args.join(" ")}\`: ${r.error.message}\n` : r.signal ? `\`${cmd}\` was killed by ${r.signal}\n` : "";
+  // A sandbox that refuses to start the child is the environment's limit, not the project's failure.
+  const spawnBlocked = (r.error as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+  return { code: r.status ?? 1, output: `${why}${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started, spawnBlocked };
+}
+
+/**
+ * Tools run without npm or npx: some sandboxes (Claude Code's eval runs) refuse to start them from a child
+ * process. Package binaries run under the node that is already running; a project script runs in sh with
+ * node_modules/.bin and this node's directory first on PATH, as `npm run` would arrange.
+ */
+function binPath(root: string, pkg: string, bin: string): string | null {
+  for (let dir = root; ; dir = dirname(dir)) {
+    const manifest = readJson<{ bin?: string | Record<string, string> }>(join(dir, "node_modules", pkg, "package.json"));
+    const rel = typeof manifest?.bin === "string" ? manifest.bin : manifest?.bin?.[bin];
+    if (rel) return join(dir, "node_modules", pkg, rel);
+    if (dirname(dir) === dir) return null;
+  }
+}
+
+function runBin(root: string, pkg: string, bin: string, args: string[], extraEnv: Record<string, string> = {}) {
+  const entry = binPath(root, pkg, bin);
+  if (!entry) return { code: 1, output: `${pkg} isn't installed in this project (run npm install)\n`, ms: 0, spawnBlocked: false };
+  return run(process.execPath, [entry, ...args], root, extraEnv);
+}
+
+function runScript(root: string, script: string) {
+  const bins: string[] = [];
+  for (let dir = root; ; dir = dirname(dir)) {
+    bins.push(join(dir, "node_modules", ".bin"));
+    if (dirname(dir) === dir) break;
+  }
+  return run("/bin/sh", ["-c", script], root, { PATH: [...bins, dirname(process.execPath), process.env.PATH ?? ""].join(delimiter) });
 }
 
 const tail = (s: string, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
@@ -52,16 +85,15 @@ export function runTests(root: string, profile: string): { step: Step; tests: Te
   const out = join(root, TEST_RESULTS);
   mkdirSync(dirname(out), { recursive: true });
   // The standard profile leaves out tests tagged [extended]; the extended profile runs everything.
-  const args = ["--no-install", "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
+  const args = ["run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
   if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
-  const r = run("npx", args, root, { ACTORS_FAULT_PROFILE: profile });
-  const command = `npx vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
-  if (SANDBOX_BLOCK.test(r.output)) {
-    return {
-      step: { id: "tests", status: "blocked", command, durationMs: r.ms, summary: "blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)" },
-      tests: null,
-      blocked: true,
-    };
+  const r = runBin(root, "vitest", "vitest", args, { ACTORS_FAULT_PROFILE: profile });
+  const command = `vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
+  if (SANDBOX_BLOCK.test(r.output) || r.spawnBlocked) {
+    const summary = r.spawnBlocked
+      ? "blocked: the sandbox refused to start the test runner"
+      : "blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)";
+    return { step: { id: "tests", status: "blocked", command, durationMs: r.ms, summary, detail: { output: tail(r.output) } }, tests: null, blocked: true };
   }
   let tests: TestResult[] | null = null;
   try {
@@ -95,13 +127,14 @@ export async function verify(cwd: string, opts: { out?: string; profile?: string
   const steps: Step[] = [];
 
   const pkg = readJson<{ scripts?: Record<string, string> }>(join(root, "package.json"));
-  const tc = pkg?.scripts?.typecheck ? run("npm", ["run", "--silent", "typecheck"], root) : run("npx", ["--no-install", "tsc", "--noEmit"], root);
+  const script = pkg?.scripts?.typecheck;
+  const tc = script ? runScript(root, script) : runBin(root, "typescript", "tsc", ["--noEmit"]);
   steps.push({
     id: "typecheck",
-    status: tc.code === 0 ? "pass" : "fail",
-    command: pkg?.scripts?.typecheck ? "npm run typecheck" : "npx tsc --noEmit",
+    status: tc.code === 0 ? "pass" : tc.spawnBlocked ? "blocked" : "fail",
+    command: script ? `npm run typecheck (${script})` : "tsc --noEmit",
     durationMs: tc.ms,
-    summary: tc.code === 0 ? "no type errors" : "type errors",
+    summary: tc.code === 0 ? "no type errors" : tc.spawnBlocked ? "blocked: the sandbox refused to start the type checker" : "type errors",
     ...(tc.code === 0 ? {} : { detail: { output: tail(tc.output, 25) } }),
   });
 

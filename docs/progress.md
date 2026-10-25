@@ -59,6 +59,11 @@ Room acceptance steps A9 (one model turn) and A10 (Desktop app). After they pass
 - Eval runs and local port binding are unverified until the first approved eval run (decision 0004).
 - "`start` works in a fresh session" (G1) and every eval need model calls, so ask the owner before running.
 
+## Owner approvals
+- 2026-10-25: eval lane approved: Sonnet 5.5 agent (`claude-sonnet-5-5`), Haiku 5.5 judge
+  (`claude-haiku-5-5`), $50 total ceiling: calibration (≤ $2) first, then the full suite twice; stop if the
+  projection exceeds the ceiling. Acceptance step A9 (one model turn) approved.
+
 ## Standing constraints (from the owner)
 - Ask before: any deploy, real credentials, publishing/submitting, contacting external services
   (beyond reading docs and installing npm packages), and any model-backed `claude plugin eval` run.

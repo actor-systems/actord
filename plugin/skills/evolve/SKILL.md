@@ -28,9 +28,11 @@ Rules that hold for this whole skill:
 3. **Ask the critics:** `boundary-critic` for new or removed actors and routes, and `delivery-auditor` for
    changed handlers and effects. Resolve each objection with code or a test.
 4. **Implement and test:** follow `/actors:implement`, and add tests for the new behavior and for what must
-   not break. Then run `actors check`, `actors graph --write`, `actors test`, and `actors verify`.
-5. **Classify:** `actors diff` (against `HEAD`). Read `references/compatibility.md` for what each class
-   means on Cloudflare.
+   not break. Run `actors test`. `actors check` reports the manifest as stale until step 5; that's expected.
+5. **Classify, then record:** run `actors diff` first. It compares against the manifest committed at `HEAD`,
+   or, where git isn't usable, against `actors.manifest.json` on disk, which the next command overwrites.
+   Then run `actors graph --write` and `actors verify`. Read `references/compatibility.md` for what each
+   class means on Cloudflare.
 
 ## Output (done when shown)
 

@@ -140,7 +140,10 @@ export async function room(cwd: string, opts: { baseFile?: string } = {}): Promi
 }
 
 function baseManifest(root: string, source: string, cwd: string): Manifest | null {
-  if (source.startsWith("file:")) return readJson<Manifest>(resolve(cwd, source.slice(5)));
+  if (source.startsWith("file:")) {
+    const path = resolve(cwd, source.slice(5));
+    return readJson<Manifest>(existsSync(path) ? path : join(root, source.slice(5)));
+  }
   if (!source.startsWith("git:")) return null;
   const top = spawnSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (top.status !== 0) return null;

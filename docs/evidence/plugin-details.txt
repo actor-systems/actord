@@ -18,7 +18,7 @@ Per-component (rounded)
   inspect                 ~70       ~420
   setup                   ~80       ~560
   start                   ~70       ~510
-  evolve                  ~80       ~540
+  evolve                  ~80       ~600
   reliability             ~90       ~550
   implement               ~70       ~690
   boundary-critic         ~70       ~450

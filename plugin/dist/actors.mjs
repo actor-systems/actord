@@ -292,7 +292,7 @@ function icon(s) {
 
 // src/cli/commands/events.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { closeSync, existsSync as existsSync6, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync7, readSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync, existsSync as existsSync7, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync7, readSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname3, join as join6, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/model/events.ts
@@ -458,7 +458,7 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
 
 // src/cli/commands/model.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { mkdirSync, readFileSync as readFileSync6, writeFileSync } from "node:fs";
+import { existsSync as existsSync6, mkdirSync, readFileSync as readFileSync6, writeFileSync } from "node:fs";
 import { join as join5, relative as relative2, resolve as resolve3 } from "node:path";
 
 // src/cli/output.ts
@@ -1063,9 +1063,14 @@ async function diff(cwd, opts) {
   } else {
     const ref = opts.base ?? "HEAD";
     const fromGit = gitShow(root, ref, MANIFEST_FILE);
-    if (fromGit) {
-      base = JSON.parse(fromGit);
+    const onDisk = join5(root, MANIFEST_FILE);
+    if (fromGit.text) {
+      base = JSON.parse(fromGit.text);
       source = `git:${ref}`;
+    } else if (!fromGit.usable && existsSync6(onDisk)) {
+      base = JSON.parse(readFileSync6(onDisk, "utf8"));
+      source = `file:${MANIFEST_FILE}`;
+      notes.push(`git isn't usable here (${fromGit.why}), so this compares against ${MANIFEST_FILE} on disk, the architecture last recorded by \`actors graph --write\`. Run \`actors diff\` before regenerating it, or pass --base-file.`);
     } else {
       notes.push(`No ${MANIFEST_FILE} at ${ref}; the whole system is shown as added. Commit the manifest (\`actors graph --write\`) to diff against it.`);
     }
@@ -1076,10 +1081,13 @@ async function diff(cwd, opts) {
 }
 function gitShow(root, ref, file) {
   const top = spawnSync2("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
-  if (top.status !== 0) return null;
+  if (top.status !== 0) {
+    const why = top.error?.message ?? (top.stderr ?? "").trim().split("\n").pop() ?? `exit ${top.status}`;
+    return { text: null, usable: false, why: why || `exit ${top.status}` };
+  }
   const rel = relative2(top.stdout.trim(), join5(root, file));
   const r = spawnSync2("git", ["-C", root, "show", `${ref}:${rel}`], { encoding: "utf8" });
-  return r.status === 0 ? r.stdout : null;
+  return { text: r.status === 0 ? r.stdout : null, usable: true, why: "" };
 }
 function renderDiff(d) {
   const sign = (k) => k.endsWith(".added") ? "+" : k.endsWith(".removed") ? "-" : "~";
@@ -1133,7 +1141,7 @@ async function followEvents(cwd, opts, out) {
 ` : `${formatEvent(e)}
 `);
   for (; ; ) {
-    if (existsSync6(path)) {
+    if (existsSync7(path)) {
       const size = statSync3(path).size;
       if (size < offset) {
         offset = 0;
@@ -1219,7 +1227,7 @@ function trace(cwd, id, opts) {
 
 // src/cli/commands/hook.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
-import { existsSync as existsSync7, readFileSync as readFileSync8 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync8 } from "node:fs";
 import { dirname as dirname4, join as join7, relative as relative4 } from "node:path";
 var RELEVANT2 = /(^|\/)(system\.ts|wrangler\.jsonc?|actors\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
 var BUDGET_MS = 2e3;
@@ -1276,7 +1284,7 @@ function evidenceGate(input, env, out) {
   return 0;
 }
 function actorFilesModified(root) {
-  if (!existsSync7(join7(root, ".git")) && spawnSync4("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
+  if (!existsSync8(join7(root, ".git")) && spawnSync4("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
   const r = spawnSync4("git", ["-C", root, "status", "--porcelain", "--", "system.ts", "src/actors", "src/messages", "src/index.ts", "wrangler.jsonc"], {
     encoding: "utf8"
   });
@@ -1284,7 +1292,7 @@ function actorFilesModified(root) {
 }
 
 // src/cli/commands/init.ts
-import { copyFileSync, existsSync as existsSync8, mkdirSync as mkdirSync3, readdirSync as readdirSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { copyFileSync, existsSync as existsSync9, mkdirSync as mkdirSync3, readdirSync as readdirSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { basename, dirname as dirname5, join as join8, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1575,7 +1583,7 @@ function bundledTarball() {
   }
   for (const dir of dirs) {
     const tgz = dir ? join8(dir, `actors-toolkit-${VERSION}.tgz`) : null;
-    if (tgz && existsSync8(tgz)) return tgz;
+    if (tgz && existsSync9(tgz)) return tgz;
   }
   return null;
 }
@@ -1586,7 +1594,7 @@ function init(cwd, target, opts) {
   const suggestions = [];
   const write = (rel, content) => {
     const path = join8(root, rel);
-    if (existsSync8(path)) {
+    if (existsSync9(path)) {
       skipped.push(rel);
       return;
     }
@@ -1595,7 +1603,7 @@ function init(cwd, target, opts) {
     created.push(rel);
   };
   if (opts.adopt) {
-    if (!existsSync8(join8(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
+    if (!existsSync9(join8(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
     const name2 = opts.name ?? readJson(join8(root, "package.json"))?.name ?? basename(root);
     write(".claude/skills/verify/SKILL.md", verifySkill());
     write(".claude/settings.json", settingsJson());
@@ -1609,10 +1617,10 @@ ${missing.map((r) => `    "${r}"`).join(",\n")}`);
     const pkg = readJson(join8(root, "package.json"));
     if (!pkg?.scripts?.verify) suggestions.push(`Add a script to package.json: "verify": "actors verify"`);
     if (!pkg?.devDependencies?.["actors-toolkit"]) suggestions.push(`Pin the CLI so CI and Claude run the same version: npm install -D -E actors-toolkit@${VERSION}`);
-    if (!existsSync8(join8(root, "actors.manifest.json"))) suggestions.push("Run `npx actors graph --write` and commit actors.manifest.json.");
+    if (!existsSync9(join8(root, "actors.manifest.json"))) suggestions.push("Run `npx actors graph --write` and commit actors.manifest.json.");
     return result(root, "adopt", created, skipped, suggestions, "unchanged");
   }
-  if (existsSync8(root) && readdirSync2(root).filter((e) => e !== ".git" && e !== "node_modules").length > 0) {
+  if (existsSync9(root) && readdirSync2(root).filter((e) => e !== ".git" && e !== "node_modules").length > 0) {
     throw new UsageError(`${root} isn't empty; init only creates projects in empty directories. To add the toolkit's files to an existing project, run \`actors init --adopt\`.`);
   }
   const name = (opts.name ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "actor-system";
@@ -1640,7 +1648,7 @@ function result(root, mode, created, skipped, suggestions, toolkit) {
 
 // src/cli/commands/room.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
-import { existsSync as existsSync9, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync10, statSync as statSync4 } from "node:fs";
 import { join as join9, resolve as resolve6 } from "node:path";
 
 // src/model/svg.ts
@@ -1809,7 +1817,10 @@ async function room(cwd, opts = {}) {
   return { data, text, exitCode: 0 };
 }
 function baseManifest(root, source, cwd) {
-  if (source.startsWith("file:")) return readJson(resolve6(cwd, source.slice(5)));
+  if (source.startsWith("file:")) {
+    const path = resolve6(cwd, source.slice(5));
+    return readJson(existsSync10(path) ? path : join9(root, source.slice(5)));
+  }
   if (!source.startsWith("git:")) return null;
   const top = spawnSync5("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (top.status !== 0) return null;
@@ -1879,7 +1890,7 @@ function readEvidence(root, print) {
 function roomSignature(root) {
   const stamp = (f) => {
     const p = join9(root, f);
-    return existsSync9(p) ? `${statSync4(p).size}:${statSync4(p).mtimeMs}` : "-";
+    return existsSync10(p) ? `${statSync4(p).size}:${statSync4(p).mtimeMs}` : "-";
   };
   return [fingerprint(root), stamp(EVENTS_FILE), stamp(LAST_CHECK_FILE), stamp(EVIDENCE_FILE), stamp("actors.manifest.json")].join("|");
 }
@@ -1932,15 +1943,15 @@ async function guard(cwd, command) {
 // src/cli/commands/verify.ts
 import { spawnSync as spawnSync6 } from "node:child_process";
 import { mkdirSync as mkdirSync4, readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
-import { dirname as dirname6, join as join11, relative as relative5, resolve as resolve7 } from "node:path";
+import { delimiter, dirname as dirname6, join as join11, relative as relative5, resolve as resolve7 } from "node:path";
 
 // src/model/claims.ts
-import { existsSync as existsSync10, readFileSync as readFileSync9 } from "node:fs";
+import { existsSync as existsSync11, readFileSync as readFileSync9 } from "node:fs";
 import { join as join10 } from "node:path";
 var CLAIMS_FILE = "actors.claims.json";
 function readClaims(root) {
   const path = join10(root, CLAIMS_FILE);
-  if (!existsSync10(path)) return { claims: [], error: null };
+  if (!existsSync11(path)) return { claims: [], error: null };
   try {
     const doc = JSON.parse(readFileSync9(path, "utf8"));
     return { claims: doc.claims ?? [], error: null };
@@ -1980,22 +1991,45 @@ var TEST_RESULTS = ".actors/vitest-results.json";
 function run2(cmd, args, cwd, extraEnv = {}) {
   const started = Date.now();
   const r = spawnSync6(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
-  return { code: r.status ?? 1, output: `${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started };
+  const why = r.error ? `actors verify couldn't run \`${cmd} ${args.join(" ")}\`: ${r.error.message}
+` : r.signal ? `\`${cmd}\` was killed by ${r.signal}
+` : "";
+  const spawnBlocked = r.error?.code === "EPERM";
+  return { code: r.status ?? 1, output: `${why}${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started, spawnBlocked };
+}
+function binPath(root, pkg, bin) {
+  for (let dir = root; ; dir = dirname6(dir)) {
+    const manifest = readJson(join11(dir, "node_modules", pkg, "package.json"));
+    const rel = typeof manifest?.bin === "string" ? manifest.bin : manifest?.bin?.[bin];
+    if (rel) return join11(dir, "node_modules", pkg, rel);
+    if (dirname6(dir) === dir) return null;
+  }
+}
+function runBin(root, pkg, bin, args, extraEnv = {}) {
+  const entry = binPath(root, pkg, bin);
+  if (!entry) return { code: 1, output: `${pkg} isn't installed in this project (run npm install)
+`, ms: 0, spawnBlocked: false };
+  return run2(process.execPath, [entry, ...args], root, extraEnv);
+}
+function runScript(root, script) {
+  const bins = [];
+  for (let dir = root; ; dir = dirname6(dir)) {
+    bins.push(join11(dir, "node_modules", ".bin"));
+    if (dirname6(dir) === dir) break;
+  }
+  return run2("/bin/sh", ["-c", script], root, { PATH: [...bins, dirname6(process.execPath), process.env.PATH ?? ""].join(delimiter) });
 }
 var tail = (s, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
 function runTests(root, profile) {
   const out = join11(root, TEST_RESULTS);
   mkdirSync4(dirname6(out), { recursive: true });
-  const args = ["--no-install", "vitest", "run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
+  const args = ["run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
   if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
-  const r = run2("npx", args, root, { ACTORS_FAULT_PROFILE: profile });
-  const command = `npx vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
-  if (SANDBOX_BLOCK.test(r.output)) {
-    return {
-      step: { id: "tests", status: "blocked", command, durationMs: r.ms, summary: "blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)" },
-      tests: null,
-      blocked: true
-    };
+  const r = runBin(root, "vitest", "vitest", args, { ACTORS_FAULT_PROFILE: profile });
+  const command = `vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
+  if (SANDBOX_BLOCK.test(r.output) || r.spawnBlocked) {
+    const summary = r.spawnBlocked ? "blocked: the sandbox refused to start the test runner" : "blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)";
+    return { step: { id: "tests", status: "blocked", command, durationMs: r.ms, summary, detail: { output: tail(r.output) } }, tests: null, blocked: true };
   }
   let tests = null;
   try {
@@ -2027,13 +2061,14 @@ async function verify(cwd, opts) {
   if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const steps = [];
   const pkg = readJson(join11(root, "package.json"));
-  const tc = pkg?.scripts?.typecheck ? run2("npm", ["run", "--silent", "typecheck"], root) : run2("npx", ["--no-install", "tsc", "--noEmit"], root);
+  const script = pkg?.scripts?.typecheck;
+  const tc = script ? runScript(root, script) : runBin(root, "typescript", "tsc", ["--noEmit"]);
   steps.push({
     id: "typecheck",
-    status: tc.code === 0 ? "pass" : "fail",
-    command: pkg?.scripts?.typecheck ? "npm run typecheck" : "npx tsc --noEmit",
+    status: tc.code === 0 ? "pass" : tc.spawnBlocked ? "blocked" : "fail",
+    command: script ? `npm run typecheck (${script})` : "tsc --noEmit",
     durationMs: tc.ms,
-    summary: tc.code === 0 ? "no type errors" : "type errors",
+    summary: tc.code === 0 ? "no type errors" : tc.spawnBlocked ? "blocked: the sandbox refused to start the type checker" : "type errors",
     ...tc.code === 0 ? {} : { detail: { output: tail(tc.output, 25) } }
   });
   const started = Date.now();

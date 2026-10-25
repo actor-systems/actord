@@ -129,6 +129,19 @@ describe("actors room", () => {
   });
 });
 
+describe("actors diff without git", () => {
+  it("compares against the manifest on disk and says why", () => {
+    // The copy under the OS temp dir is in no repository, as in a sandbox that can't start git.
+    const doc = JSON.parse(run(app, ["diff", "--json"]).out);
+    expect(doc.base.source).toBe("file:actors.manifest.json");
+    expect(doc.notes[0]).toMatch(/^git isn't usable here \(.+\), so this compares against actors\.manifest\.json on disk/);
+    expect(doc.changes).toEqual([]);
+    const r = JSON.parse(run(app, ["room", "--json"]).out);
+    expect(r.topology.base).toBe("file:actors.manifest.json");
+    expect(r.topology.changes).toBe(0);
+  });
+});
+
 describe("actors guard", () => {
   it("holds a deploy inside an actor project with the diff summary and plan, refusing by default", () => {
     const r = run(app, ["guard", "--json", "--", deploy]);

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { checkProject, type Diagnostic } from "../../model/check.ts";
 import { type DiffResult, diffManifests, EMPTY_MANIFEST } from "../../model/diff.ts";
@@ -148,9 +148,16 @@ export async function diff(cwd: string, opts: { base?: string; baseFile?: string
   } else {
     const ref = opts.base ?? "HEAD";
     const fromGit = gitShow(root, ref, MANIFEST_FILE);
-    if (fromGit) {
-      base = JSON.parse(fromGit) as Manifest;
+    const onDisk = join(root, MANIFEST_FILE);
+    if (fromGit.text) {
+      base = JSON.parse(fromGit.text) as Manifest;
       source = `git:${ref}`;
+    } else if (!fromGit.usable && existsSync(onDisk)) {
+      // Without git (a sandbox that can't start it, or no repository), the manifest on disk is the
+      // architecture last recorded by `actors graph --write`: the best base there is, said plainly.
+      base = JSON.parse(readFileSync(onDisk, "utf8")) as Manifest;
+      source = `file:${MANIFEST_FILE}`;
+      notes.push(`git isn't usable here (${fromGit.why}), so this compares against ${MANIFEST_FILE} on disk, the architecture last recorded by \`actors graph --write\`. Run \`actors diff\` before regenerating it, or pass --base-file.`);
     } else {
       notes.push(`No ${MANIFEST_FILE} at ${ref}; the whole system is shown as added. Commit the manifest (\`actors graph --write\`) to diff against it.`);
     }
@@ -160,12 +167,15 @@ export async function diff(cwd: string, opts: { base?: string; baseFile?: string
   return { data, text: renderDiff(data), exitCode: 0 };
 }
 
-function gitShow(root: string, ref: string, file: string): string | null {
+function gitShow(root: string, ref: string, file: string): { text: string | null; usable: boolean; why: string } {
   const top = spawnSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
-  if (top.status !== 0) return null;
+  if (top.status !== 0) {
+    const why = top.error?.message ?? (top.stderr ?? "").trim().split("\n").pop() ?? `exit ${top.status}`;
+    return { text: null, usable: false, why: why || `exit ${top.status}` };
+  }
   const rel = relative(top.stdout.trim(), join(root, file));
   const r = spawnSync("git", ["-C", root, "show", `${ref}:${rel}`], { encoding: "utf8" });
-  return r.status === 0 ? r.stdout : null;
+  return { text: r.status === 0 ? r.stdout : null, usable: true, why: "" };
 }
 
 function renderDiff(d: DiffData): string {
