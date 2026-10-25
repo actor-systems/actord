@@ -1,5 +1,5 @@
 #!/bin/sh
-# actors: on the Bash tool's PATH while the plugin is enabled.
+# actord: on the Bash tool's PATH while the plugin is enabled.
 # Prefers a project's pinned CLI (node_modules/.bin/actord), so Claude and CI run the same version;
 # otherwise runs the bundled single-file build. Never contacts the network.
 plugin_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
