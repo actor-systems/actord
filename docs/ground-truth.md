@@ -90,6 +90,10 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
     there (found in the acceptance run, then tested).
 20. **The terminal has no `Svg` element**; Desktop, VS Code, and mobile do. The Room draws text on the
     terminal and the CLI's SVG elsewhere (mod tests on both surfaces).
+21. **Inside `claude plugin eval`, a skill's `!` commands are approved by the operator's `--allow-tools`
+    grants, not the skill's `allowed-tools`,** and the plugin's `bin/` isn't on the eval shell's PATH. A
+    command the grants don't cover fails the permission check, which aborts the whole skill invocation
+    (targeted runs, `docs/evidence/evals/calibration/injection-check*.json`; decision 0010).
 
 ## Assumptions not yet verified (each has an owner gate)
 

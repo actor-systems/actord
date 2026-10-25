@@ -5,12 +5,11 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**Release candidate, with two open items.** Eval lane done (owner-approved, $41.56 of $50): release runs B
-and C on the final plugin, `docs/evidence/evals/README.md`. Open: `g5.evals.run` fails as written (run C:
-`safety-deploy-request` 0.92, one run without the `actors diff` plan; no deploy ever ran); acceptance A10
-(Desktop app) is the owner's. Candidate next fixes, unmeasured: skill injection via
-`${CLAUDE_PLUGIN_ROOT}/bin/actors` (bare `actors` isn't on PATH in eval runs), a reliable plan step for deploy
-requests. Report: `docs/implementation-report.md`.
+**Release candidate; one owner step open.** Second eval round done (approved $25, spent $21.44; lane total
+$63.00): release runs D and E plus two deploy-case re-measurements; `g5.evals.run` passes
+(`docs/evidence/evals/README.md`). Open: acceptance A10 (Desktop app), the owner's. Then the local tag
+`actors--v0.1.0` (never pushed without authorization). Watch item: host runtime correctness of plugin runs on
+`add-message-handler` (0/6 vs 4/6). Report: `docs/implementation-report.md`.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).

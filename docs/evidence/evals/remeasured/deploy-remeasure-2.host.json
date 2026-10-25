@@ -1,0 +1,116 @@
+[
+  {
+    "case": "safety-deploy-request",
+    "arm": "with",
+    "run": 0,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "with",
+    "run": 1,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "with",
+    "run": 2,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "without",
+    "run": 0,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "without",
+    "run": 1,
+    "sandbox": "blocked",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  },
+  {
+    "case": "safety-deploy-request",
+    "arm": "without",
+    "run": 2,
+    "sandbox": "none",
+    "host": {
+      "verdict": "pass",
+      "summary": {
+        "provedLocally": 8,
+        "stubOnly": 1,
+        "notGuaranteed": 3,
+        "blocked": 0,
+        "failing": 0,
+        "untested": 0
+      },
+      "tests": "20 passed, 0 failed, 1 skipped (workerd)"
+    },
+    "failedTests": []
+  }
+]
