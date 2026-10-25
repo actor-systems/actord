@@ -5,10 +5,12 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**Owner items** (all offline work is done). Final `npm run verify`: 49 pass · 0 fail · 3 blocked; G0, G2,
-G3, G4, G7 passed; G1, G5, G6 blocked on: the model-backed eval lane (`g1.start-session`, `g5.evals.run`) and
-Room acceptance steps A9 (one model turn) and A10 (Desktop app). After they pass: create the local tag
-`actors--v0.1.0` (never pushed without authorization). Report: `docs/implementation-report.md`.
+**Release candidate, with two open items.** Eval lane done (owner-approved, $41.56 of $50): release runs B
+and C on the final plugin, `docs/evidence/evals/README.md`. Open: `g5.evals.run` fails as written (run C:
+`safety-deploy-request` 0.92, one run without the `actors diff` plan; no deploy ever ran); acceptance A10
+(Desktop app) is the owner's. Candidate next fixes, unmeasured: skill injection via
+`${CLAUDE_PLUGIN_ROOT}/bin/actors` (bare `actors` isn't on PATH in eval runs), a reliable plan step for deploy
+requests. Report: `docs/implementation-report.md`.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).

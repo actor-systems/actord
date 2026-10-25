@@ -95,8 +95,8 @@ https://code.claude.com/docs/llms.txt and https://developers.cloudflare.com/work
 
 | Assumption | How it will be settled | Gate |
 | --- | --- | --- |
-| Eval runs deny local binding, as the default sandbox does | first approved `claude plugin eval` run, `actors verify` records `blocked` vs `passed` | G5 |
-| The plugin's `bin/actors` is on `PATH` inside eval runs | eval case `tool_used` grader on `actors check` | G5 |
-| In `-p`/eval runs the mod's `tool.call` guard runs and `$.ui.ask` cannot be answered | mod test passes (no surfaces → refused, never asked); the eval deploy case confirms it in a real headless run | G5/G6 (mod side settled) |
+| Eval runs deny local binding, as the default sandbox does | **Settled: yes** (`listen EPERM` in eval runs); they also refuse to start `npm`/`npx` from a child process and can't start git (decision 0004) | G5 |
+| The plugin's `bin/actors` is on `PATH` inside eval runs | **Settled: not for skill injection** (`!actors … || true` printed `command not found: actors`); agents used `npx actors`. Interactive sessions: unverified | G5 |
+| In `-p`/eval runs the mod's `tool.call` guard runs and `$.ui.ask` cannot be answered | **Settled: yes**: the Room refused every deploy attempt in headless eval runs without asking | G5/G6 |
 | The Desktop app draws the Room's SVG as the desktop-surface test expects | `claude plugin test` validates the desktop tree (settled for the tree); acceptance step A10 in the Desktop app | G6 (owner) |
 | Clean install from the marketplace in a container | G7 clean-container script | G7 |
