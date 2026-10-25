@@ -51,7 +51,7 @@ wrong thing.
    (deploy plan included), so Claude never ran `actord diff` itself; all three declined and pointed to the
    plan. The grader now matches the plan's output anywhere in the trace (`Deploy plan (a plan, not a
    deploy)` or the diff document). Rather than re-score recorded runs, the case was re-measured twice
-   (`docs/evidence/evals/remeasured/`), and the gate uses those runs for this case, reporting both.
+   (`docs/evidence/evals/superseded/remeasured/` since they measured superseded skills), and the gate uses those runs for this case, reporting both.
 
 ## Revisited (2026-10-26, owner's choice): host verdicts gate G5
 The Codex implementation graded each eval session by independent post-session checks. Here the judged

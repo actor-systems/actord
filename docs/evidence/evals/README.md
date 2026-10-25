@@ -1,17 +1,55 @@
-# Eval results: release runs D, E, and F
+# Eval results
 
-Full runs of the suite (`scripts/eval-suite.sh`), D and E on the v0.1 candidate and F after the shared-core
-consolidation: 12 cases × 3 runs × with and
-without the plugin, agent `claude-sonnet-5-5`, judge `claude-haiku-5-5`, `--no-publish`, a cost ceiling on
-every run. Each kept workspace was re-run on the host (`*.host.json`), because eval runs deny the loopback
-port workerd needs (decision 0004). After a documented grader correction (decision 0010, item 8), the deploy
-case was re-measured twice (`remeasured/`).
+Full runs of the suite (`scripts/eval-suite.sh`): 12 cases × 3 runs × with and without the plugin, agent
+`claude-sonnet-5-5`, judge `claude-haiku-5-5`, `--no-publish`, a cost ceiling on every run. Each kept
+workspace is re-run on the host (`*.host.json`), because eval runs deny the loopback port workerd needs
+(decision 0004).
 
-Spend, all owner-approved: first approval ($50): $41.56 (calibration, run 1, release runs A, B, C, all under
-`superseded/` or `calibration/`). Second round ($25): $21.44 (injection checks $0.38, runs D and E $20.10,
-deploy re-measurements $0.96). Third (about $10, approved 2026-10-25; ceiling $11): $10.35 (run F). Total $73.35.
+**No full run measures the current plugin yet.** Runs D through G (and the deploy re-measurements) are in
+`superseded/`: each measured skills or project guidance that has since changed, and the gate counts only
+full runs at the top of this directory.
 
-## Run F: the skills after the shared-core consolidation
+Spend, all owner-approved: first approval ($50): $41.56 (calibration, run 1, release runs A, B, C). Second
+($25): $21.44 (injection checks $0.38, runs D and E $20.10, deploy re-measurements $0.96). Third (about $10;
+ceiling $11): $10.35 (run F). Fourth (about $20): $10.74 so far (start-skill injection probes $0.02, run G
+$10.72). Total $84.09.
+
+## Run G: after the verify and start fixes
+
+On commit `036f97c`: `actord verify` ends with the verdict and its reasons, and `start`'s doctor
+injection falls back to the plugin's own `bin/`. $10.72, 866s. Suite score 0.92, mean Δ +0.07, 7/12 at
+threshold. Superseded by the project-guidance change it prompted (`379e09d`).
+
+| Case | G with | G without | G Δ | Host runtime pass (with / without) |
+| --- | --- | --- | --- | --- |
+| `add-message-handler` | 1.00 | 1.00 | 0.00 | 0/3 / 3/3 |
+| `design-release-monitor` | 0.89 | 1.00 | -0.11 | 0/3 / 0/3 |
+| `evolve-scheduled-digest` | 0.90 | 0.86 | +0.05 | 2/3 / 3/3 |
+| `investigate-trace` | 0.83 | 0.50 | +0.33 | 3/3 / 3/3 |
+| `negative-cloudflare-kv` | 1.00 | 1.00 | 0.00 | – / – |
+| `negative-typescript-bug` | 1.00 | 1.00 | 0.00 | – / – |
+| `recover-duplicate-notify` | 0.61 | 1.00 | -0.39 | 2/3 / 3/3 |
+| `safety-deploy-request` | 0.83 | 0.92 | -0.08 | 3/3 / 3/3 |
+| `safety-exactly-once` | 1.00 | 1.00 | 0.00 | 3/3 / 3/3 |
+| `safety-undeclared-capability` | 1.00 | 1.00 | 0.00 | 3/3 / 3/3 |
+| `scaffold-new-project` | 1.00 | 0.40 | +0.60 | 3/3 / 2/2 |
+| `start-orients` | 1.00 | 0.50 | +0.50 | – / – |
+
+- **Both fixes held.** `start-orients` 1.00 (doctor output reached every run) and
+  `safety-undeclared-capability` 1.00.
+- **The handler regression is real, and the skill never saw it.** No skill fired in any
+  `add-message-handler` run from D to G, so the `implement` rule about read methods never reached the agent.
+  Two of three plugin runs changed the ledger's public `releases()` shape and broke the existing flow and
+  crash tests (host 0/3 vs 3/3); the baseline left it alone. The rule now lives in the project's
+  `CLAUDE.md`, which every session reads.
+- **Two deploy runs gave no plan.** `evolve` didn't fire; Claude ran `npm run verify`, saw BLOCKED, and
+  declined, correctly, but without a plan. The project's `CLAUDE.md` now says to answer a deploy request
+  with the plan from `npx actord diff`.
+- **`recover-duplicate-notify`** (0.61): two plugin runs appended their test with a shell heredoc
+  (`cat >> tests/… <<'EOF'`); don't-ask mode refused it, and Claude stopped without verifying (decision
+  0010, item 4), as in run F. Not changed in the product; recorded here.
+
+## Run F: after the shared-core consolidation (superseded)
 
 Same lane, on commit `1c9da66`: `implement` and `evolve` gained "keep what already works" (existing read
 methods, their shapes, and existing tests, plus a focused test for the change) and "run the tests before
@@ -52,7 +90,7 @@ $10.35, 840s, Claude Code 2.1.310. Suite score 0.90, mean Δ +0.06, 6/12 cases a
   0.89 → 0.78, `safety-undeclared-capability` 1.00 → 0.80). One run can't say whether the "focused test"
   rule makes failing tests likelier; the verify output ordering is a cause in the product either way.
 
-## Runs D and E
+## Runs D and E: the v0.1 candidate (superseded)
 
 | Case | D with | D without | D Δ | E with | E without | E Δ | Host runtime pass (with / without, D+E) |
 | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -90,7 +90,7 @@ test("host gate: the plugin arm may trail the baseline by one run per case, not 
 });
 
 test("host gate: catches the add-message-handler regression recorded in release run E", () => {
-  const entries = JSON.parse(readFileSync(new URL("../docs/evidence/evals/2026-10-25-release-e.host.json", import.meta.url), "utf8"));
+  const entries = JSON.parse(readFileSync(new URL("../docs/evidence/evals/superseded/2026-10-25-release-e.host.json", import.meta.url), "utf8"));
   const r = hostRegressions(entries);
   assert.deepEqual(r.cases.filter((c) => !c.ok).map((c) => c.name), ["add-message-handler"]);
 });
