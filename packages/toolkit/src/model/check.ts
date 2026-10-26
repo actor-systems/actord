@@ -29,6 +29,8 @@ export interface Diagnostic {
 const ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 const MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 const FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
+/** Senders the runtime writes itself: the fixed route senders, and "@rpc" for a decision made through decide(). */
+const RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
 
 export function checkProject(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
@@ -135,6 +137,8 @@ function checkSources(project: Project, m: Manifest, add: Add) {
   const routesFrom = (name: string, message: string) => m.routes.filter((r) => r.from === `@${name}` && r.message === message);
   const paths = new Map<string, string[]>();
   for (const src of sources) {
+    if (RESERVED_SENDERS.includes(`@${src.name}`))
+      add("error", "SOURCE_NAME_RESERVED", `@${src.name}`, `A source can't be named ${src.name}: @${src.name} is a sender the runtime uses itself, so the source's messages couldn't be told apart from the runtime's`, `Rename the source, for example after the provider it listens to (github, email).`);
     const mapped = src.kind === "webhook" ? src.events.map((e) => e.message) : src.message ? [src.message] : [];
     for (const msg of [...new Set(mapped)]) {
       const found = routesFrom(src.name, msg);

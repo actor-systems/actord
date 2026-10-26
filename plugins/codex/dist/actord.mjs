@@ -1183,6 +1183,7 @@ function cronParses(expr) {
 var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 var FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
+var RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
 function checkProject(project) {
   const out = [];
   const add = (severity, code, subject, message, fix = null) => out.push({ code, severity, subject, message, fix });
@@ -1278,6 +1279,8 @@ function checkSources(project, m, add) {
   const routesFrom = (name, message) => m.routes.filter((r) => r.from === `@${name}` && r.message === message);
   const paths = /* @__PURE__ */ new Map();
   for (const src of sources) {
+    if (RESERVED_SENDERS.includes(`@${src.name}`))
+      add("error", "SOURCE_NAME_RESERVED", `@${src.name}`, `A source can't be named ${src.name}: @${src.name} is a sender the runtime uses itself, so the source's messages couldn't be told apart from the runtime's`, `Rename the source, for example after the provider it listens to (github, email).`);
     const mapped = src.kind === "webhook" ? src.events.map((e) => e.message) : src.message ? [src.message] : [];
     for (const msg of [...new Set(mapped)]) {
       const found = routesFrom(src.name, msg);

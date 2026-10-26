@@ -94,6 +94,16 @@ describe("source checks", () => {
     expect(codes(project(sys))).toEqual(["error:SOURCE_PATH_DUPLICATE"]);
   });
 
+  it("SOURCE_NAME_RESERVED: a source named after a sender the runtime uses itself", () => {
+    for (const name of ["clock", "ingress", "timer", "rpc"]) {
+      const sys = build({ sources: { github: github(), [name]: email() }, routes: [baseRoutes[0]!, { from: `@${name}`, message: "approval.decided", to: "Triage" }, baseRoutes[2]!] });
+      expect(codes(project(sys)), name).toEqual(["error:SOURCE_NAME_RESERVED"]);
+    }
+    // A name that only starts like one is fine.
+    const sys = build({ sources: { github: github(), timers: email() }, routes: [baseRoutes[0]!, { from: "@timers", message: "approval.decided", to: "Triage" }, baseRoutes[2]!] });
+    expect(codes(project(sys))).toEqual([]);
+  });
+
   it("SOURCE_SECRET_UNDECLARED: a warning unless wrangler vars or .dev.vars.example names the secret", () => {
     const bare = project(build(), { config: {} });
     expect(codes(bare)).toEqual(["warning:SOURCE_SECRET_UNDECLARED", "warning:SOURCE_SECRET_UNDECLARED"]);
