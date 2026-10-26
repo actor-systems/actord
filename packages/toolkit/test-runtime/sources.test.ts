@@ -309,20 +309,25 @@ async function asked(key: string, effect: "gateway.approval" | "gateway.publish"
 /** A Gmail-style reply body: the owner's lines, then the request quoted below an "On … wrote:" line. */
 const below = (request: Sent, ...lines: string[]) => [...lines, "", "On Mon, Oct 26, 2026 at 9:00 AM actord <actord@probe.example> wrote:", ...request.text.trimEnd().split("\n").map((l) => `> ${l}`)].join("\n");
 const sourceEvents = (events: ActorEvent[]) => events.filter((e) => e.kind.startsWith("source."));
+/** The one reply the owner gets once the actor has their answer, whether or not it changed anything. */
+const received = (decision: "approve" | "deny", key: string, effect = "gateway.approval") => `Received: ${decision} for ${effect} (${key}). If it had already been decided or had expired, this changed nothing.`;
+const ASK_AGAIN = "reply with approve, or deny followed by a reason, on the first line";
 const fxStatus = (key: string, effect = "gateway.approval") => runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ status: string }>("SELECT status FROM _actors_outbox WHERE id = ?", `fx:${effect}:${key}`).one().status);
 
 it("[email-approves] the owner's 'approve' with dmarc=pass approves the parked effect, which runs once, by the owner via @mail", async () => {
   const events = captureEvents();
   const { request, fx } = await asked("em-ok");
   const { replies, env: e } = answering();
-  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS } }), e, system);
+  const answer = reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS } });
+  await handleEmail(answer, e, system);
   await settle(env, system);
   expect(fx.runs).toBe(1);
   expect(await probe("em-ok").outcomes()).toMatchObject([{ key: "em-ok", status: "confirmed" }]);
   expect(await probe("em-ok").decisions()).toEqual([{ effect: "gateway.approval", effectKey: "em-ok", decision: "approve", reason: null, by: OWNER, authenticated: "pass" }]);
   expect(await probe("em-ok").approvals()).toEqual([{ key: "em-ok", ok: true }]);
   expect(events.find((ev) => ev.kind === "note" && ev.effectKey === "em-ok")).toMatchObject({ reason: "approved by a person", detail: { by: OWNER, via: "@mail" } });
-  expect(replies).toEqual([]);
+  // The owner hears back once, in the thread, marked as sent automatically.
+  expect(replies).toEqual([{ from: "actord@probe.example", to: OWNER, subject: `Re: ${request.subject}`, text: received("approve", "em-ok"), headers: { "Auto-Submitted": "auto-replied", "In-Reply-To": answer.headers.get("message-id") } }]);
   expect(sourceEvents(events)).toEqual([]);
 });
 
@@ -343,7 +348,7 @@ it("[email-denies] 'deny not now' denies the parked effect with that reason, and
   expect(await probe("em-no-bare").decisions()).toMatchObject([{ decision: "deny", reason: null }]);
   expect(await fxStatus("em-no-bare")).toBe("denied");
   expect(bare.fx.runs).toBe(0);
-  expect(replies).toEqual([]);
+  expect(replies.map((r) => r.text)).toEqual([received("deny", "em-no"), received("deny", "em-no-bare")]);
 });
 
 it("[email-not-owner] a reply that isn't from the owner gets no reply and no delivery, and is recorded", async () => {
@@ -450,7 +455,7 @@ it("[email-unknown-auth-tool] with no authentication result, 'approve' approves 
   await settle(env, system);
   expect(fx.runs).toBe(1);
   expect(await probe("em-unk").decisions()).toEqual([{ effect: "gateway.approval", effectKey: "em-unk", decision: "approve", reason: null, by: OWNER, authenticated: "unknown" }]);
-  expect(replies).toEqual([]);
+  expect(replies.map((r) => r.text)).toEqual([received("approve", "em-unk")]);
 });
 
 it("[email-unknown-auth-publishes] with no authentication result, 'approve' can't approve an effect that publishes, though a deny can", async () => {
@@ -517,14 +522,15 @@ it("[email-second-reply] when the owner answers twice, the first answer wins; th
   ]);
   expect(await probe("em-twice").outcomes()).toMatchObject([{ key: "em-twice", status: "confirmed" }]);
   expect(events.filter((ev) => ev.kind === "effect.denied" || ev.kind === "duplicate")).toEqual([]);
-  expect(replies).toEqual([]);
+  // Each answer is acknowledged the same way: the reply says what was received, not whether it changed anything.
+  expect(replies.map((r) => r.text)).toEqual([received("approve", "em-twice"), received("deny", "em-twice"), received("approve", "em-twice")]);
   expect(sourceEvents(events)).toEqual([]);
 });
 
 it("[email-duplicate-delivery] the same email, with the same Message-ID, handled twice is delivered once", async () => {
   const events = captureEvents();
   const { request, fx } = await asked("em-dup");
-  const { env: e } = answering();
+  const { replies, env: e } = answering();
   const same = (messageId: string | null) => reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS }, messageId });
   await handleEmail(same("<dup-1@mail.probe.example>"), e, system);
   await settle(env, system);
@@ -535,6 +541,8 @@ it("[email-duplicate-delivery] the same email, with the same Message-ID, handled
   const id = deriveId("email", "<dup-1@mail.probe.example>");
   expect(events.filter((ev) => ev.kind === "received" && ev.messageId === id)).toHaveLength(1);
   expect(events.filter((ev) => ev.kind === "duplicate")).toMatchObject([{ messageId: id, from: "@mail" }]);
+  // The duplicate is acknowledged too: the owner's answer is there either way.
+  expect(replies.map((r) => r.text)).toEqual([received("approve", "em-dup"), received("approve", "em-dup")]);
   // With no Message-ID, the same answer to the same request from the same sender is one delivery too.
   const bare = await asked("em-dup-bare");
   const again = () => reply({ from: OWNER, subject: `Re: ${bare.request.subject}`, text: below(bare.request, "approve"), headers: { "Authentication-Results": PASS }, messageId: null });
@@ -610,11 +618,118 @@ it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply i
   await handleEmail(reply({ from: OWNER, subject: "hello", text: "approve", headers: { "Authentication-Results": PASS } }), e, system);
   const pub = await asked("em-away-pub", "gateway.publish");
   await handleEmail(reply({ from: OWNER, subject: `Re: ${pub.request.subject}`, text: "approve" }), e, system);
-  expect(replies.map((r) => r.text)).toEqual(["reply with approve, or deny followed by a reason, on the first line", "this address only accepts replies to actord approval requests", "this effect publishes; approve it in GitHub"]);
+  expect(replies.map((r) => r.text)).toEqual([ASK_AGAIN, "this address only accepts replies to actord approval requests", "this effect publishes; approve it in GitHub"]);
   expect(replies.map((r) => r.headers?.["Auto-Submitted"])).toEqual(Array(3).fill("auto-replied"));
   expect(replies[0]!.headers).toEqual({ "Auto-Submitted": "auto-replied", "In-Reply-To": asking.headers.get("message-id") });
   // "Auto-Submitted: no" is a person writing: that approve counts.
   await handleEmail(reply({ from: OWNER, subject, text: "approve", headers: { "Authentication-Results": PASS, "Auto-Submitted": "no" } }), e, system);
   await settle(env, system);
   expect(fx.runs).toBe(1);
+});
+
+it("[email-delivery-retried] a handler that fails is tried again under the same id; if all three tries fail, the owner is asked to reply again", async () => {
+  const events = captureEvents();
+  const headers = { "Authentication-Results": PASS };
+  // One failure: the second try is handled, and the owner hears it was received.
+  const { request, fx } = await asked("em-retry");
+  const { replies, env: e } = answering();
+  injectFault({ actor: "Probe", type: "approval.decided", at: "before-handler" });
+  const once = reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers });
+  await handleEmail(once, e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
+  const onceId = deriveId("email", once.headers.get("message-id")!);
+  expect(events.filter((ev) => (ev.kind === "failed" || ev.kind === "handled") && ev.messageId === onceId).map((ev) => ev.kind)).toEqual(["failed", "handled"]);
+  expect(replies.map((r) => r.text)).toEqual([received("approve", "em-retry")]);
+  expect(sourceEvents(events)).toEqual([]);
+
+  // Three failures: nothing is recorded, and the owner is told so, in the thread, and asked to reply again.
+  const lost = await asked("em-retry-all");
+  const { replies: told, env: e2 } = answering();
+  injectFault({ actor: "Probe", type: "approval.decided", at: "before-handler", times: 3 });
+  const answer = reply({ from: OWNER, subject: `Re: ${lost.request.subject}`, text: below(lost.request, "approve"), headers });
+  await handleEmail(answer, e2, system);
+  await settle(env, system);
+  const id = deriveId("email", answer.headers.get("message-id")!);
+  expect(events.filter((ev) => ev.kind === "failed" && ev.messageId === id)).toHaveLength(3);
+  expect(lost.fx.runs).toBe(0);
+  expect(await fxStatus("em-retry-all")).toBe("awaiting_approval");
+  expect(told).toEqual([
+    {
+      from: "actord@probe.example",
+      to: OWNER,
+      subject: `Re: ${lost.request.subject}`,
+      text: "Your approve for gateway.approval (em-retry-all) couldn't be recorded. Please reply again with your answer on the first line.",
+      headers: { "Auto-Submitted": "auto-replied", "In-Reply-To": answer.headers.get("message-id") },
+    },
+  ]);
+  expect(sourceEvents(events)).toMatchObject([{ kind: "source.failed", actor: "@mail", reason: "handler_failed", messageId: id, effect: "gateway.approval", effectKey: "em-retry-all", detail: { attempts: 3, error: "injected fault at before-handler" } }]);
+  // Replying again, as asked, approves it.
+  await handleEmail(reply({ from: OWNER, subject: told[0]!.subject, text: "approve", headers }), e2, system);
+  await settle(env, system);
+  expect(lost.fx.runs).toBe(1);
+  expect(told.map((r) => r.text).at(-1)).toBe(received("approve", "em-retry-all"));
+});
+
+it("[email-delivery-throws] a delivery that throws is tried again under the same id; if every try throws, the owner is asked to reply again", async () => {
+  const events = captureEvents();
+  const headers = { "Authentication-Results": PASS };
+  const probes = env as unknown as { PROBE: { getByName(name: string): unknown } };
+  // An instance that can't be reached twice, then can.
+  const { request, fx } = await asked("em-throw");
+  const ids: unknown[] = [];
+  let calls = 0;
+  const flaky = {
+    getByName: (name: string) => {
+      if (++calls <= 2) throw new Error("instance unreachable");
+      const stub = probes.PROBE.getByName(name) as { receive(e: { id: string }): unknown };
+      return { receive: (envelope: { id: string }) => (ids.push(envelope.id), stub.receive(envelope)) };
+    },
+  };
+  const { replies, env: e } = answering({ PROBE: flaky });
+  const answer = reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers });
+  await handleEmail(answer, e, system);
+  await settle(env, system);
+  expect(calls).toBe(3);
+  expect(ids).toEqual([deriveId("email", answer.headers.get("message-id")!)]);
+  expect(fx.runs).toBe(1);
+  expect(replies.map((r) => r.text)).toEqual([received("approve", "em-throw")]);
+  expect(sourceEvents(events)).toEqual([]);
+
+  // Never reachable: three tries, recorded, and the owner is asked to reply again.
+  const down = await asked("em-throw-all");
+  let tries = 0;
+  const { replies: told, env: e2 } = answering({ PROBE: { getByName: () => { tries++; throw new Error("instance unreachable"); } } });
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${down.request.subject}`, text: below(down.request, "deny not yet"), headers }), e2, system);
+  await settle(env, system);
+  expect(tries).toBe(3);
+  expect(down.fx.runs).toBe(0);
+  expect(await fxStatus("em-throw-all")).toBe("awaiting_approval");
+  expect(told.map((r) => r.text)).toEqual(["Your deny for gateway.approval (em-throw-all) couldn't be recorded. Please reply again with your answer on the first line."]);
+  expect(sourceEvents(events)).toMatchObject([{ kind: "source.failed", reason: "delivery_failed", effectKey: "em-throw-all", detail: { attempts: 3, error: "instance unreachable" } }]);
+});
+
+it("[email-receiver-rejected] an answer the actor refuses isn't tried again, and the owner is told it couldn't be applied, and why", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-rej");
+  const { replies, env: e } = answering();
+  // This Worker's system sends the answer as probe.approve, which the deployed actor's routes don't carry from @mail.
+  const sys = { ...system, sources: { ...system.sources, mail: { ...system.sources.mail, message: "probe.approve" } } } as never;
+  const answer = reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS } });
+  await handleEmail(answer, e, sys);
+  await settle(env, system);
+  const id = deriveId("email", answer.headers.get("message-id")!);
+  expect(events.filter((ev) => ev.kind === "rejected" && ev.messageId === id)).toHaveLength(1);
+  expect(fx.runs).toBe(0);
+  expect(await fxStatus("em-rej")).toBe("awaiting_approval");
+  expect(replies).toEqual([
+    {
+      from: "actord@probe.example",
+      to: OWNER,
+      subject: `Re: ${request.subject}`,
+      text: "Your approve for gateway.approval (em-rej) couldn't be applied: unauthorized_route (no route @mail → probe.approve → Probe). Nothing was approved or denied.",
+      headers: { "Auto-Submitted": "auto-replied", "In-Reply-To": answer.headers.get("message-id") },
+    },
+  ]);
+  expect(sourceEvents(events)).toMatchObject([{ kind: "source.invalid", actor: "@mail", reason: "unauthorized_route", messageId: id, effectKey: "em-rej" }]);
 });

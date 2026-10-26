@@ -18,6 +18,11 @@
 // sender "@<source>", with an envelope id derived from the reply's Message-ID, so the same email handled twice
 // is delivered once. A second, different reply is delivered too; the actor's ctx.approve or ctx.deny then
 // answers false, because nothing is waiting any more.
+// A delivery that throws, or whose handler fails, is tried twice more under the same envelope id, which the
+// actor deduplicates. The owner then gets one reply: "Received: …" once the actor has the answer (handled, or
+// a duplicate of one it already handled), saying that a request already decided or expired is unchanged; that
+// the answer couldn't be recorded, and to reply again, if every attempt failed; or that it couldn't be applied,
+// and why, if the actor refused it.
 // Every outcome other than a delivery is recorded as a source.* event. Every reply goes to the owner through
 // env[send], from env[from], marked Auto-Submitted: auto-replied, with In-Reply-To set to the reply's Message-ID.
 // Authentication: a sender can write Authentication-Results headers of their own, below the one the receiving
@@ -44,6 +49,13 @@ const NOT_A_REPLY = "this address only accepts replies to actord approval reques
 const ASK_AGAIN = "reply with approve, or deny followed by a reason, on the first line";
 const APPROVE_IN_GITHUB = "this effect publishes; approve it in GitHub";
 const expiredAt = (exp: number) => `this request expired at ${new Date(exp).toISOString()}; nothing was approved`;
+type Answer = { decision: "approve" | "deny"; effect: string; effectKey: string };
+const what = (a: Answer) => `${a.decision} for ${a.effect} (${a.effectKey})`;
+const RECEIVED = (a: Answer) => `Received: ${what(a)}. If it had already been decided or had expired, this changed nothing.`;
+const NOT_RECORDED = (a: Answer) => `Your ${what(a)} couldn't be recorded. Please reply again with your answer on the first line.`;
+const NOT_APPLIED = (a: Answer, why: string) => `Your ${what(a)} couldn't be applied: ${why}. Nothing was approved or denied.`;
+/** The first delivery and up to two retries, all under one envelope id. */
+const ATTEMPTS = 3;
 
 const DMARC_FAIL = /\bdmarc\s*=\s*fail\b/i;
 /** A resinfo's method and result, such as "dmarc=pass" or "dmarc/1 = pass" (RFC 8601). */
@@ -146,14 +158,37 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
   // says instead, so the same answer to the same request from the same sender is still delivered once.
   const id = messageId !== null ? deriveId("email", messageId) : deriveId("email", token, decided.decision, by);
   const at = { messageId: id, ...about };
-  let receipt: Receipt;
-  try {
-    receipt = await deliverExternal(env, system, sender, claims.actor, source.message, payload, { key: claims.key, id });
-  } catch (err) {
-    return record("source.failed", "delivery_failed", at, { ...seen, error: messageOf(err) });
+  const answer: Answer = { decision: decided.decision, ...about };
+  // A throw or a failed handler may be passing, so try again; the same id means a delivery that did land, and
+  // only lost its receipt, comes back as a duplicate rather than being handled twice. A refusal is final.
+  let receipt: Receipt | null = null;
+  let thrown: string | null = null;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    try {
+      receipt = await deliverExternal(env, system, sender, claims.actor, source.message, payload, { key: claims.key, id });
+      thrown = null;
+    } catch (err) {
+      receipt = null;
+      thrown = messageOf(err);
+      continue;
+    }
+    if (receipt.status !== "failed") break;
   }
-  if (receipt.status === "rejected") record("source.invalid", receipt.reason, at, { ...seen, ...(receipt.detail ? { error: receipt.detail } : {}) });
-  else if (receipt.status === "failed") record("source.failed", "handler_failed", at, { ...seen, error: receipt.error });
+  if (receipt === null) {
+    record("source.failed", "delivery_failed", at, { ...seen, error: thrown, attempts: ATTEMPTS });
+    return reply(NOT_RECORDED(answer));
+  }
+  if (receipt.status === "failed") {
+    record("source.failed", "handler_failed", at, { ...seen, error: receipt.error, attempts: ATTEMPTS });
+    return reply(NOT_RECORDED(answer));
+  }
+  if (receipt.status === "rejected") {
+    record("source.invalid", receipt.reason, at, { ...seen, ...(receipt.detail ? { error: receipt.detail } : {}) });
+    return reply(NOT_APPLIED(answer, receipt.detail ? `${receipt.reason} (${receipt.detail})` : receipt.reason));
+  }
+  // Handled, or a duplicate of an answer already handled. Whether it changed anything (applyDecision's answer)
+  // stays inside the actor, so the reply says what was received, not what it did.
+  return reply(RECEIVED(answer));
 }
 
 /**
