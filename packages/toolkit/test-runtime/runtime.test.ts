@@ -153,11 +153,17 @@ const timerRows = (key: string) =>
 
 it("[timer-delivery-retry] a timer whose handler fails is retried with backoff, then dropped when attempts run out", async () => {
   await setTimer("tm7", "bad1", 60_000);
+  const before = Date.now();
   await fireTimers(env, system, "Probe", "tm7");
+  const after = Date.now();
   const [row] = await timerRows("tm7");
   expect(row).toMatchObject({ key: "bad1", attempts: 1 });
-  expect(row!.due_at).toBeGreaterThan(Date.now() - 5); // pushed out by the backoff, no longer due at 0
-  for (let i = 0; i < 5; i++) await fireTimers(env, system, "Probe", "tm7"); // attempts 2..6; the default maxAttempts is 6
+  // fireTimers made it due at 0; the failure pushed it out by Probe's backoff of 40 ms.
+  expect(row!.due_at).toBeGreaterThanOrEqual(before + 40);
+  expect(row!.due_at).toBeLessThanOrEqual(after + 40);
+  for (let i = 0; i < 4; i++) await fireTimers(env, system, "Probe", "tm7"); // attempts 2..5
+  expect(await timerRows("tm7")).toMatchObject([{ key: "bad1", attempts: 5 }]); // still retrying one short of the default maxAttempts of 6
+  await fireTimers(env, system, "Probe", "tm7"); // attempt 6 exhausts it
   expect(await timerRows("tm7")).toEqual([]);
   expect(await probe("tm7").fired()).toEqual([]);
 });
