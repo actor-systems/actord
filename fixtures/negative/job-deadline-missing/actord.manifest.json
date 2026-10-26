@@ -1,0 +1,175 @@
+{
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "minimal",
+    "description": "Two actors: a scheduled pinger and a ponger that records pings"
+  },
+  "actors": [
+    {
+      "binding": "PINGER",
+      "budget": null,
+      "effects": [],
+      "justification": [
+        "scheduling",
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Pinger",
+      "purpose": "Sends a numbered ping on a schedule or on request",
+      "receives": [
+        "ping.due",
+        "ping.kicked"
+      ],
+      "schedules": [
+        {
+          "cron": null,
+          "every": "5m",
+          "everyMs": 300000,
+          "message": "ping.due"
+        }
+      ],
+      "sends": [
+        "ping.sent"
+      ]
+    },
+    {
+      "binding": "PONGER",
+      "budget": null,
+      "effects": [
+        "ci.run"
+      ],
+      "justification": [
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Ponger",
+      "purpose": "Records each ping exactly once and runs CI for it",
+      "receives": [
+        "ci.finished",
+        "ping.sent"
+      ],
+      "schedules": [],
+      "sends": []
+    }
+  ],
+  "messages": [
+    {
+      "description": "CI reports that a run finished",
+      "name": "ci.finished",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "ok"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The schedule says it's time to ping",
+      "name": "ping.due",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "at": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Someone asked for an immediate ping",
+      "name": "ping.kicked",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "A ping carrying a sequence number",
+      "name": "ping.sent",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "note": {
+            "type": "string"
+          },
+          "seq": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@clock",
+      "message": "ping.due",
+      "to": "Pinger"
+    },
+    {
+      "from": "@ingress",
+      "message": "ci.finished",
+      "to": "Ponger"
+    },
+    {
+      "from": "@ingress",
+      "message": "ping.kicked",
+      "to": "Pinger"
+    },
+    {
+      "from": "Pinger",
+      "message": "ping.sent",
+      "to": "Ponger"
+    }
+  ],
+  "effects": [
+    {
+      "approval": "none",
+      "completes": {
+        "message": "ci.finished"
+      },
+      "deadline": null,
+      "description": "Run CI for a ping",
+      "idempotency": "key",
+      "kind": "job",
+      "name": "ci.run",
+      "probe": null,
+      "reconcile": false,
+      "result": null
+    }
+  ]
+}

@@ -72,6 +72,27 @@ describe("actord trace", () => {
     expect(node).toMatchObject({ outcome: "handled", attempts: 2, failures: ["injected fault at after-handler"] });
   });
 
+  it("shows a job's handle and what settled it, or that it is still waiting", () => {
+    // The event shapes the runtime emits for a job (its [job-events] test pins them).
+    const ev = (e: Record<string, unknown>) => JSON.stringify({ $actord: 1, at: 1, actor: "Probe:j", ...e });
+    const msg = { type: "probe.job.start", version: 1, from: "@ingress", to: "Probe:j", correlationId: "m-start", causationId: null };
+    const fx = { effect: "gateway.job", effectKey: "j", causationId: "m-start", correlationId: "m-start" };
+    const started = [
+      ev({ kind: "received", messageId: "m-start", ...msg }),
+      ev({ kind: "handled", messageId: "m-start", ...msg }),
+      ev({ kind: "effect.requested", ...fx }),
+      ev({ kind: "job.started", ...fx, attempt: 1, detail: { handle: { runId: "r-1" }, deadlineAt: 2, nextAt: 2 } }),
+    ];
+    const waiting = join(tmp, "job-waiting.ndjson");
+    writeFileSync(waiting, `${started.join("\n")}\n`);
+    expect(JSON.parse(run("trace", "m-start", "--file", waiting, "--json").out).root.effects).toMatchObject([{ effect: "gateway.job", outcome: "awaiting_job", job: { handle: { runId: "r-1" }, settledBy: null } }]);
+    expect(run("trace", "m-start", "--file", waiting).out).toContain('job {"runId":"r-1"} not settled yet');
+    const settled = join(tmp, "job-settled.ndjson");
+    writeFileSync(settled, `${[...started, ev({ kind: "effect.confirmed", ...fx, attempt: 1, detail: { settledBy: "message" } })].join("\n")}\n`);
+    expect(JSON.parse(run("trace", "m-start", "--file", settled, "--json").out).root.effects).toMatchObject([{ outcome: "confirmed", job: { handle: { runId: "r-1" }, settledBy: "message" } }]);
+    expect(run("trace", "m-start", "--file", settled).out).toContain('job {"runId":"r-1"} settled by message');
+  });
+
   it("marks a dead-lettered message as retry.exhausted", () => {
     const dead = find(faults, (e) => e.kind === "retry.exhausted");
     const out = run("trace", dead, "--file", faults).out;

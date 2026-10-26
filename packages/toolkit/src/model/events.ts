@@ -84,6 +84,8 @@ export interface TraceEffect {
   attempts: number;
   reason: string | null;
   result: TraceNode | null;
+  /** For a job effect that started: its handle, and what settled it (null while it waits). */
+  job?: { handle: unknown; settledBy: "message" | "probe" | "deadline" | "cancel" | null };
 }
 
 export interface TraceNode {
@@ -118,7 +120,7 @@ export function buildTrace(log: EventLog, id: string): Trace {
       byMessage.set(e.messageId, [...(byMessage.get(e.messageId) ?? []), e]);
       if (e.causationId) children.set(e.causationId, (children.get(e.causationId) ?? new Set()).add(e.messageId));
     }
-    if (e.effect && e.effectKey && e.kind.startsWith("effect.")) {
+    if (e.effect && e.effectKey && (e.kind.startsWith("effect.") || e.kind.startsWith("job."))) {
       const k = `${e.effect}:${e.effectKey}`;
       effectsBy.set(k, [...(effectsBy.get(k) ?? []), e]);
     }
@@ -162,16 +164,21 @@ export function buildTrace(log: EventLog, id: string): Trace {
     for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
     for (const k of effectKeys) {
       const evs2 = effectsBy.get(k) ?? [];
-      const last = [...evs2].reverse().find((e) => e.kind !== "effect.requested" && e.kind !== "retry.scheduled");
+      const last = [...evs2].reverse().find((e) => e.kind.startsWith("effect.") && e.kind !== "effect.requested");
       const [effect, ...rest] = k.split(":");
       const rid = resultOf.get(k);
+      // A job that started and hasn't settled is waiting, or being cancelled; once settled, its event says how.
+      const started = evs2.find((e) => e.kind === "job.started");
+      const waiting = evs2.some((e) => e.kind === "job.cancel_requested") ? "cancelling" : "awaiting_job";
+      const settledBy = last?.detail?.settledBy;
       effects.push({
         effect: effect!,
         key: rest.join(":"),
-        outcome: last ? last.kind.replace("effect.", "") : "pending",
+        outcome: last ? last.kind.replace("effect.", "") : started ? waiting : "pending",
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
         result: rid && !visited.has(rid) ? node(rid) : null,
+        ...(started ? { job: { handle: started.detail?.handle ?? null, settledBy: typeof settledBy === "string" ? (settledBy as NonNullable<NonNullable<TraceEffect["job"]>["settledBy"]>) : null } } : {}),
       });
     }
     const kids = [...(children.get(mid) ?? [])].filter((c) => !visited.has(c) && !resultIds.has(c));
@@ -223,8 +230,9 @@ export function renderTrace(t: Trace, source: string): string {
       if (it.kind === "node") walk(it.n, inner, isLast, false);
       else {
         const e = it.e;
-        const mark = e.outcome === "confirmed" ? "✓" : e.outcome === "pending" || e.outcome === "awaiting_approval" ? "…" : "✗";
+        const mark = e.outcome === "confirmed" ? "✓" : ["pending", "awaiting_approval", "awaiting_job", "cancelling"].includes(e.outcome) ? "…" : "✗";
         lines.push(`${inner}${isLast ? "└─ " : "├─ "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
+        if (e.job) lines.push(`${inner}${isLast ? "   " : "│  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}` : "not settled yet"}`);
         if (e.result) walk(e.result, inner + (isLast ? "   " : "│  "), true, false);
       }
     });

@@ -2,6 +2,7 @@
 // Every diagnostic has a stable code so tests, hooks, and graders can match on it.
 import { parseCronExpression } from "cron-schedule";
 import type { Project } from "./load.ts";
+import { durationMs } from "../system.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "./manifest.ts";
 
 function cronParses(expr: string): boolean {
@@ -95,6 +96,18 @@ export function checkProject(project: Project): Diagnostic[] {
       for (const a of m.actors.filter((a) => a.effects.includes(e.name)))
         if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
           add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
+    }
+    if (e.kind === "job") {
+      if (e.deadline === null || durationMs(e.deadline) === null)
+        add("error", "JOB_DEADLINE_MISSING", e.name, e.deadline === null ? `${e.name} is a job with no deadline, so a job that never reports back would wait forever` : `${e.name} has deadline "${e.deadline}", which isn't a duration like 2h`, `Add deadline: "2h": how long to wait before the outcome is in_doubt.`);
+      if (!e.probe && !e.completes)
+        add("warning", "JOB_UNOBSERVABLE", e.name, `${e.name} is a job with neither probe nor completes: nothing can tell it finished, so every run ends in_doubt at its deadline`, `Add completes: { message } and call ctx.settleJob from that message's handler, or probe: { every } with a probe() in the adapter.`);
+      if (e.completes) {
+        const done = e.completes.message;
+        for (const a of m.actors.filter((a) => a.effects.includes(e.name)))
+          if (!messages.has(done) || !m.routes.some((r) => r.message === done && r.to === a.name))
+            add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
+      }
     }
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)

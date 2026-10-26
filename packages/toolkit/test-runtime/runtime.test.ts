@@ -3,12 +3,12 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { afterEach, expect, it, vi } from "vitest";
 import { deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
-import { fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
 const probe = (key: string) => env.PROBE.getByName(key);
-const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted") =>
+const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted" | "gateway.job-plain") =>
   ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
 
 it("[denied-capability] an effect the actor didn't declare is refused and nothing is queued", async () => {
@@ -329,4 +329,225 @@ it("[effect-usage-event] the effect event carries detail.usage", async () => {
   const events = log.mock.calls.flatMap(([l]) => { try { return [JSON.parse(String(l))]; } catch { return []; } });
   log.mockRestore();
   expect(events.find((e) => e.kind === "effect.confirmed" && e.effectKey === "eue")).toMatchObject({ detail: { usage: { outputTokens: 7 } } });
+});
+
+// ---- Job effects ----
+
+const startJob = (key: string) => ingress(env, system, "Probe", "probe.job.start", { key }, { key });
+const jobDone = (key: string, ok = true) => ingress(env, system, "Probe", "probe.job.done", { key, ok }, { key });
+const cancelJob = (key: string) => ingress(env, system, "Probe", "probe.job.cancel", { key }, { key });
+const jobRow = (key: string, effect = "gateway.job") =>
+  runInDurableObject(probe(key), (_i, s) => {
+    const r = s.storage.sql.exec<{ status: string; next_at: number; body: string }>("SELECT status, next_at, body FROM _actors_outbox WHERE id = ?", `fx:${effect}:${key}`).toArray()[0];
+    return r ? { status: r.status, nextAt: r.next_at, body: JSON.parse(r.body) as Record<string, unknown> } : null;
+  });
+/** Make an instance's probes due now, the way its job would fire a period later. settle() never does this. */
+const probeDue = (key: string) => runInDurableObject(probe(key), (_i, s) => void s.storage.sql.exec("UPDATE _actors_outbox SET next_at = 0 WHERE status = 'awaiting_job'"));
+const logged = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.flatMap(([l]) => { try { return [JSON.parse(String(l)) as Record<string, unknown>]; } catch { return []; } });
+
+it("[job-settled-by-message] a job finishes when its completion message settles it", async () => {
+  let starts = 0;
+  overrideEffect("gateway.job", { start: async () => ({ runId: `r-${++starts}` }) });
+  const before = Date.now();
+  await startJob("j1");
+  await settle(env, system);
+  const after = Date.now();
+  expect(await probe("j1").outcomes()).toEqual([]);
+  const waiting = await jobRow("j1");
+  expect(waiting).toMatchObject({ status: "awaiting_job", body: { handle: { runId: "r-1" } } });
+  // The deadline is 1h from the start, and the next look is one probe period (1m) away, the nearer of the two.
+  expect(waiting!.body.deadlineAt).toBeGreaterThanOrEqual(before + 3_600_000);
+  expect(waiting!.body.deadlineAt).toBeLessThanOrEqual(after + 3_600_000);
+  expect(waiting!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
+  expect(waiting!.nextAt).toBeLessThanOrEqual(after + 60_000);
+  await jobDone("j1");
+  await settle(env, system);
+  expect(await probe("j1").outcomes()).toMatchObject([{ key: "j1", status: "confirmed" }]);
+  expect(await probe("j1").settled()).toEqual([{ key: "j1", ok: true }]);
+  expect(await jobRow("j1")).toMatchObject({ status: "confirmed", body: { settledBy: "message", outcome: { finished: true } } });
+  expect(starts).toBe(1);
+  // A second completion (a redelivered webhook, say) finds the job settled: false, and no second result.
+  await jobDone("j1", false);
+  await settle(env, system);
+  expect(await probe("j1").settled()).toEqual([{ key: "j1", ok: true }, { key: "j1", ok: false }]);
+  expect(await probe("j1").outcomes()).toMatchObject([{ key: "j1", status: "confirmed" }]);
+});
+
+it("[job-settled-by-probe] a probe that reports done settles the job", async () => {
+  const handles: unknown[] = [];
+  overrideEffect("gateway.job", {
+    start: async (_i, c) => {
+      c.reportUsage({ inputTokens: 1 });
+      return { runId: "p-1" };
+    },
+    probe: async (h, c) => {
+      handles.push(h);
+      c.reportUsage({ inputTokens: 2 });
+      return handles.length === 1 ? { done: false } : { done: true, status: "confirmed", value: 1 };
+    },
+  });
+  await startJob("j2");
+  await settle(env, system);
+  expect(handles).toEqual([]); // settle() doesn't make a probe due
+  await probeDue("j2");
+  const before = Date.now();
+  await settle(env, system);
+  expect(handles).toEqual([{ runId: "p-1" }]);
+  const row = await jobRow("j2");
+  expect(row).toMatchObject({ status: "awaiting_job" });
+  expect(row!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
+  expect(await probe("j2").outcomes()).toEqual([]);
+  await probeDue("j2");
+  await settle(env, system);
+  expect(handles).toHaveLength(2);
+  // Usage from the start and from both probes arrives with the result.
+  expect(await probe("j2").outcomes()).toMatchObject([{ key: "j2", status: "confirmed", usage: { inputTokens: 5 } }]);
+  expect(await jobRow("j2")).toMatchObject({ status: "confirmed", body: { settledBy: "probe", outcome: 1 } });
+});
+
+it("[job-deadline-in-doubt] a job that outlives its deadline is in doubt", async () => {
+  overrideEffect("gateway.job", { start: async () => ({ runId: "d-1" }) });
+  await startJob("j3");
+  await settle(env, system);
+  expect(await probe("j3").outcomes()).toEqual([]);
+  expect(await expireJobs(env, system, "Probe", "j3")).toBe(1);
+  await settle(env, system);
+  expect(await probe("j3").outcomes()).toMatchObject([{ key: "j3", status: "in_doubt", error: "deadline passed" }]);
+  expect(await jobRow("j3")).toMatchObject({ status: "in_doubt", body: { settledBy: "deadline" } });
+});
+
+it("[job-cancel-honest] a confirmed cancel fails the job, an unconfirmed one is in doubt", async () => {
+  const cancelled: unknown[] = [];
+  overrideEffect("gateway.job", {
+    start: async (input) => ({ runId: (input as { key: string }).key }),
+    cancel: async (h) => {
+      cancelled.push(h);
+      const id = (h as { runId: string }).runId;
+      if (id === "jc-throw") throw new Error("gateway down");
+      return id === "jc-yes";
+    },
+  });
+  const keys = ["jc-yes", "jc-no", "jc-throw"];
+  for (const k of keys) await startJob(k);
+  await settle(env, system);
+  for (const k of keys) await cancelJob(k);
+  await settle(env, system);
+  expect(cancelled).toEqual(keys.map((runId) => ({ runId })));
+  expect(await probe("jc-yes").outcomes()).toMatchObject([{ key: "jc-yes", status: "failed", error: "cancelled" }]);
+  expect(await probe("jc-no").outcomes()).toMatchObject([{ key: "jc-no", status: "in_doubt", error: "cancel not confirmed" }]);
+  expect(await probe("jc-throw").outcomes()).toMatchObject([{ key: "jc-throw", status: "in_doubt", error: "cancel not confirmed" }]);
+  expect(await jobRow("jc-yes")).toMatchObject({ status: "failed", body: { settledBy: "cancel" } });
+  // An adapter with no cancel can't confirm one either.
+  overrideEffect("gateway.job", { start: async () => ({ runId: "none" }) });
+  await startJob("jc-none");
+  await settle(env, system);
+  await cancelJob("jc-none");
+  await settle(env, system);
+  expect(await probe("jc-none").outcomes()).toMatchObject([{ key: "jc-none", status: "in_doubt", error: "cancel not confirmed" }]);
+});
+
+it("[job-restart-awaiting] a restart while waiting neither re-starts the job nor loses it", async () => {
+  let starts = 0;
+  overrideEffect("gateway.job", { start: async () => ({ runId: `r-${++starts}` }) });
+  await startJob("j5");
+  await settle(env, system);
+  await abortAllDurableObjects(); // a crash while the job runs elsewhere
+  expect(await jobRow("j5")).toMatchObject({ status: "awaiting_job", body: { handle: { runId: "r-1" } } });
+  await jobDone("j5");
+  await settle(env, system);
+  expect(await probe("j5").outcomes()).toMatchObject([{ key: "j5", status: "confirmed" }]);
+  expect(starts).toBe(1);
+});
+
+it("[job-late-settle] a completion after the deadline changes nothing and adds no second result", async () => {
+  overrideEffect("gateway.job", { start: async () => ({ runId: "late" }) });
+  await ingress(env, system, "Probe", "probe.job.start", { key: "j6" }, { key: "j6" });
+  await settle(env, system);
+  await expireJobs(env, system, "Probe", "j6");
+  await ingress(env, system, "Probe", "probe.job.done", { key: "j6", ok: true }, { key: "j6" });
+  await settle(env, system);
+  expect(await probe("j6").outcomes()).toMatchObject([{ key: "j6", status: "in_doubt", error: "deadline passed" }]);
+  expect(await probe("j6").settled()).toEqual([{ key: "j6", ok: false }]);
+  const results = await runInDurableObject(probe("j6"), (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE kind = 'message' AND body LIKE '%probe.outcome%'").one().n);
+  expect(results).toBe(1);
+});
+
+it("[job-start-failure] a failed start follows the call rules: retried with a key, in doubt without", async () => {
+  let keyed = 0;
+  overrideEffect("gateway.job", {
+    start: async () => {
+      if (++keyed === 1) throw new Error("gateway flaked");
+      return { runId: "k" };
+    },
+  });
+  let plain = 0;
+  overrideEffect("gateway.job-plain", {
+    start: async () => {
+      plain++;
+      throw new Error("gateway flaked");
+    },
+  });
+  await startJob("js-keyed");
+  await send("js-plain", "gateway.job-plain");
+  await settle(env, system);
+  expect(keyed).toBe(2);
+  expect(await jobRow("js-keyed")).toMatchObject({ status: "awaiting_job", body: { handle: { runId: "k" } } });
+  expect(await probe("js-keyed").outcomes()).toEqual([]);
+  expect(plain).toBe(1);
+  expect(await probe("js-plain").outcomes()).toMatchObject([{ key: "js-plain", status: "in_doubt", error: "gateway flaked" }]);
+});
+
+it("[job-probe-timeout] a probe that hangs is cut off at the effect's timeout, and the job keeps waiting", async () => {
+  overrideEffectBudget("gateway.job", { timeoutMs: 20 });
+  overrideEffect("gateway.job", { start: async () => ({ runId: "slow" }), probe: () => new Promise(() => {}) });
+  await startJob("jt");
+  await settle(env, system);
+  await probeDue("jt");
+  const log = vi.spyOn(console, "log");
+  const before = Date.now();
+  await settle(env, system);
+  const events = logged(log);
+  log.mockRestore();
+  expect(events.find((e) => e.kind === "job.probed" && e.effectKey === "jt")).toMatchObject({ reason: "probe timed out after 20ms" });
+  const row = await jobRow("jt");
+  expect(row).toMatchObject({ status: "awaiting_job" });
+  expect(row!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
+});
+
+it("[job-cancel-restart] a cancel cut off by a restart is issued again", async () => {
+  let cancels = 0;
+  overrideEffect("gateway.job", { start: async () => ({ runId: "c" }), cancel: () => { cancels++; return new Promise<boolean>(() => {}); } });
+  await startJob("jcr");
+  await settle(env, system);
+  await cancelJob("jcr"); // the cancel hangs until the crash below
+  expect(await jobRow("jcr")).toMatchObject({ status: "cancelling" });
+  await abortAllDurableObjects();
+  overrideEffect("gateway.job", { start: async () => ({ runId: "c" }), cancel: async () => { cancels++; return true; } });
+  await settle(env, system);
+  expect(cancels).toBe(2);
+  expect(await probe("jcr").outcomes()).toMatchObject([{ key: "jcr", status: "failed", error: "cancelled" }]);
+});
+
+it("[job-events] job.started carries the handle, and the settling event says what settled it", async () => {
+  const log = vi.spyOn(console, "log");
+  overrideEffect("gateway.job", { start: async () => ({ runId: "ev" }) });
+  await startJob("jev");
+  await settle(env, system);
+  await jobDone("jev");
+  await settle(env, system);
+  const events = logged(log);
+  log.mockRestore();
+  expect(events.find((e) => e.kind === "job.started" && e.effectKey === "jev")).toMatchObject({ effect: "gateway.job", detail: { handle: { runId: "ev" } } });
+  expect(events.find((e) => e.kind === "effect.confirmed" && e.effectKey === "jev")).toMatchObject({ detail: { settledBy: "message" } });
+});
+
+it("[job-arms-alarm] a waiting job holds actord's wake at its next look", async () => {
+  overrideEffect("gateway.job", { start: async () => ({ runId: "w" }) });
+  await startJob("jw");
+  await settle(env, system);
+  const row = await jobRow("jw");
+  const wake = await runInDurableObject(probe("jw"), (_i, s) => s.storage.sql.exec<{ time: number }>("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").toArray()[0]?.time);
+  // The probe period (1m) is nearer than the deadline (1h) and the hourly schedule, so it sets the wake.
+  expect(wake).toBe(row!.nextAt);
 });

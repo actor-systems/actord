@@ -457,7 +457,7 @@ function buildTrace(log, id2) {
       byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
       if (e.causationId) children.set(e.causationId, (children.get(e.causationId) ?? /* @__PURE__ */ new Set()).add(e.messageId));
     }
-    if (e.effect && e.effectKey && e.kind.startsWith("effect.")) {
+    if (e.effect && e.effectKey && (e.kind.startsWith("effect.") || e.kind.startsWith("job."))) {
       const k = `${e.effect}:${e.effectKey}`;
       effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
     }
@@ -497,16 +497,20 @@ function buildTrace(log, id2) {
     for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
     for (const k of effectKeys) {
       const evs2 = effectsBy.get(k) ?? [];
-      const last = [...evs2].reverse().find((e) => e.kind !== "effect.requested" && e.kind !== "retry.scheduled");
+      const last = [...evs2].reverse().find((e) => e.kind.startsWith("effect.") && e.kind !== "effect.requested");
       const [effect, ...rest] = k.split(":");
       const rid = resultOf.get(k);
+      const started = evs2.find((e) => e.kind === "job.started");
+      const waiting = evs2.some((e) => e.kind === "job.cancel_requested") ? "cancelling" : "awaiting_job";
+      const settledBy = last?.detail?.settledBy;
       effects.push({
         effect,
         key: rest.join(":"),
-        outcome: last ? last.kind.replace("effect.", "") : "pending",
+        outcome: last ? last.kind.replace("effect.", "") : started ? waiting : "pending",
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
-        result: rid && !visited.has(rid) ? node(rid) : null
+        result: rid && !visited.has(rid) ? node(rid) : null,
+        ...started ? { job: { handle: started.detail?.handle ?? null, settledBy: typeof settledBy === "string" ? settledBy : null } } : {}
       });
     }
     const kids = [...children.get(mid) ?? []].filter((c) => !visited.has(c) && !resultIds.has(c));
@@ -558,8 +562,9 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
       if (it.kind === "node") walk(it.n, inner, isLast, false);
       else {
         const e = it.e;
-        const mark = e.outcome === "confirmed" ? "\u2713" : e.outcome === "pending" || e.outcome === "awaiting_approval" ? "\u2026" : "\u2717";
+        const mark = e.outcome === "confirmed" ? "\u2713" : ["pending", "awaiting_approval", "awaiting_job", "cancelling"].includes(e.outcome) ? "\u2026" : "\u2717";
         lines.push(`${inner}${isLast ? "\u2514\u2500 " : "\u251C\u2500 "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
+        if (e.job) lines.push(`${inner}${isLast ? "   " : "\u2502  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}` : "not settled yet"}`);
         if (e.result) walk(e.result, inner + (isLast ? "   " : "\u2502  "), true, false);
       }
     });
@@ -1021,6 +1026,18 @@ function parseCronExpression(cronExpression) {
   });
 }
 
+// src/system.ts
+var SYSTEM_BRAND = "@actord/toolkit/system@1";
+function isSystem(value) {
+  return typeof value === "object" && value !== null && value.kind === SYSTEM_BRAND;
+}
+function durationMs(d) {
+  const m = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(d);
+  if (!m) return null;
+  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2]];
+  return Math.round(Number(m[1]) * unit);
+}
+
 // src/cli/output.ts
 var VOLATILE = {
   doctor: ["projectRoot", "findings[].message"],
@@ -1042,18 +1059,6 @@ function sortKeys(value) {
 }
 var UsageError = class extends Error {
 };
-
-// src/system.ts
-var SYSTEM_BRAND = "@actord/toolkit/system@1";
-function isSystem(value) {
-  return typeof value === "object" && value !== null && value.kind === SYSTEM_BRAND;
-}
-function durationMs(d) {
-  const m = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(d);
-  if (!m) return null;
-  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2]];
-  return Math.round(Number(m[1]) * unit);
-}
 
 // src/model/manifest.ts
 var MANIFEST_FILE = "actord.manifest.json";
@@ -1090,7 +1095,11 @@ function normalize(system) {
     reconcile: e.reconcile ?? false,
     approval: e.approval ?? "none",
     result: e.result ?? null,
-    ...e.budget ? { budget: { ...e.budget.maxAttempts !== void 0 ? { maxAttempts: e.budget.maxAttempts } : {}, ...e.budget.timeoutMs !== void 0 ? { timeoutMs: e.budget.timeoutMs } : {} } } : {}
+    ...e.budget ? { budget: { ...e.budget.maxAttempts !== void 0 ? { maxAttempts: e.budget.maxAttempts } : {}, ...e.budget.timeoutMs !== void 0 ? { timeoutMs: e.budget.timeoutMs } : {} } } : {},
+    kind: e.kind ?? "call",
+    deadline: e.deadline ?? null,
+    probe: e.probe ? { every: e.probe.every } : null,
+    completes: e.completes ? { message: e.completes.message } : null
   })).sort(byName);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
@@ -1192,6 +1201,18 @@ function checkProject(project) {
       for (const a of m.actors.filter((a2) => a2.effects.includes(e.name)))
         if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
           add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
+    }
+    if (e.kind === "job") {
+      if (e.deadline === null || durationMs(e.deadline) === null)
+        add("error", "JOB_DEADLINE_MISSING", e.name, e.deadline === null ? `${e.name} is a job with no deadline, so a job that never reports back would wait forever` : `${e.name} has deadline "${e.deadline}", which isn't a duration like 2h`, `Add deadline: "2h": how long to wait before the outcome is in_doubt.`);
+      if (!e.probe && !e.completes)
+        add("warning", "JOB_UNOBSERVABLE", e.name, `${e.name} is a job with neither probe nor completes: nothing can tell it finished, so every run ends in_doubt at its deadline`, `Add completes: { message } and call ctx.settleJob from that message's handler, or probe: { every } with a probe() in the adapter.`);
+      if (e.completes) {
+        const done = e.completes.message;
+        for (const a of m.actors.filter((a2) => a2.effects.includes(e.name)))
+          if (!messages.has(done) || !m.routes.some((r) => r.message === done && r.to === a.name))
+            add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
+      }
     }
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)

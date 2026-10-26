@@ -176,9 +176,13 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
     "effects": [
       {
         "approval": "none",
+        "completes": null,
+        "deadline": null,
         "description": "Message the operator about a sequence gap",
         "idempotency": "key",
+        "kind": "call",
         "name": "notify.operator",
+        "probe": null,
         "reconcile": false,
         "result": null,
       },

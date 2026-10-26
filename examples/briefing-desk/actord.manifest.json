@@ -348,17 +348,25 @@
   "effects": [
     {
       "approval": "none",
+      "completes": null,
+      "deadline": null,
       "description": "Ask the model for a category, priority, and summary (no side effects, so safe to retry)",
       "idempotency": "key",
+      "kind": "call",
       "name": "model.analyze",
+      "probe": null,
       "reconcile": false,
       "result": "analysis.completed"
     },
     {
       "approval": "human",
+      "completes": null,
+      "deadline": null,
       "description": "Send a briefing to the owner's inbox through the outbound gateway, which accepts no idempotency key",
       "idempotency": "none",
+      "kind": "call",
       "name": "notify.brief",
+      "probe": null,
       "reconcile": false,
       "result": "briefing.delivery"
     }

@@ -54,6 +54,13 @@ export interface ManifestEffect {
   result: string | null;
   /** Present only when the effect declares one. */
   budget?: { maxAttempts?: number; timeoutMs?: number };
+  /** "call" or "job". */
+  kind: string;
+  /** A job's deadline, such as "2h"; null when none is declared. */
+  deadline: string | null;
+  probe: { every: string } | null;
+  /** The message whose handler settles the job with ctx.settleJob. */
+  completes: { message: string } | null;
 }
 
 export interface Manifest {
@@ -104,6 +111,10 @@ export function normalize(system: System): Manifest {
       approval: e.approval ?? "none",
       result: e.result ?? null,
       ...(e.budget ? { budget: { ...(e.budget.maxAttempts !== undefined ? { maxAttempts: e.budget.maxAttempts } : {}), ...(e.budget.timeoutMs !== undefined ? { timeoutMs: e.budget.timeoutMs } : {}) } } : {}),
+      kind: e.kind ?? "call",
+      deadline: e.deadline ?? null,
+      probe: e.probe ? { every: e.probe.every } : null,
+      completes: e.completes ? { message: e.completes.message } : null,
     }))
     .sort(byName);
   return {

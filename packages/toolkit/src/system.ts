@@ -76,12 +76,24 @@ export interface EffectSpec {
   /** "human": the effect goes through an approval gateway before it runs. */
   readonly approval?: "human" | "none";
   /**
-   * A message delivered back to the requesting actor with the outcome ({ key, status, value | error }),
+   * A message delivered back to the requesting actor with the outcome ({ key, status, value | error, usage? }),
    * on a route from the actor to itself. This makes the external wait an explicit message boundary.
    */
   readonly result?: string;
   /** Bounds for one run of this effect. They take precedence over the requesting actor's budget. */
   readonly budget?: { readonly maxAttempts?: number; readonly timeoutMs?: number };
+  /**
+   * "call" (the default): one request answered within the effect's timeout. "job": work that outlives a
+   * request (an agent session, a CI run). The adapter's start() returns a handle; the job is settled once,
+   * later, by its completion message, its probe, its deadline (in_doubt) or a cancel. See decision 0018.
+   */
+  readonly kind?: "call" | "job";
+  /** Required for a job: how long it may wait before its outcome is in_doubt. */
+  readonly deadline?: Duration;
+  /** For a job: ask the adapter's probe(handle) this often until it reports done. */
+  readonly probe?: { readonly every: Duration };
+  /** For a job: the message whose handler settles it with ctx.settleJob(...). It names that message for checks and the graph. */
+  readonly completes?: { readonly message: string };
 }
 
 /** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron); "@timer" delivers timers an actor set for itself. */

@@ -11,13 +11,16 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
-    "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted"]), key: z.string() }) }),
+    "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job-plain"]), key: z.string() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
     "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
     "probe.tick.hourly": message({ version: 1, description: "The hourly schedule ticked", payload: z.object({ at: z.number() }) }),
     "probe.tick.daily": message({ version: 1, description: "The daily schedule ticked", payload: z.object({ at: z.number() }) }),
+    "probe.job.start": message({ version: 1, description: "Start a job", payload: z.object({ key: z.string() }) }),
+    "probe.job.done": message({ version: 1, description: "A job reports it finished", payload: z.object({ key: z.string(), ok: z.boolean() }) }),
+    "probe.job.cancel": message({ version: 1, description: "Cancel a job", payload: z.object({ key: z.string() }) }),
   },
   actors: {
     Probe: {
@@ -25,7 +28,7 @@ export const system = defineSystem({
       kind: "deterministic",
       purpose: "Exercises runtime edge cases",
       justification: ["state"],
-      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted"],
+      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain"],
       schedules: [
         { every: "1h", message: "probe.tick.hourly" },
         { cron: "0 9 * * *", message: "probe.tick.daily" },
@@ -38,6 +41,8 @@ export const system = defineSystem({
     "gateway.approval": { description: "Needs a person", idempotency: "key", approval: "human", result: "probe.outcome" },
     "gateway.keyed": { description: "Keyed", idempotency: "key", result: "probe.outcome" },
     "gateway.budgeted": { description: "Keyed, with its own budget", idempotency: "key", result: "probe.outcome", budget: { timeoutMs: 15, maxAttempts: 8 } },
+    "gateway.job": { description: "Long work, settled later", kind: "job", idempotency: "key", deadline: "1h", probe: { every: "1m" }, completes: { message: "probe.job.done" }, result: "probe.outcome" },
+    "gateway.job-plain": { description: "Long work whose start can't be retried", kind: "job", idempotency: "none", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
   },
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
@@ -48,6 +53,9 @@ export const system = defineSystem({
     { from: "@timer", message: "probe.timer.fired", to: "Probe" },
     { from: "@clock", message: "probe.tick.hourly", to: "Probe" },
     { from: "@clock", message: "probe.tick.daily", to: "Probe" },
+    { from: "@ingress", message: "probe.job.start", to: "Probe" },
+    { from: "@ingress", message: "probe.job.done", to: "Probe" },
+    { from: "@ingress", message: "probe.job.cancel", to: "Probe" },
   ],
 });
 
@@ -75,6 +83,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL, at INTEGER)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Probe", {
@@ -104,6 +113,17 @@ export class Probe extends DurableObject<Env> {
     "probe.tick.daily": (_m, ctx) => {
       ctx.sql.exec("INSERT INTO ticks (message) VALUES ('probe.tick.daily')");
     },
+    "probe.job.start": ({ payload }, ctx) => {
+      ctx.effect("gateway.job", { key: payload.key }, { key: payload.key });
+    },
+    "probe.job.done": ({ payload }, ctx) => {
+      // Record what settleJob answered, not what the message claimed: false means the job was already settled.
+      const settled = ctx.settleJob("gateway.job", payload.key, payload.ok ? { status: "confirmed", value: { finished: true } } : { status: "failed", error: "the job reported failure" });
+      ctx.sql.exec("INSERT INTO settled (key, ok) VALUES (?, ?)", payload.key, settled ? 1 : 0);
+    },
+    "probe.job.cancel": ({ payload }, ctx) => {
+      ctx.cancelJob("gateway.job", payload.key);
+    },
   }, { backoffMs: () => 40 });
 
   receive(envelope: Envelope) {
@@ -126,6 +146,9 @@ export class Probe extends DurableObject<Env> {
   }
   tickAts(): Array<number | null> {
     return this.ctx.storage.sql.exec<{ at: number | null }>("SELECT at FROM ticks WHERE message = 'probe.tick.hourly' ORDER BY rowid").toArray().map((r) => r.at);
+  }
+  settled(): Array<{ key: string; ok: boolean }> {
+    return this.ctx.storage.sql.exec<{ key: string; ok: number }>("SELECT key, ok FROM settled ORDER BY rowid").toArray().map((r) => ({ key: r.key, ok: r.ok === 1 }));
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);

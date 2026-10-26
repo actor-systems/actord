@@ -135,9 +135,13 @@
       "budget": {
         "timeoutMs": 0
       },
+      "completes": null,
+      "deadline": null,
       "description": "Page the on-call",
       "idempotency": "key",
+      "kind": "call",
       "name": "notify.pager",
+      "probe": null,
       "reconcile": false,
       "result": null
     }

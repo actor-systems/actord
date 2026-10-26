@@ -160,9 +160,13 @@
   "effects": [
     {
       "approval": "none",
+      "completes": null,
+      "deadline": null,
       "description": "Message the operator about a sequence gap",
       "idempotency": "key",
+      "kind": "call",
       "name": "notify.operator",
+      "probe": null,
       "reconcile": false,
       "result": null
     }

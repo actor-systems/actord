@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "JOB_DEADLINE_MISSING"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}
