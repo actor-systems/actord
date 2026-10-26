@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-26T08:53:24.817Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-26T13:14:31.586Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
