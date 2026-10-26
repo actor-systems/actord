@@ -11,7 +11,7 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
-    "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed"]), key: z.string() }) }),
+    "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted"]), key: z.string() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
@@ -25,7 +25,7 @@ export const system = defineSystem({
       kind: "deterministic",
       purpose: "Exercises runtime edge cases",
       justification: ["state"],
-      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed"],
+      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted"],
       schedules: [
         { every: "1h", message: "probe.tick.hourly" },
         { cron: "0 9 * * *", message: "probe.tick.daily" },
@@ -37,6 +37,7 @@ export const system = defineSystem({
     "gateway.plain": { description: "No key, no lookup", idempotency: "none", result: "probe.outcome" },
     "gateway.approval": { description: "Needs a person", idempotency: "key", approval: "human", result: "probe.outcome" },
     "gateway.keyed": { description: "Keyed", idempotency: "key", result: "probe.outcome" },
+    "gateway.budgeted": { description: "Keyed, with its own budget", idempotency: "key", result: "probe.outcome", budget: { timeoutMs: 15, maxAttempts: 8 } },
   },
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },

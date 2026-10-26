@@ -162,7 +162,11 @@ export class EffectRejected extends Error {
   readonly rejected = true;
 }
 
-/** What an attempt consumed. Every field is optional; reports are summed field by field. */
+/**
+ * What an attempt consumed. Every field is optional; reports are summed field by field.
+ * Not guaranteed: usage from an attempt that crashed the Durable Object is lost, and usage reported
+ * after an attempt has timed out or ended is dropped.
+ */
 export interface EffectUsage {
   inputTokens?: number;
   outputTokens?: number;
@@ -173,7 +177,7 @@ export interface EffectUsage {
 const USAGE_FIELDS = ["inputTokens", "outputTokens", "costUsd", "containerSeconds"] as const;
 
 export interface EffectAdapter<I = unknown, O = unknown> {
-  run(input: I, ctx: { key: string; attempt: number; signal: AbortSignal; reportUsage(usage: EffectUsage): void }): Promise<O>;
+  run(input: I, ctx: { key: string; attempt: number; signal: AbortSignal; /** Add to this effect's usage. Ignored once the attempt has timed out or ended. */ reportUsage(usage: EffectUsage): void }): Promise<O>;
   /** Look up the outcome of an unacknowledged attempt; return undefined when it can't be determined. */
   reconcile?(key: string): Promise<{ delivered: true; value: O } | { delivered: false } | undefined>;
 }
@@ -595,9 +599,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (orphans.length > 0) await cap.arm(earliestWake());
   }
 
-  function retryOrExhaust(row: { id: string; attempts: number }, error: string, event: Omit<ActorEvent, "$actord" | "kind" | "at" | "actor">, overloaded = false): void {
+  function retryOrExhaust(row: { id: string; attempts: number }, error: string, event: Omit<ActorEvent, "$actord" | "kind" | "at" | "actor">, overloaded = false, limit = maxAttempts): void {
     const attempts = row.attempts + 1;
-    if (attempts >= maxAttempts) {
+    if (attempts >= limit) {
       sql.exec("UPDATE _actors_outbox SET status = 'dead', attempts = ?, last_error = ? WHERE id = ?", attempts, error, row.id);
       emit({ kind: "retry.exhausted", at: now(), actor: self, ...event, attempt: attempts, reason: error });
     } else {
@@ -693,7 +697,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         } else {
           attemptOpen = false;
           if (withUsage().usage) sql.exec("UPDATE _actors_outbox SET body = ? WHERE id = ?", JSON.stringify({ ...req, ...withUsage() }), row.id);
-          retryOrExhaust(row, error, base);
+          retryOrExhaust(row, error, base, false, budgetAttempts);
         }
       } else if (fx?.reconcile && adapter.reconcile) {
         const r = await adapter.reconcile(req.key).catch(() => undefined);

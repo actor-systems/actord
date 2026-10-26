@@ -14,4 +14,5 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A schedule that was missed while the object slept ticks once, then re-arms from now | Per-message due time in `_actors_meta`; the tick carries the missed time as `payload.at` and a derived id |
 
 Not guaranteed: exactly-once external effects, global ordering, cross-actor transactions, or a route as a
-security boundary. Decision 0007 has the details and the platform behavior they rest on.
+security boundary. Effect usage is best effort: usage from an attempt that crashed the Durable Object is lost, and usage
+reported after an attempt has timed out or ended is dropped. Decision 0007 has the details and the platform behavior they rest on.

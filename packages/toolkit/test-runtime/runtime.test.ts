@@ -1,14 +1,14 @@
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { afterEach, expect, it } from "vitest";
-import { deriveId, ingress } from "../src/runtime/index.ts";
+import { afterEach, expect, it, vi } from "vitest";
+import { deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
 import { fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
 const probe = (key: string) => env.PROBE.getByName(key);
-const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed") =>
+const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted") =>
   ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
 
 it("[denied-capability] an effect the actor didn't declare is refused and nothing is queued", async () => {
@@ -252,4 +252,81 @@ it("[effect-usage-absent] no usage field when an adapter reported none", async (
   await send("eun", "gateway.keyed");
   await settle(env, system);
   expect((await probe("eun").outcomes())[0]).not.toHaveProperty("usage");
+});
+
+const hang = (counter: { n: number }) => ({ run: () => { counter.n++; return new Promise<never>(() => {}); } });
+
+it("[effect-budget-declared] a declared effect budget beats its actor's, and maxAttempts above the runtime's 6 is honoured", async () => {
+  overrideBudget("Probe", { timeoutMs: 5_000, maxAttempts: 2 });
+  const c = { n: 0 };
+  overrideEffect("gateway.budgeted", hang(c));
+  await send("ebd", "gateway.budgeted");
+  await settle(env, system);
+  expect(c.n).toBe(8);
+  expect(await probe("ebd").outcomes()).toMatchObject([{ key: "ebd", status: "in_doubt", error: "effect timed out after 15ms" }]);
+});
+
+it("[effect-budget-seam-over-declared] the effect seam beats the declared budget, and a field it omits falls through", async () => {
+  overrideEffectBudget("gateway.budgeted", { timeoutMs: 25 });
+  const c = { n: 0 };
+  overrideEffect("gateway.budgeted", hang(c));
+  await send("ebs", "gateway.budgeted");
+  await settle(env, system);
+  expect(c.n).toBe(8); // maxAttempts inherited from the declared budget
+  expect(await probe("ebs").outcomes()).toMatchObject([{ status: "in_doubt", error: "effect timed out after 25ms" }]);
+});
+
+it("[effect-budget-attempts] maxAttempts from the effect seam bounds retries; timeout falls through to the declared 15ms", async () => {
+  overrideEffectBudget("gateway.budgeted", { maxAttempts: 2 });
+  const c = { n: 0 };
+  overrideEffect("gateway.budgeted", hang(c));
+  await send("eba", "gateway.budgeted");
+  await settle(env, system);
+  expect(c.n).toBe(2);
+  expect(await probe("eba").outcomes()).toMatchObject([{ status: "in_doubt", error: "effect timed out after 15ms" }]);
+});
+
+it("[effect-budget-above-runtime] an effect may retry past the runtime-wide limit and still ends with a result message", async () => {
+  overrideEffectBudget("gateway.budgeted", { timeoutMs: 1_000, maxAttempts: 9 });
+  let n = 0;
+  overrideEffect("gateway.budgeted", { run: async () => { n++; throw new Error("boom"); } });
+  await send("ebu", "gateway.budgeted");
+  await settle(env, system);
+  expect(n).toBe(9);
+  expect(await probe("ebu").outcomes()).toMatchObject([{ key: "ebu", status: "in_doubt", error: "boom" }]);
+});
+
+it("[effect-usage-failed] usage reported before a rejection arrives with the failed result", async () => {
+  overrideEffect("gateway.plain", { run: async (_i, c) => { c.reportUsage({ costUsd: 0.5 }); throw new EffectRejected("refused"); } });
+  await send("euf", "gateway.plain");
+  await settle(env, system);
+  expect((await probe("euf").outcomes())[0]).toMatchObject({ status: "failed", usage: { costUsd: 0.5 } });
+});
+
+it("[effect-usage-timeout] usage reported before a timeout is kept; a later report is dropped", async () => {
+  overrideEffectBudget("gateway.plain", { timeoutMs: 20 });
+  overrideEffect("gateway.plain", {
+    run: async (_i, c) => {
+      c.reportUsage({ inputTokens: 3 });
+      await new Promise((r) => setTimeout(r, 80));
+      c.reportUsage({ inputTokens: 100 });
+      return "late";
+    },
+  });
+  await send("eut", "gateway.plain");
+  await settle(env, system);
+  await new Promise((r) => setTimeout(r, 150));
+  expect((await probe("eut").outcomes())[0]).toMatchObject({ status: "in_doubt", usage: { inputTokens: 3 } });
+  const body = await runInDurableObject(probe("eut"), (_i, s) => s.storage.sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE kind = 'effect'").one().body);
+  expect(JSON.parse(body).usage).toEqual({ inputTokens: 3 });
+});
+
+it("[effect-usage-event] the effect event carries detail.usage", async () => {
+  const log = vi.spyOn(console, "log");
+  overrideEffect("gateway.keyed", { run: async (_i, c) => { c.reportUsage({ outputTokens: 7 }); return "ok"; } });
+  await send("eue", "gateway.keyed");
+  await settle(env, system);
+  const events = log.mock.calls.flatMap(([l]) => { try { return [JSON.parse(String(l))]; } catch { return []; } });
+  log.mockRestore();
+  expect(events.find((e) => e.kind === "effect.confirmed" && e.effectKey === "eue")).toMatchObject({ detail: { usage: { outputTokens: 7 } } });
 });
