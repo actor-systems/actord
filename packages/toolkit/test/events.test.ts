@@ -94,6 +94,29 @@ describe("actord trace", () => {
     expect(run("trace", "m-start", "--file", settled).out).toContain('job {"runId":"r-1"} settled by message after 3m 25s');
   });
 
+  it("trace attributes a duplicate request to the message that made it, not the first outcome", () => {
+    const ev = (e: Record<string, unknown>) => JSON.stringify({ $actord: 1, actor: "A", at: 1, ...e });
+    const msg = (id: string) => ({ messageId: id, type: "t", from: "@ingress", to: "A", version: 1, correlationId: "c", attempt: 1 });
+    const fx = { effect: "x", effectKey: "k", correlationId: "c" };
+    const log = join(tmp, "dup.ndjson");
+    writeFileSync(
+      log,
+      `${[
+        ev({ kind: "received", ...msg("M1") }),
+        ev({ kind: "handled", ...msg("M1") }),
+        ev({ kind: "effect.requested", ...fx, causationId: "M1" }),
+        ev({ kind: "effect.confirmed", ...fx, causationId: "M1", at: 2 }),
+        ev({ kind: "received", ...msg("M2") }),
+        ev({ kind: "handled", ...msg("M2") }),
+        ev({ kind: "effect.duplicate", ...fx, causationId: "M2", at: 3, detail: { existingStatus: "confirmed", firstCausationId: "M1" } }),
+      ].join("\n")}\n`,
+    );
+    expect(JSON.parse(run("trace", "M2", "--file", log, "--json").out).root.effects).toMatchObject([{ effect: "x", key: "k", outcome: "duplicate", attempts: 0, result: null, duplicateOf: "M1" }]);
+    expect(run("trace", "M2", "--file", log).out).toContain("already requested by M1 (confirmed)");
+    // The first requester's trace is unchanged by the later duplicate.
+    expect(JSON.parse(run("trace", "M1", "--file", log, "--json").out).root.effects).toMatchObject([{ outcome: "confirmed" }]);
+  });
+
   it("marks a dead-lettered message as retry.exhausted", () => {
     const dead = find(faults, (e) => e.kind === "retry.exhausted");
     const out = run("trace", dead, "--file", faults).out;

@@ -3,7 +3,7 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { afterEach, expect, it, vi } from "vitest";
 import { deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
-import { expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { captureEvents, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
@@ -776,4 +776,51 @@ it("[job-early-completion-orphan] an unkeyed start cut off by a restart settles 
   expect(starts).toBe(1);
   expect(await probe("jeo").outcomes()).toMatchObject([{ key: "jeo", status: "confirmed" }]);
   expect(await jobRow("jeo", "gateway.job-plain")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
+});
+
+it("[effect-key-reuse] a reused key runs the effect once and records a duplicate request", async () => {
+  const events = captureEvents();
+  let runs = 0;
+  overrideEffect("gateway.keyed", { run: async () => ++runs });
+  await send("reuse", "gateway.keyed");
+  await settle(env, system);
+  await ingress(env, system, "Probe", "probe.effect", { effect: "gateway.keyed", key: "reuse" }, { key: "reuse" });
+  await settle(env, system);
+  expect(runs).toBe(1);
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effectKey === "reuse")).toHaveLength(1);
+  const dup = events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "reuse");
+  expect(dup).toMatchObject([{ effect: "gateway.keyed", detail: { existingStatus: "confirmed" } }]);
+  const first = events.find((e) => e.kind === "effect.requested" && e.effectKey === "reuse")!;
+  expect(dup[0]!.detail?.firstCausationId).toBe(first.causationId);
+  expect(dup[0]!.causationId).not.toBe(first.causationId);
+});
+
+it("[effect-key-reuse-after-settled] a key whose effect ended in doubt is still a duplicate", async () => {
+  const events = captureEvents();
+  let runs = 0;
+  overrideEffect("gateway.plain", {
+    run: async () => {
+      runs++;
+      throw new Error("connection dropped after send");
+    },
+  });
+  await send("reuse-doubt", "gateway.plain");
+  await settle(env, system);
+  expect(await probe("reuse-doubt").outcomes()).toMatchObject([{ key: "reuse-doubt", status: "in_doubt" }]);
+  await send("reuse-doubt", "gateway.plain");
+  await settle(env, system);
+  expect(runs).toBe(1);
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "reuse-doubt")).toMatchObject([{ detail: { existingStatus: "in_doubt" } }]);
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effectKey === "reuse-doubt")).toHaveLength(1);
+});
+
+it("[effect-key-reuse-same-handler] two requests for one key in one handler run once and record one duplicate", async () => {
+  const events = captureEvents();
+  let runs = 0;
+  overrideEffect("gateway.keyed", { run: async () => ++runs });
+  await ingress(env, system, "Probe", "probe.effect", { effect: "gateway.keyed", key: "twice", twice: true }, { key: "twice" });
+  await settle(env, system);
+  expect(runs).toBe(1);
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effectKey === "twice")).toHaveLength(1);
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "twice")).toMatchObject([{ detail: { existingStatus: "pending" } }]);
 });

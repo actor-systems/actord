@@ -1,7 +1,7 @@
 // @actord/toolkit/testing: helpers for tests that run in workerd with @cloudflare/vitest-plugin.
 // Import only from test files: it depends on the `cloudflare:test` module.
 import { listDurableObjectIds, runInDurableObject } from "cloudflare:test";
-import type { ActorRuntime, EffectAdapter, FaultPoint, JobAdapter } from "./runtime/index.ts";
+import type { ActorEvent, ActorRuntime, EffectAdapter, FaultPoint, JobAdapter } from "./runtime/index.ts";
 import { expireJobRows } from "./runtime/jobs.ts";
 import { scheduleKey } from "./runtime/schedules.ts";
 import type { System } from "./system.ts";
@@ -13,6 +13,7 @@ interface Seams {
   effectBudgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   runtimes: Map<string, ActorRuntime>;
   names: Map<string, string>;
+  events?: ActorEvent[];
 }
 function seams(): Seams {
   const g = globalThis as { __actorsTestSeams?: Seams };
@@ -52,7 +53,15 @@ export function overrideEffectBudget(effect: string, budget: { maxAttempts?: num
   seams().effectBudgets = { ...seams().effectBudgets, [effect]: budget };
 }
 
+/** Start capturing every event the runtime emits; returns the live array, which fills until resetSeams(). */
+export function captureEvents(): ActorEvent[] {
+  const events: ActorEvent[] = [];
+  seams().events = events;
+  return events;
+}
+
 export function resetSeams(): void {
+  delete seams().events;
   seams().faults = [];
   seams().effects = {};
   seams().budgets = {};

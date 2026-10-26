@@ -135,6 +135,7 @@ export type EventKind =
   | "retry.exhausted"
   | "undeliverable"
   | "effect.requested"
+  | "effect.duplicate"
   | "effect.confirmed"
   | "effect.failed"
   | "effect.in_doubt"
@@ -327,6 +328,8 @@ interface TestSeams {
   runtimes?: Map<string, ActorRuntime>;
   /** Each instance's name by ctx.id.toString(): listDurableObjectIds returns ids without names, and a Lifecycle object can't start without one. */
   names?: Map<string, string>;
+  /** While set, emit() also pushes every event here (captureEvents). */
+  events?: ActorEvent[];
 }
 function seams(): TestSeams | undefined {
   return (globalThis as { __actorsTestSeams?: TestSeams }).__actorsTestSeams;
@@ -362,7 +365,9 @@ export function deriveId(...parts: Array<string | number>): string {
 }
 
 export function emit(event: Omit<ActorEvent, "$actord">): void {
-  console.log(JSON.stringify({ $actord: 1, ...event }));
+  const full = { $actord: 1 as const, ...event };
+  seams()?.events?.push(full as ActorEvent);
+  console.log(JSON.stringify(full));
 }
 
 interface Pending {
@@ -557,6 +562,14 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           throw new Error(`${actorName} may not request effect ${effectName}: it isn't in its declared effects`);
         }
         const id = `fx:${effectName}:${opts.key}`;
+        // An effect key names one effect for the actor's lifetime: asking again runs nothing, and says so.
+        const inHandler = pending.find((p) => p.id === id);
+        const stored = inHandler ? undefined : sql.exec<{ status: string; body: string }>("SELECT status, body FROM _actors_outbox WHERE id = ?", id).toArray()[0];
+        if (inHandler || stored) {
+          const firstCausationId = inHandler ? current.id : ((JSON.parse(stored!.body) as { causationId?: string }).causationId ?? null);
+          notes.push({ kind: "effect.duplicate", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId, detail: { existingStatus: inHandler ? "pending" : stored!.status, firstCausationId } });
+          return;
+        }
         const body = JSON.stringify({ name: effectName, key: opts.key, input, causationId: current.id, correlationId: current.correlationId });
         pending.push({ kind: "effect", id, target: effectName, body, event: { kind: "effect.requested", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId } });
       },

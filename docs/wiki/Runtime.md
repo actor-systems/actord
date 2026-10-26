@@ -15,6 +15,8 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A job is settled once, by its completion message, its probe, its deadline (in_doubt), or a cancel reported honestly | The outbox row waits as `awaiting_job` with its handle and deadline. `ctx.settleJob` returns false only once the job is settled: a completion that arrives before the job is waiting is kept and settles it when its start returns. Decision 0018 |
 | An effect interrupted 5 times without settling is parked as in_doubt | A keyed orphan is retried until its 5th interruption (`parkAfterInterruptions`), then marked `in_doubt` with `parked: interrupted N times without settling`, an `effect.parked` event, and never run again. While any attempt runs, actord also keeps a wake 30 s away so a lost instance is noticed |
 
+**Effect keys.** An effect key identifies one effect for the actor's lifetime. Requesting it again records `effect.duplicate` and runs nothing. A new attempt at the same logical work needs a new key, for example one that includes an attempt or generation number.
+
 Not guaranteed: exactly-once external effects, global ordering, cross-actor transactions, or a route as a
 security boundary. Effect usage is best effort: usage from an attempt that crashed the Durable Object is lost, and usage
 reported after an attempt has timed out or ended is dropped. Decision 0007 has the details and the platform behavior they rest on.

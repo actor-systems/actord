@@ -497,7 +497,7 @@ function buildTrace(log, id2) {
     for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
     for (const k of effectKeys) {
       const evs2 = effectsBy.get(k) ?? [];
-      const last = [...evs2].reverse().find((e) => e.kind.startsWith("effect.") && e.kind !== "effect.requested");
+      const last = [...evs2].reverse().find((e) => e.kind.startsWith("effect.") && e.kind !== "effect.requested" && e.kind !== "effect.duplicate");
       const [effect, ...rest] = k.split(":");
       const rid = resultOf.get(k);
       const started = evs2.find((e) => e.kind === "job.started");
@@ -518,6 +518,12 @@ function buildTrace(log, id2) {
           }
         } : {}
       });
+    }
+    for (const e of log.events) {
+      if (e.kind !== "effect.duplicate" || e.causationId !== mid || !e.effect || !e.effectKey) continue;
+      const first2 = e.detail?.firstCausationId;
+      const status = e.detail?.existingStatus;
+      effects.push({ effect: e.effect, key: e.effectKey, outcome: "duplicate", attempts: 0, reason: null, result: null, duplicateOf: typeof first2 === "string" ? first2 : null, existingStatus: typeof status === "string" ? status : null });
     }
     const kids = [...children.get(mid) ?? []].filter((c) => !visited.has(c) && !resultIds.has(c));
     return {
@@ -575,6 +581,11 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
       if (it.kind === "node") walk(it.n, inner, isLast, false);
       else {
         const e = it.e;
+        if (e.outcome === "duplicate") {
+          const by = e.duplicateOf ? `already requested by ${e.duplicateOf}${e.existingStatus ? ` (${e.existingStatus})` : ""}` : "already requested";
+          lines.push(`${inner}${isLast ? "\u2514\u2500 " : "\u251C\u2500 "}effect ${e.effect} [${e.key}]  = duplicate: ${by}; nothing ran for this request`);
+          return;
+        }
         const mark = e.outcome === "confirmed" ? "\u2713" : ["pending", "awaiting_approval", "awaiting_job", "cancelling"].includes(e.outcome) ? "\u2026" : "\u2717";
         lines.push(`${inner}${isLast ? "\u2514\u2500 " : "\u251C\u2500 "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
         if (e.job) {

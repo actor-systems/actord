@@ -84,6 +84,10 @@ export interface TraceEffect {
   attempts: number;
   reason: string | null;
   result: TraceNode | null;
+  /** Set when this message re-requested a key already requested: the message that first requested it. Nothing ran for this request. */
+  duplicateOf?: string | null;
+  /** With duplicateOf: the first request's status when this one was made. */
+  existingStatus?: string | null;
   /** For a job effect that started: its handle, what settled it, and how long after starting (both null while it waits). */
   job?: { handle: unknown; settledBy: "message" | "probe" | "deadline" | "cancel" | null; waitedMs: number | null };
 }
@@ -164,7 +168,7 @@ export function buildTrace(log: EventLog, id: string): Trace {
     for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
     for (const k of effectKeys) {
       const evs2 = effectsBy.get(k) ?? [];
-      const last = [...evs2].reverse().find((e) => e.kind.startsWith("effect.") && e.kind !== "effect.requested");
+      const last = [...evs2].reverse().find((e) => e.kind.startsWith("effect.") && e.kind !== "effect.requested" && e.kind !== "effect.duplicate");
       const [effect, ...rest] = k.split(":");
       const rid = resultOf.get(k);
       // A job that started and hasn't settled is waiting, or being cancelled; once settled, its event says how.
@@ -188,6 +192,12 @@ export function buildTrace(log: EventLog, id: string): Trace {
             }
           : {}),
       });
+    }
+    for (const e of log.events) {
+      if (e.kind !== "effect.duplicate" || e.causationId !== mid || !e.effect || !e.effectKey) continue;
+      const first = e.detail?.firstCausationId;
+      const status = e.detail?.existingStatus;
+      effects.push({ effect: e.effect, key: e.effectKey, outcome: "duplicate", attempts: 0, reason: null, result: null, duplicateOf: typeof first === "string" ? first : null, existingStatus: typeof status === "string" ? status : null });
     }
     const kids = [...(children.get(mid) ?? [])].filter((c) => !visited.has(c) && !resultIds.has(c));
     return {
@@ -247,6 +257,11 @@ export function renderTrace(t: Trace, source: string): string {
       if (it.kind === "node") walk(it.n, inner, isLast, false);
       else {
         const e = it.e;
+        if (e.outcome === "duplicate") {
+          const by = e.duplicateOf ? `already requested by ${e.duplicateOf}${e.existingStatus ? ` (${e.existingStatus})` : ""}` : "already requested";
+          lines.push(`${inner}${isLast ? "└─ " : "├─ "}effect ${e.effect} [${e.key}]  = duplicate: ${by}; nothing ran for this request`);
+          return;
+        }
         const mark = e.outcome === "confirmed" ? "✓" : ["pending", "awaiting_approval", "awaiting_job", "cancelling"].includes(e.outcome) ? "…" : "✗";
         lines.push(`${inner}${isLast ? "└─ " : "├─ "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
         if (e.job) {
