@@ -147,3 +147,29 @@ it("[timer-atomic] a handler that sets a timer and then throws leaves no timer",
   expect(r.status).toBe("failed");
   expect(await runInDurableObject(probe("tm6"), (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_timers").one().n)).toBe(0);
 });
+
+const timerRows = (key: string) =>
+  runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ key: string; attempts: number; due_at: number }>("SELECT key, attempts, due_at FROM _actors_timers").toArray());
+
+it("[timer-delivery-retry] a timer whose handler fails is retried with backoff, then dropped when attempts run out", async () => {
+  await setTimer("tm7", "bad1", 60_000);
+  await fireTimers(env, system, "Probe", "tm7");
+  const [row] = await timerRows("tm7");
+  expect(row).toMatchObject({ key: "bad1", attempts: 1 });
+  expect(row!.due_at).toBeGreaterThan(Date.now() - 5); // pushed out by the backoff, no longer due at 0
+  for (let i = 0; i < 5; i++) await fireTimers(env, system, "Probe", "tm7"); // attempts 2..6; the default maxAttempts is 6
+  expect(await timerRows("tm7")).toEqual([]);
+  expect(await probe("tm7").fired()).toEqual([]);
+});
+
+it("[timer-arms-alarm] a timer wakes the object through its alarm, with no driver call", async () => {
+  await setTimer("tm8", "t8", 20);
+  const jobs = await runInDurableObject(probe("tm8"), (_i, s) =>
+    s.storage.sql.exec<{ time: number }>("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").toArray());
+  const [timer] = await timerRows("tm8");
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]!.time).toBeLessThanOrEqual(timer!.due_at);
+  await new Promise((r) => setTimeout(r, 40));
+  await runDurableObjectAlarm(probe("tm8"));
+  expect(await probe("tm8").fired()).toEqual(["t8"]);
+});

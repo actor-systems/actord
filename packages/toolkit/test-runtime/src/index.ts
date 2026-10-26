@@ -85,6 +85,7 @@ export class Probe extends DurableObject<Env> {
       ctx.cancelTimer(payload.key);
     },
     "probe.timer.fired": ({ payload }, ctx) => {
+      if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
     },
   }, { backoffMs: () => 40 });
