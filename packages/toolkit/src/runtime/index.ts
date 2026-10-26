@@ -36,6 +36,7 @@ import { durationMs, type Duration } from "../system.ts";
 import { TIMERS_SCHEMA, type TimerRow, cancelTimer, dueTimers, earliestTimer, setTimer } from "./timers.ts";
 import type { Lifecycle } from "agents/lifecycle";
 import { ActordCapability } from "./capability.ts";
+import { migrateLegacy, nextDue, scheduleKey } from "./schedules.ts";
 
 // ---- Minimal structural types for the Durable Object APIs we use (no dependency on workers-types) ----
 
@@ -249,6 +250,8 @@ interface TestSeams {
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   /** Each instance's runtime by ctx.id.toString(), so test helpers can drive it without the alarm. */
   runtimes?: Map<string, ActorRuntime>;
+  /** Each instance's name by ctx.id.toString(): listDurableObjectIds returns ids without names, and a Lifecycle object can't start without one. */
+  names?: Map<string, string>;
 }
 function seams(): TestSeams | undefined {
   return (globalThis as { __actorsTestSeams?: TestSeams }).__actorsTestSeams;
@@ -302,6 +305,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const { ctx } = host;
   const env = host.env as Record<string, NamespaceLike>;
   const spec = system.actors[actorName] as ActorSpec | undefined as ActorSpec;
+  const schedules = spec.schedules ?? [];
   if (!spec) throw new Error(`actord: ${actorName} is not declared in system ${system.name}`);
   const now = options.now ?? (() => Date.now());
   const maxAttempts = options.maxAttempts ?? 6;
@@ -372,7 +376,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       emit({ kind: "duplicate", at: now(), actor: self, ...ids(envelope) });
       return { status: "duplicate", messageId: envelope.id };
     }
-    await ensureSchedule();
+    await ensureSchedules();
     emit({ kind: "received", at: now(), actor: self, ...ids(envelope), detail: { payloadKeys: Object.keys((validated.value as object) ?? {}).sort() } });
 
     const pending: Pending[] = [];
@@ -702,13 +706,22 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     emit({ kind: "sent", at: now(), actor: self, ...ids(envelope), effect, effectKey: rest.join(":"), detail: { effectResult: true } });
   }
 
-  async function ensureSchedule(): Promise<void> {
-    if (!spec.schedule) return;
-    if (meta("schedule.next") === null) {
-      const every = durationMs(spec.schedule.every) ?? 3_600_000;
-      setMeta("schedule.next", String(now() + every));
-      await cap.arm(earliestWake());
+  /** The meta key of each schedule this actor declares today; any other `schedule.next` key is a leftover. */
+  const scheduleKeys = (): string[] => schedules.map((sc) => scheduleKey(sc.message));
+
+  /** Start every declared schedule that has no due time yet, and drop due times for schedules no longer declared. */
+  async function ensureSchedules(): Promise<void> {
+    const delMeta = (k: string) => sql.exec("DELETE FROM _actors_meta WHERE k = ?", k);
+    migrateLegacy(meta, setMeta, schedules, delMeta);
+    const live = new Set(scheduleKeys());
+    for (const { k } of sql.exec<{ k: string }>("SELECT k FROM _actors_meta WHERE k LIKE 'schedule.next:%'").toArray()) if (!live.has(k)) delMeta(k);
+    let started = false;
+    for (const sc of schedules) {
+      if (meta(scheduleKey(sc.message)) !== null) continue;
+      setMeta(scheduleKey(sc.message), String(nextDue(sc, now())));
+      started = true;
     }
+    if (started) await cap.arm(earliestWake());
   }
 
   /** The one place every source of a wake meets: the earliest time actord must run, or null for never. */
@@ -716,8 +729,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const candidates: number[] = [];
     const next = sql.exec<{ t: number | null }>("SELECT MIN(next_at) AS t FROM _actors_outbox WHERE status = 'pending'").toArray()[0]?.t;
     if (next !== null && next !== undefined) candidates.push(next);
-    const tick = meta("schedule.next");
-    if (tick) candidates.push(Number(tick));
+    // Only declared schedules count: a removed schedule's leftover due time must not hold the alarm.
+    for (const key of scheduleKeys()) {
+      const due = meta(key);
+      if (due !== null) candidates.push(Number(due));
+    }
     const timer = earliestTimer(sql);
     if (timer !== null) candidates.push(timer);
     return candidates.length === 0 ? null : Math.min(...candidates);
@@ -725,32 +741,34 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   async function start(): Promise<void> {
     await recoverOrphans();
-    await ensureSchedule();
+    await ensureSchedules();
     await cap.arm(earliestWake());
   }
 
-  /** What the actord job runs: the schedule's tick if due, inbox retention, then the outbox. */
+  /** What the actord job runs: each due schedule's tick, inbox retention, then the outbox. */
   async function drive(): Promise<void> {
     await cap.ready();
     await recoverOrphans();
-    const tick = meta("schedule.next");
-    if (spec.schedule && tick && Number(tick) <= now()) {
-      const every = durationMs(spec.schedule.every) ?? 3_600_000;
-      setMeta("schedule.next", String(now() + every));
-      const id = deriveId(self, "tick", tick);
-      emit({ kind: "scheduled", at: now(), actor: self, messageId: id, type: spec.schedule.message, detail: { every: spec.schedule.every } });
+    for (const sc of schedules) {
+      const dueMeta = meta(scheduleKey(sc.message));
+      if (dueMeta === null || Number(dueMeta) > now()) continue;
+      const due = Number(dueMeta);
+      // Missed periods aren't replayed: one tick, then the next due time is counted from now.
+      setMeta(scheduleKey(sc.message), String(nextDue(sc, now())));
+      const id = deriveId(self, "tick", sc.message, due);
+      emit({ kind: "scheduled", at: now(), actor: self, messageId: id, type: sc.message, detail: sc.cron !== undefined ? { cron: sc.cron } : { every: sc.every } });
       await receive({
         v: 1,
         id,
-        type: spec.schedule.message,
-        version: system.messages[spec.schedule.message]!.version,
+        type: sc.message,
+        version: system.messages[sc.message]!.version,
         from: "@clock",
         to: self,
         correlationId: id,
         causationId: null,
         attempt: 1,
         sentAt: now(),
-        payload: { at: Number(tick) },
+        payload: { at: due },
       });
     }
     for (const t of dueTimers(sql, now())) await fireTimer(t);
@@ -825,6 +843,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     },
   };
   seams()?.runtimes?.set(ctx.id.toString(), runtime);
+  if (ctx.id.name !== undefined) seams()?.names?.set(ctx.id.toString(), ctx.id.name);
   return runtime;
 }
 

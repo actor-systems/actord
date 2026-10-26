@@ -2,7 +2,8 @@ import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import { deriveId, ingress } from "../src/runtime/index.ts";
-import { fireTimers, overrideEffect, resetSeams, settle } from "../src/testing.ts";
+import { nextDue } from "../src/runtime/schedules.ts";
+import { fireTimers, overrideEffect, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
@@ -178,4 +179,37 @@ it("[timer-arms-alarm] a timer wakes the object through its alarm, with no drive
   await new Promise((r) => setTimeout(r, 40));
   await runDurableObjectAlarm(probe("tm8"));
   expect(await probe("tm8").fired()).toEqual(["t8"]);
+});
+
+it("[schedules-independent] each schedule ticks on its own message", async () => {
+  await tick(env, system, "Probe", "sch", "probe.tick.hourly");
+  await tick(env, system, "Probe", "sch", "probe.tick.daily");
+  expect(await probe("sch").ticks()).toEqual(["probe.tick.daily", "probe.tick.hourly"]);
+});
+
+it("[schedule-late-wake] an object that wakes long after its due time ticks once and re-arms from now", async () => {
+  const due = Date.now() - 5 * 3_600_000; // five hourly periods missed
+  await runInDurableObject(probe("late"), async (_i, s) => {
+    s.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES ('schedule.next:probe.tick.hourly', ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", String(due));
+  });
+  await settle(env, system);
+  expect(await probe("late").ticks()).toEqual(["probe.tick.hourly"]);
+  const next = await runInDurableObject(probe("late"), (_i, s) => Number(s.storage.sql.exec("SELECT v FROM _actors_meta WHERE k = 'schedule.next:probe.tick.hourly'").one().v));
+  expect(next).toBeGreaterThan(Date.now() + 3_500_000);
+});
+
+it("[schedule-cron-next] nextDue follows the cron expression", () => {
+  const from = Date.UTC(2026, 9, 25, 10, 0, 0);
+  expect(new Date(nextDue({ cron: "0 9 * * *", message: "m" }, from)).toISOString()).toBe("2026-10-26T09:00:00.000Z");
+});
+
+it("[schedule-stale-meta] a removed schedule's due time and the legacy key are not wake sources", async () => {
+  await runInDurableObject(probe("stale"), async (_i, s) => {
+    s.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES ('schedule.next:gone.message', '1'), ('schedule.next', '1') ON CONFLICT (k) DO NOTHING");
+  });
+  await tick(env, system, "Probe", "stale", "probe.tick.hourly"); // drives; two schedules, so the legacy key is ignored
+  expect(await probe("stale").ticks()).toEqual(["probe.tick.hourly"]);
+  const time = await runInDurableObject(probe("stale"), (_i, s) =>
+    s.storage.sql.exec<{ time: number }>("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").toArray()[0]?.time);
+  expect(time).toBeGreaterThan(Date.now());
 });

@@ -41,7 +41,7 @@ describe("renderMermaid", () => {
   const manifest = (routes: Array<{ from: string; message: string; to: string }>, actors = ["end", "Desk"]) =>
     ({
       system: { name: "s", description: "" },
-      actors: actors.map((name) => ({ name, kind: "deterministic", schedule: null })),
+      actors: actors.map((name) => ({ name, kind: "deterministic", schedules: [] })),
       messages: routes.map((r) => ({ name: r.message, version: 2 })),
       routes,
       effects: [],

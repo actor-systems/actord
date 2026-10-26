@@ -2,6 +2,7 @@
 // Import only from test files: it depends on the `cloudflare:test` module.
 import { listDurableObjectIds, runInDurableObject } from "cloudflare:test";
 import type { ActorRuntime, EffectAdapter, FaultPoint } from "./runtime/index.ts";
+import { scheduleKey } from "./runtime/schedules.ts";
 import type { System } from "./system.ts";
 
 interface Seams {
@@ -9,10 +10,11 @@ interface Seams {
   effects: Record<string, EffectAdapter>;
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   runtimes: Map<string, ActorRuntime>;
+  names: Map<string, string>;
 }
 function seams(): Seams {
   const g = globalThis as { __actorsTestSeams?: Seams };
-  g.__actorsTestSeams ??= { faults: [], effects: {}, runtimes: new Map() };
+  g.__actorsTestSeams ??= { faults: [], effects: {}, runtimes: new Map(), names: new Map() };
   return g.__actorsTestSeams;
 }
 // Create the seams at import, before any actor is constructed, so every runtime registers itself in them.
@@ -77,13 +79,21 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
       const ns = e[spec.binding];
       if (!ns) continue;
       for (const id of await listDurableObjectIds(ns)) {
-        const stub = ns.get(id);
+        // After abortAllDurableObjects the listing can hand back ids with no name, and Lifecycle won't start an
+        // instance whose ctx.id.name is missing. Nothing can be driven or counted there, so skip it.
+        // listDurableObjectIds returns ids without names (and, after abortAllDurableObjects, so does ctx.id), and
+        // Lifecycle won't start an instance whose ctx.id.name is missing. Resolve each id through the name its
+        // runtime registered; an id never seen by a runtime has nothing to drive or count, so skip it.
+        const name = seams().names.get(String(id));
+        if (name === undefined) continue;
+        const stub = ns.getByName(name);
         const { pending, running } = await outboxCounts(stub);
         if (running > 0) any = true;
-        if (pending === 0 || options.deliver === false) continue;
-        any = true;
+        if (options.deliver === false) continue;
+        if (pending > 0) any = true;
+        // Drive every instance each round, not only those with pending rows: a schedule can be due with an empty outbox.
         await runInDurableObject(stub, async (_i, state) => {
-          state.storage.sql.exec("UPDATE _actors_outbox SET next_at = 0 WHERE status = 'pending'");
+          if (pending > 0) state.storage.sql.exec("UPDATE _actors_outbox SET next_at = 0 WHERE status = 'pending'");
           await seams().runtimes.get(state.id.toString())?.drive();
         });
       }
@@ -98,20 +108,23 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
 let lastWake = 0;
 
 /**
- * Simulate a scheduled wake now: mark the instance's next tick due at the current time and drive it, as
+ * Simulate a scheduled wake now: mark the instance's next tick of one schedule (by `message`, default the
+ * first) due at the current time and drive it, as
  * when its job fires on schedule, so the wake's `payload.at` is now. Each call is a distinct wake (a
  * later scheduled time, so a distinct message id).
  */
-export async function tick(env: unknown, system: System, actor: string, key = "main"): Promise<boolean> {
+export async function tick(env: unknown, system: System, actor: string, key = "main", message?: string): Promise<boolean> {
   const spec = system.actors[actor];
   if (!spec) throw new Error(`${actor} is not declared`);
+  const target = message ?? spec.schedules?.[0]?.message;
+  if (!target || !spec.schedules?.some((sc) => sc.message === target)) throw new Error(`${actor} has no schedule for ${target ?? "any message"}`);
   const stub = (env as Env)[spec.binding]!.getByName(key);
   const at = Math.max(Date.now(), lastWake + 1);
   lastWake = at;
   if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now() + 1));
   const due = String(at);
   await runInDurableObject(stub, async (_i, state) => {
-    state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES ('schedule.next', ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", due);
+    state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", scheduleKey(target), due);
     await seams().runtimes.get(state.id.toString())?.drive();
   });
   return true;

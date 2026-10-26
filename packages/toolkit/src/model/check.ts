@@ -1,7 +1,17 @@
 // `actord check`: what the type system can't express. Hard errors fail the check; warnings are advice.
 // Every diagnostic has a stable code so tests, hooks, and graders can match on it.
+import { parseCronExpression } from "cron-schedule";
 import type { Project } from "./load.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "./manifest.ts";
+
+function cronParses(expr: string): boolean {
+  try {
+    parseCronExpression(expr);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type Severity = "error" | "warning";
 
@@ -38,10 +48,14 @@ export function checkProject(project: Project): Diagnostic[] {
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
       add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
-    if (a.schedule) {
-      if (a.schedule.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${a.schedule.every}" isn't a duration like 15m`);
-      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === a.schedule!.message))
-        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${a.schedule.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${a.schedule.message}", to: "${a.name}" }.`);
+    const scheduled = new Set<string>();
+    for (const s of a.schedules) {
+      if (s.cron !== null && !cronParses(s.cron)) add("error", "SCHEDULE_INVALID", a.name, `schedule cron "${s.cron}" isn't a valid cron expression like 0 9 * * *`);
+      else if (s.cron === null && s.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${s.every}" isn't a duration like 15m`);
+      if (scheduled.has(s.message)) add("error", "SCHEDULE_DUPLICATE", a.name, `${a.name} schedules ${s.message} more than once`, "Keep one schedule per message; a second message gives a second cadence.");
+      scheduled.add(s.message);
+      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === s.message))
+        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${s.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${s.message}", to: "${a.name}" }.`);
     }
     for (const e of a.effects)
       if (!effects.has(e)) add("error", "EFFECT_UNDECLARED", a.name, `${a.name} requests effect "${e}", which the system doesn't declare`, "Declare it under effects, with its idempotency, or remove it.");
@@ -70,7 +84,7 @@ export function checkProject(project: Project): Diagnostic[] {
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label, `Route message ${r.message} isn't declared`);
-    if (r.from === "@clock" && actors.get(r.to)?.schedule?.message !== r.message)
+    if (r.from === "@clock" && !actors.get(r.to)?.schedules.some((s) => s.message === r.message))
       add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
   }
   for (const e of m.effects) {

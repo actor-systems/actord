@@ -16,6 +16,8 @@ export const system = defineSystem({
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
     "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
+    "probe.tick.hourly": message({ version: 1, description: "The hourly schedule ticked", payload: z.object({ at: z.number() }) }),
+    "probe.tick.daily": message({ version: 1, description: "The daily schedule ticked", payload: z.object({ at: z.number() }) }),
   },
   actors: {
     Probe: {
@@ -24,6 +26,10 @@ export const system = defineSystem({
       purpose: "Exercises runtime edge cases",
       justification: ["state"],
       effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed"],
+      schedules: [
+        { every: "1h", message: "probe.tick.hourly" },
+        { cron: "0 9 * * *", message: "probe.tick.daily" },
+      ],
     },
   },
   effects: {
@@ -39,6 +45,8 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.timer.set", to: "Probe" },
     { from: "@ingress", message: "probe.timer.cancel", to: "Probe" },
     { from: "@timer", message: "probe.timer.fired", to: "Probe" },
+    { from: "@clock", message: "probe.tick.hourly", to: "Probe" },
+    { from: "@clock", message: "probe.tick.daily", to: "Probe" },
   ],
 });
 
@@ -64,6 +72,7 @@ export class Probe extends DurableObject<Env> {
     this.lifecycle.use(this.pinger);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS outcomes (key TEXT PRIMARY KEY, status TEXT NOT NULL, error TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
   }
 
@@ -88,6 +97,12 @@ export class Probe extends DurableObject<Env> {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
     },
+    "probe.tick.hourly": (_m, ctx) => {
+      ctx.sql.exec("INSERT INTO ticks (message) VALUES ('probe.tick.hourly')");
+    },
+    "probe.tick.daily": (_m, ctx) => {
+      ctx.sql.exec("INSERT INTO ticks (message) VALUES ('probe.tick.daily')");
+    },
   }, { backoffMs: () => 40 });
 
   receive(envelope: Envelope) {
@@ -101,6 +116,9 @@ export class Probe extends DurableObject<Env> {
   }
   fired(): string[] {
     return this.ctx.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key);
+  }
+  ticks(): string[] {
+    return this.ctx.storage.sql.exec<{ message: string }>("SELECT message FROM ticks ORDER BY message").toArray().map((r) => r.message);
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);

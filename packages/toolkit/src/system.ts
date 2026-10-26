@@ -42,6 +42,11 @@ export interface MessageSpec<S extends StandardSchemaV1 = StandardSchemaV1> {
   readonly payload: S;
 }
 
+/** A schedule: a fixed period (`every`) or a cron expression (`cron`, in UTC), delivering `message`. */
+export type ScheduleSpec =
+  | { readonly every: Duration; readonly message: string; readonly cron?: never }
+  | { readonly cron: string; readonly message: string; readonly every?: never };
+
 export interface ActorSpec {
   /** The Durable Object binding name in wrangler.jsonc, such as "RELEASE_LEDGER". */
   readonly binding: string;
@@ -50,8 +55,8 @@ export interface ActorSpec {
   readonly purpose: string;
   /** At least one reason this is an actor. An empty list is a check error. */
   readonly justification: readonly Justification[];
-  /** A periodic wake, delivered as `message` on a route from "@clock". */
-  readonly schedule?: { readonly every: Duration; readonly message: string };
+  /** Periodic wakes, each delivered as its `message` on a route from "@clock". */
+  readonly schedules?: readonly ScheduleSpec[];
   /** Names of external effects (keys of the system's `effects`) this actor may request. */
   readonly effects?: readonly string[];
   /** Required for model-assisted and agent actors: bounds on one unit of model work. */
@@ -89,7 +94,10 @@ export interface RouteSpec<A extends string = string, M extends string = string>
 /** Per-actor references that must name declared effects and messages. */
 export type ActorRefs<Msgs, Effects> = {
   readonly effects?: readonly Extract<keyof Effects, string>[];
-  readonly schedule?: { readonly every: Duration; readonly message: Extract<keyof Msgs, string> };
+  readonly schedules?: readonly (
+    | { readonly every: Duration; readonly message: Extract<keyof Msgs, string>; readonly cron?: never }
+    | { readonly cron: string; readonly message: Extract<keyof Msgs, string>; readonly every?: never }
+  )[];
 };
 
 export interface SystemSpec<

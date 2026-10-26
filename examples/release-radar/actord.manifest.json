@@ -22,7 +22,7 @@
       "receives": [
         "release.significant"
       ],
-      "schedule": null,
+      "schedules": [],
       "sends": []
     },
     {
@@ -43,11 +43,14 @@
         "feed.poll.due",
         "feed.watch"
       ],
-      "schedule": {
-        "every": "15m",
-        "everyMs": 900000,
-        "message": "feed.poll.due"
-      },
+      "schedules": [
+        {
+          "cron": null,
+          "every": "15m",
+          "everyMs": 900000,
+          "message": "feed.poll.due"
+        }
+      ],
       "sends": [
         "feed.fetched",
         "release.observed"
@@ -66,7 +69,7 @@
       "receives": [
         "release.observed"
       ],
-      "schedule": null,
+      "schedules": [],
       "sends": [
         "release.significant"
       ]

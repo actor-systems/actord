@@ -124,7 +124,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
         "receives": [
           "ping.sent",
         ],
-        "schedule": null,
+        "schedules": [],
         "sends": [],
       },
       {
@@ -142,11 +142,14 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
           "ping.due",
           "ping.kicked",
         ],
-        "schedule": {
-          "every": "5m",
-          "everyMs": 300000,
-          "message": "ping.due",
-        },
+        "schedules": [
+          {
+            "cron": null,
+            "every": "5m",
+            "everyMs": 300000,
+            "message": "ping.due",
+          },
+        ],
         "sends": [
           "ping.sent",
         ],
@@ -164,7 +167,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
         "receives": [
           "ping.sent",
         ],
-        "schedule": null,
+        "schedules": [],
         "sends": [
           "ping.sent",
         ],
@@ -340,11 +343,14 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
           "ping.due",
           "ping.kicked",
         ],
-        "schedule": {
-          "every": "5m",
-          "everyMs": 300000,
-          "message": "ping.due",
-        },
+        "schedules": [
+          {
+            "cron": null,
+            "every": "5m",
+            "everyMs": 300000,
+            "message": "ping.due",
+          },
+        ],
         "sends": [
           "ping.sent",
         ],
@@ -362,7 +368,7 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
         "receives": [
           "ping.sent",
         ],
-        "schedule": null,
+        "schedules": [],
         "sends": [],
       },
     ],

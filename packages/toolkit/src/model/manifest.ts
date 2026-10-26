@@ -6,13 +6,25 @@ import { durationMs, type System } from "../system.ts";
 export const MANIFEST_FILE = "actord.manifest.json";
 export const MANIFEST_SCHEMA_VERSION = 1;
 
+export interface ManifestSchedule {
+  every: string | null;
+  everyMs: number | null;
+  cron: string | null;
+  message: string;
+}
+
+/** "every 15m" or "cron 0 9 * * *": how a schedule reads in the graph and the facts line. */
+export function scheduleLabel(s: Pick<ManifestSchedule, "every" | "cron">): string {
+  return s.cron !== null ? `cron ${s.cron}` : `every ${s.every}`;
+}
+
 export interface ManifestActor {
   name: string;
   binding: string;
   kind: string;
   purpose: string;
   justification: string[];
-  schedule: { every: string; everyMs: number | null; message: string } | null;
+  schedules: ManifestSchedule[];
   effects: string[];
   budget: { maxAttempts: number; timeoutMs: number; maxTokens: number | null } | null;
   receives: string[];
@@ -66,7 +78,12 @@ export function normalize(system: System): Manifest {
       kind: a.kind,
       purpose: a.purpose ?? "",
       justification: [...(a.justification ?? [])].sort(),
-      schedule: a.schedule ? { every: a.schedule.every, everyMs: durationMs(a.schedule.every), message: a.schedule.message } : null,
+      schedules: (a.schedules ?? []).map((s) => ({
+        every: s.every ?? null,
+        everyMs: s.every === undefined ? null : durationMs(s.every),
+        cron: s.cron ?? null,
+        message: s.message,
+      })),
       effects: [...(a.effects ?? [])].sort(),
       budget: a.budget ? { maxAttempts: a.budget.maxAttempts, timeoutMs: a.budget.timeoutMs, maxTokens: a.budget.maxTokens ?? null } : null,
       receives: [...new Set(routes.filter((r) => r.to === name).map((r) => r.message))].sort(),

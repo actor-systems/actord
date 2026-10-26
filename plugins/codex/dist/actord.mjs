@@ -573,6 +573,454 @@ import { spawnSync as spawnSync2 } from "node:child_process";
 import { existsSync as existsSync7, mkdirSync, readFileSync as readFileSync7, writeFileSync } from "node:fs";
 import { join as join6, relative as relative2, resolve as resolve3 } from "node:path";
 
+// ../../node_modules/cron-schedule/dist/utils.js
+function extractDateElements(date) {
+  return {
+    second: date.getSeconds(),
+    minute: date.getMinutes(),
+    hour: date.getHours(),
+    day: date.getDate(),
+    month: date.getMonth(),
+    weekday: date.getDay(),
+    year: date.getFullYear()
+  };
+}
+function getDaysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+function getDaysBetweenWeekdays(weekday1, weekday2) {
+  if (weekday1 <= weekday2) {
+    return weekday2 - weekday1;
+  }
+  return 6 - weekday1 + weekday2 + 1;
+}
+
+// ../../node_modules/cron-schedule/dist/cron.js
+var Cron = class {
+  constructor({ seconds, minutes, hours, days, months, weekdays }) {
+    if (!seconds || seconds.size === 0)
+      throw new Error("There must be at least one allowed second.");
+    if (!minutes || minutes.size === 0)
+      throw new Error("There must be at least one allowed minute.");
+    if (!hours || hours.size === 0)
+      throw new Error("There must be at least one allowed hour.");
+    if (!months || months.size === 0)
+      throw new Error("There must be at least one allowed month.");
+    if ((!weekdays || weekdays.size === 0) && (!days || days.size === 0))
+      throw new Error("There must be at least one allowed day or weekday.");
+    this.seconds = Array.from(seconds).sort((a, b) => a - b);
+    this.minutes = Array.from(minutes).sort((a, b) => a - b);
+    this.hours = Array.from(hours).sort((a, b) => a - b);
+    this.days = Array.from(days).sort((a, b) => a - b);
+    this.months = Array.from(months).sort((a, b) => a - b);
+    this.weekdays = Array.from(weekdays).sort((a, b) => a - b);
+    const validateData = (name, data, constraint) => {
+      if (data.some((x) => typeof x !== "number" || x % 1 !== 0 || x < constraint.min || x > constraint.max)) {
+        throw new Error(`${name} must only consist of integers which are within the range of ${constraint.min} and ${constraint.max}`);
+      }
+    };
+    validateData("seconds", this.seconds, { min: 0, max: 59 });
+    validateData("minutes", this.minutes, { min: 0, max: 59 });
+    validateData("hours", this.hours, { min: 0, max: 23 });
+    validateData("days", this.days, { min: 1, max: 31 });
+    validateData("months", this.months, { min: 0, max: 11 });
+    validateData("weekdays", this.weekdays, { min: 0, max: 6 });
+    this.reversed = {
+      seconds: this.seconds.map((x) => x).reverse(),
+      minutes: this.minutes.map((x) => x).reverse(),
+      hours: this.hours.map((x) => x).reverse(),
+      days: this.days.map((x) => x).reverse(),
+      months: this.months.map((x) => x).reverse(),
+      weekdays: this.weekdays.map((x) => x).reverse()
+    };
+  }
+  /**
+   * Find the next or previous hour, starting from the given start hour that matches the hour constraint.
+   * startHour itself might also be allowed.
+   */
+  findAllowedHour(dir, startHour) {
+    return dir === "next" ? this.hours.find((x) => x >= startHour) : this.reversed.hours.find((x) => x <= startHour);
+  }
+  /**
+   * Find the next or previous minute, starting from the given start minute that matches the minute constraint.
+   * startMinute itself might also be allowed.
+   */
+  findAllowedMinute(dir, startMinute) {
+    return dir === "next" ? this.minutes.find((x) => x >= startMinute) : this.reversed.minutes.find((x) => x <= startMinute);
+  }
+  /**
+   * Find the next or previous second, starting from the given start second that matches the second constraint.
+   * startSecond itself IS NOT allowed.
+   */
+  findAllowedSecond(dir, startSecond) {
+    return dir === "next" ? this.seconds.find((x) => x > startSecond) : this.reversed.seconds.find((x) => x < startSecond);
+  }
+  /**
+   * Find the next or previous time, starting from the given start time that matches the hour, minute
+   * and second constraints. startTime itself might also be allowed.
+   */
+  findAllowedTime(dir, startTime) {
+    let hour = this.findAllowedHour(dir, startTime.hour);
+    if (hour !== void 0) {
+      if (hour === startTime.hour) {
+        let minute = this.findAllowedMinute(dir, startTime.minute);
+        if (minute !== void 0) {
+          if (minute === startTime.minute) {
+            const second = this.findAllowedSecond(dir, startTime.second);
+            if (second !== void 0) {
+              return { hour, minute, second };
+            }
+            minute = this.findAllowedMinute(dir, dir === "next" ? startTime.minute + 1 : startTime.minute - 1);
+            if (minute !== void 0) {
+              return {
+                hour,
+                minute,
+                second: dir === "next" ? this.seconds[0] : this.reversed.seconds[0]
+              };
+            }
+          } else {
+            return {
+              hour,
+              minute,
+              second: dir === "next" ? this.seconds[0] : this.reversed.seconds[0]
+            };
+          }
+        }
+        hour = this.findAllowedHour(dir, dir === "next" ? startTime.hour + 1 : startTime.hour - 1);
+        if (hour !== void 0) {
+          return {
+            hour,
+            minute: dir === "next" ? this.minutes[0] : this.reversed.minutes[0],
+            second: dir === "next" ? this.seconds[0] : this.reversed.seconds[0]
+          };
+        }
+      } else {
+        return {
+          hour,
+          minute: dir === "next" ? this.minutes[0] : this.reversed.minutes[0],
+          second: dir === "next" ? this.seconds[0] : this.reversed.seconds[0]
+        };
+      }
+    }
+    return void 0;
+  }
+  /**
+   * Find the next or previous day in the given month, starting from the given startDay
+   * that matches either the day or the weekday constraint. startDay itself might also be allowed.
+   */
+  findAllowedDayInMonth(dir, year, month, startDay) {
+    var _a, _b;
+    if (startDay < 1)
+      throw new Error("startDay must not be smaller than 1.");
+    const daysInMonth = getDaysInMonth(year, month);
+    const daysRestricted = this.days.length !== 31;
+    const weekdaysRestricted = this.weekdays.length !== 7;
+    if (!daysRestricted && !weekdaysRestricted) {
+      if (startDay > daysInMonth) {
+        return dir === "next" ? void 0 : daysInMonth;
+      }
+      return startDay;
+    }
+    let allowedDayByDays;
+    if (daysRestricted) {
+      allowedDayByDays = dir === "next" ? this.days.find((x) => x >= startDay) : this.reversed.days.find((x) => x <= startDay);
+      if (allowedDayByDays !== void 0 && allowedDayByDays > daysInMonth) {
+        allowedDayByDays = void 0;
+      }
+    }
+    let allowedDayByWeekdays;
+    if (weekdaysRestricted) {
+      const startWeekday = new Date(year, month, startDay).getDay();
+      const nearestAllowedWeekday = dir === "next" ? (_a = this.weekdays.find((x) => x >= startWeekday)) !== null && _a !== void 0 ? _a : this.weekdays[0] : (_b = this.reversed.weekdays.find((x) => x <= startWeekday)) !== null && _b !== void 0 ? _b : this.reversed.weekdays[0];
+      if (nearestAllowedWeekday !== void 0) {
+        const daysBetweenWeekdays = dir === "next" ? getDaysBetweenWeekdays(startWeekday, nearestAllowedWeekday) : getDaysBetweenWeekdays(nearestAllowedWeekday, startWeekday);
+        allowedDayByWeekdays = dir === "next" ? startDay + daysBetweenWeekdays : startDay - daysBetweenWeekdays;
+        if (allowedDayByWeekdays > daysInMonth || allowedDayByWeekdays < 1) {
+          allowedDayByWeekdays = void 0;
+        }
+      }
+    }
+    if (allowedDayByDays !== void 0 && allowedDayByWeekdays !== void 0) {
+      return dir === "next" ? Math.min(allowedDayByDays, allowedDayByWeekdays) : Math.max(allowedDayByDays, allowedDayByWeekdays);
+    }
+    if (allowedDayByDays !== void 0) {
+      return allowedDayByDays;
+    }
+    if (allowedDayByWeekdays !== void 0) {
+      return allowedDayByWeekdays;
+    }
+    return void 0;
+  }
+  /** Gets the next date starting from the given start date or now. */
+  getNextDate(startDate = /* @__PURE__ */ new Date()) {
+    const startDateElements = extractDateElements(startDate);
+    let minYear = startDateElements.year;
+    let startIndexMonth = this.months.findIndex((x) => x >= startDateElements.month);
+    if (startIndexMonth === -1) {
+      startIndexMonth = 0;
+      minYear++;
+    }
+    const maxIterations = this.months.length * 5;
+    for (let i = 0; i < maxIterations; i++) {
+      const year = minYear + Math.floor((startIndexMonth + i) / this.months.length);
+      const month = this.months[(startIndexMonth + i) % this.months.length];
+      const isStartMonth = year === startDateElements.year && month === startDateElements.month;
+      let day = this.findAllowedDayInMonth("next", year, month, isStartMonth ? startDateElements.day : 1);
+      let isStartDay = isStartMonth && day === startDateElements.day;
+      if (day !== void 0 && isStartDay) {
+        const nextTime = this.findAllowedTime("next", startDateElements);
+        if (nextTime !== void 0) {
+          return new Date(year, month, day, nextTime.hour, nextTime.minute, nextTime.second);
+        }
+        day = this.findAllowedDayInMonth("next", year, month, day + 1);
+        isStartDay = false;
+      }
+      if (day !== void 0 && !isStartDay) {
+        return new Date(year, month, day, this.hours[0], this.minutes[0], this.seconds[0]);
+      }
+    }
+    throw new Error("No valid next date was found.");
+  }
+  /** Gets the specified amount of future dates starting from the given start date or now. */
+  getNextDates(amount, startDate) {
+    const dates = [];
+    let nextDate;
+    for (let i = 0; i < amount; i++) {
+      nextDate = this.getNextDate(nextDate !== null && nextDate !== void 0 ? nextDate : startDate);
+      dates.push(nextDate);
+    }
+    return dates;
+  }
+  /**
+   * Get an ES6 compatible iterator which iterates over the next dates starting from startDate or now.
+   * The iterator runs until the optional endDate is reached or forever.
+   */
+  *getNextDatesIterator(startDate, endDate) {
+    let nextDate;
+    while (true) {
+      nextDate = this.getNextDate(nextDate !== null && nextDate !== void 0 ? nextDate : startDate);
+      if (endDate && endDate.getTime() < nextDate.getTime()) {
+        return;
+      }
+      yield nextDate;
+    }
+  }
+  /** Gets the previous date starting from the given start date or now. */
+  getPrevDate(startDate = /* @__PURE__ */ new Date()) {
+    const startDateElements = extractDateElements(startDate);
+    let maxYear = startDateElements.year;
+    let startIndexMonth = this.reversed.months.findIndex((x) => x <= startDateElements.month);
+    if (startIndexMonth === -1) {
+      startIndexMonth = 0;
+      maxYear--;
+    }
+    const maxIterations = this.reversed.months.length * 5;
+    for (let i = 0; i < maxIterations; i++) {
+      const year = maxYear - Math.floor((startIndexMonth + i) / this.reversed.months.length);
+      const month = this.reversed.months[(startIndexMonth + i) % this.reversed.months.length];
+      const isStartMonth = year === startDateElements.year && month === startDateElements.month;
+      let day = this.findAllowedDayInMonth("prev", year, month, isStartMonth ? startDateElements.day : (
+        // Start searching from the last day of the month.
+        getDaysInMonth(year, month)
+      ));
+      let isStartDay = isStartMonth && day === startDateElements.day;
+      if (day !== void 0 && isStartDay) {
+        const prevTime = this.findAllowedTime("prev", startDateElements);
+        if (prevTime !== void 0) {
+          return new Date(year, month, day, prevTime.hour, prevTime.minute, prevTime.second);
+        }
+        if (day > 1) {
+          day = this.findAllowedDayInMonth("prev", year, month, day - 1);
+          isStartDay = false;
+        }
+      }
+      if (day !== void 0 && !isStartDay) {
+        return new Date(year, month, day, this.reversed.hours[0], this.reversed.minutes[0], this.reversed.seconds[0]);
+      }
+    }
+    throw new Error("No valid previous date was found.");
+  }
+  /** Gets the specified amount of previous dates starting from the given start date or now. */
+  getPrevDates(amount, startDate) {
+    const dates = [];
+    let prevDate;
+    for (let i = 0; i < amount; i++) {
+      prevDate = this.getPrevDate(prevDate !== null && prevDate !== void 0 ? prevDate : startDate);
+      dates.push(prevDate);
+    }
+    return dates;
+  }
+  /**
+   * Get an ES6 compatible iterator which iterates over the previous dates starting from startDate or now.
+   * The iterator runs until the optional endDate is reached or forever.
+   */
+  *getPrevDatesIterator(startDate, endDate) {
+    let prevDate;
+    while (true) {
+      prevDate = this.getPrevDate(prevDate !== null && prevDate !== void 0 ? prevDate : startDate);
+      if (endDate && endDate.getTime() > prevDate.getTime()) {
+        return;
+      }
+      yield prevDate;
+    }
+  }
+  /** Returns true when there is a cron date at the given date. */
+  matchDate(date) {
+    const { second, minute, hour, day, month, weekday } = extractDateElements(date);
+    if (this.seconds.indexOf(second) === -1 || this.minutes.indexOf(minute) === -1 || this.hours.indexOf(hour) === -1 || this.months.indexOf(month) === -1) {
+      return false;
+    }
+    if (this.days.length !== 31 && this.weekdays.length !== 7) {
+      return this.days.indexOf(day) !== -1 || this.weekdays.indexOf(weekday) !== -1;
+    }
+    return this.days.indexOf(day) !== -1 && this.weekdays.indexOf(weekday) !== -1;
+  }
+};
+
+// ../../node_modules/cron-schedule/dist/cron-parser.js
+var secondConstraint = {
+  min: 0,
+  max: 59
+};
+var minuteConstraint = {
+  min: 0,
+  max: 59
+};
+var hourConstraint = {
+  min: 0,
+  max: 23
+};
+var dayConstraint = {
+  min: 1,
+  max: 31
+};
+var monthConstraint = {
+  min: 1,
+  max: 12,
+  aliases: {
+    jan: "1",
+    feb: "2",
+    mar: "3",
+    apr: "4",
+    may: "5",
+    jun: "6",
+    jul: "7",
+    aug: "8",
+    sep: "9",
+    oct: "10",
+    nov: "11",
+    dec: "12"
+  }
+};
+var weekdayConstraint = {
+  min: 0,
+  max: 7,
+  aliases: {
+    mon: "1",
+    tue: "2",
+    wed: "3",
+    thu: "4",
+    fri: "5",
+    sat: "6",
+    sun: "7"
+  }
+};
+var timeNicknames = {
+  "@yearly": "0 0 1 1 *",
+  "@annually": "0 0 1 1 *",
+  "@monthly": "0 0 1 * *",
+  "@weekly": "0 0 * * 0",
+  "@daily": "0 0 * * *",
+  "@hourly": "0 * * * *",
+  "@minutely": "* * * * *"
+};
+function parseElement(element, constraint) {
+  const result2 = /* @__PURE__ */ new Set();
+  if (element === "*") {
+    for (let i = constraint.min; i <= constraint.max; i = i + 1) {
+      result2.add(i);
+    }
+    return result2;
+  }
+  const listElements = element.split(",");
+  if (listElements.length > 1) {
+    for (const listElement of listElements) {
+      const parsedListElement = parseElement(listElement, constraint);
+      for (const x of parsedListElement) {
+        result2.add(x);
+      }
+    }
+    return result2;
+  }
+  const parseSingleElement = (singleElement) => {
+    var _a, _b;
+    singleElement = (_b = (_a = constraint.aliases) === null || _a === void 0 ? void 0 : _a[singleElement.toLowerCase()]) !== null && _b !== void 0 ? _b : singleElement;
+    const parsedElement = Number.parseInt(singleElement, 10);
+    if (Number.isNaN(parsedElement)) {
+      throw new Error(`Failed to parse ${element}: ${singleElement} is NaN.`);
+    }
+    if (parsedElement < constraint.min || parsedElement > constraint.max) {
+      throw new Error(`Failed to parse ${element}: ${singleElement} is outside of constraint range of ${constraint.min} - ${constraint.max}.`);
+    }
+    return parsedElement;
+  };
+  const rangeSegments = /^(([0-9a-zA-Z]+)-([0-9a-zA-Z]+)|\*)(\/([0-9]+))?$/.exec(element);
+  if (rangeSegments === null) {
+    result2.add(parseSingleElement(element));
+    return result2;
+  }
+  let parsedStart = rangeSegments[1] === "*" ? constraint.min : parseSingleElement(rangeSegments[2]);
+  const parsedEnd = rangeSegments[1] === "*" ? constraint.max : parseSingleElement(rangeSegments[3]);
+  if (constraint === weekdayConstraint && parsedStart === 7 && // this check ensures that sun-sun is not incorrectly parsed as [0,1,2,3,4,5,6]
+  parsedEnd !== 7) {
+    parsedStart = 0;
+  }
+  if (parsedStart > parsedEnd) {
+    throw new Error(`Failed to parse ${element}: Invalid range (start: ${parsedStart}, end: ${parsedEnd}).`);
+  }
+  const step = rangeSegments[5];
+  let parsedStep = 1;
+  if (step !== void 0) {
+    parsedStep = Number.parseInt(step, 10);
+    if (Number.isNaN(parsedStep)) {
+      throw new Error(`Failed to parse step: ${step} is NaN.`);
+    }
+    if (parsedStep < 1) {
+      throw new Error(`Failed to parse step: Expected ${step} to be greater than 0.`);
+    }
+  }
+  for (let i = parsedStart; i <= parsedEnd; i = i + parsedStep) {
+    result2.add(i);
+  }
+  return result2;
+}
+function parseCronExpression(cronExpression) {
+  var _a;
+  if (typeof cronExpression !== "string") {
+    throw new TypeError("Invalid cron expression: must be of type string.");
+  }
+  cronExpression = (_a = timeNicknames[cronExpression.toLowerCase()]) !== null && _a !== void 0 ? _a : cronExpression;
+  const elements = cronExpression.split(" ").filter((elem) => elem.length > 0);
+  if (elements.length < 5 || elements.length > 6) {
+    throw new Error("Invalid cron expression: expected 5 or 6 elements.");
+  }
+  const rawSeconds = elements.length === 6 ? elements[0] : "0";
+  const rawMinutes = elements.length === 6 ? elements[1] : elements[0];
+  const rawHours = elements.length === 6 ? elements[2] : elements[1];
+  const rawDays = elements.length === 6 ? elements[3] : elements[2];
+  const rawMonths = elements.length === 6 ? elements[4] : elements[3];
+  const rawWeekdays = elements.length === 6 ? elements[5] : elements[4];
+  return new Cron({
+    seconds: parseElement(rawSeconds, secondConstraint),
+    minutes: parseElement(rawMinutes, minuteConstraint),
+    hours: parseElement(rawHours, hourConstraint),
+    days: parseElement(rawDays, dayConstraint),
+    // months in cron are indexed by 1, but Cron expects indexes by 0, so we need to reduce all set values by one.
+    months: new Set(Array.from(parseElement(rawMonths, monthConstraint)).map((x) => x - 1)),
+    weekdays: new Set(Array.from(parseElement(rawWeekdays, weekdayConstraint)).map((x) => x % 7))
+  });
+}
+
 // src/cli/output.ts
 var VOLATILE = {
   doctor: ["projectRoot", "findings[].message"],
@@ -610,6 +1058,9 @@ function durationMs(d) {
 // src/model/manifest.ts
 var MANIFEST_FILE = "actord.manifest.json";
 var MANIFEST_SCHEMA_VERSION = 1;
+function scheduleLabel(s) {
+  return s.cron !== null ? `cron ${s.cron}` : `every ${s.every}`;
+}
 var byName = (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 var routeKey = (r) => `${r.from}\0${r.message}\0${r.to}`;
 function normalize(system) {
@@ -620,7 +1071,12 @@ function normalize(system) {
     kind: a.kind,
     purpose: a.purpose ?? "",
     justification: [...a.justification ?? []].sort(),
-    schedule: a.schedule ? { every: a.schedule.every, everyMs: durationMs(a.schedule.every), message: a.schedule.message } : null,
+    schedules: (a.schedules ?? []).map((s) => ({
+      every: s.every ?? null,
+      everyMs: s.every === void 0 ? null : durationMs(s.every),
+      cron: s.cron ?? null,
+      message: s.message
+    })),
     effects: [...a.effects ?? []].sort(),
     budget: a.budget ? { maxAttempts: a.budget.maxAttempts, timeoutMs: a.budget.timeoutMs, maxTokens: a.budget.maxTokens ?? null } : null,
     receives: [...new Set(routes.filter((r) => r.to === name).map((r) => r.message))].sort(),
@@ -661,6 +1117,14 @@ function serializeManifest(m) {
 }
 
 // src/model/check.ts
+function cronParses(expr) {
+  try {
+    parseCronExpression(expr);
+    return true;
+  } catch {
+    return false;
+  }
+}
 var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 var EXTERNAL = /* @__PURE__ */ new Set(["@clock", "@ingress", "@timer"]);
@@ -682,10 +1146,14 @@ function checkProject(project) {
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
       add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
-    if (a.schedule) {
-      if (a.schedule.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${a.schedule.every}" isn't a duration like 15m`);
-      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === a.schedule.message))
-        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${a.schedule.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${a.schedule.message}", to: "${a.name}" }.`);
+    const scheduled = /* @__PURE__ */ new Set();
+    for (const s of a.schedules) {
+      if (s.cron !== null && !cronParses(s.cron)) add("error", "SCHEDULE_INVALID", a.name, `schedule cron "${s.cron}" isn't a valid cron expression like 0 9 * * *`);
+      else if (s.cron === null && s.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${s.every}" isn't a duration like 15m`);
+      if (scheduled.has(s.message)) add("error", "SCHEDULE_DUPLICATE", a.name, `${a.name} schedules ${s.message} more than once`, "Keep one schedule per message; a second message gives a second cadence.");
+      scheduled.add(s.message);
+      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === s.message))
+        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${s.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${s.message}", to: "${a.name}" }.`);
     }
     for (const e of a.effects)
       if (!effects.has(e)) add("error", "EFFECT_UNDECLARED", a.name, `${a.name} requests effect "${e}", which the system doesn't declare`, "Declare it under effects, with its idempotency, or remove it.");
@@ -712,7 +1180,7 @@ function checkProject(project) {
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label2, `Route message ${r.message} isn't declared`);
-    if (r.from === "@clock" && actors.get(r.to)?.schedule?.message !== r.message)
+    if (r.from === "@clock" && !actors.get(r.to)?.schedules.some((s) => s.message === r.message))
       add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label2, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
   }
   for (const e of m.effects) {
@@ -863,8 +1331,11 @@ function diffActor(b, h, add) {
   const s = h.name;
   if (b.binding !== h.binding) add("actor.binding", s, "breaking", `Binding renamed ${b.binding} \u2192 ${h.binding}; wrangler.jsonc and every env reference must change together`);
   if (b.kind !== h.kind) add("actor.kind", s, "risky", `Kind ${b.kind} \u2192 ${h.kind}${h.kind !== "deterministic" ? ": its output is no longer deterministic" : ""}`);
-  if (JSON.stringify(b.schedule) !== JSON.stringify(h.schedule))
-    add("actor.schedule", s, "risky", `Schedule ${b.schedule ? `${b.schedule.message} every ${b.schedule.every}` : "none"} \u2192 ${h.schedule ? `${h.schedule.message} every ${h.schedule.every}` : "none"}`);
+  const bs = b.schedules ?? [];
+  if (JSON.stringify(bs) !== JSON.stringify(h.schedules)) {
+    const describe = (list2) => list2.length ? list2.map((sc) => `${sc.message} ${scheduleLabel(sc)}`).join(", ") : "none";
+    add("actor.schedule", s, "risky", `Schedule ${describe(bs)} \u2192 ${describe(h.schedules)}`);
+  }
   for (const e of h.effects.filter((e2) => !b.effects.includes(e2))) add("actor.effect.added", `${s} \u2192 ${e}`, "risky", `${s} may now request external effect ${e}`, { approval: true });
   for (const e of b.effects.filter((e2) => !h.effects.includes(e2))) add("actor.effect.removed", `${s} \u2192 ${e}`, "compatible", `${s} no longer requests ${e}`);
   if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) add("actor.budget", s, "risky", `Model budget ${JSON.stringify(b.budget)} \u2192 ${JSON.stringify(h.budget)}`);
@@ -1181,7 +1652,7 @@ function renderMermaid(m) {
     "flowchart LR",
     `  %% ${m.system.name}: ${m.actors.length} actor(s), ${m.routes.length} route(s). Generated by actord graph --format mermaid.`,
     ...external.map((e) => `  ${id(e)}(["${label(e)}"])`),
-    ...m.actors.map((a) => `  ${id(a.name)}["${label(a.name)}<br/>${label([a.kind, a.schedule ? `every ${a.schedule.every}` : null].filter(Boolean).join(" \xB7 "))}"]`),
+    ...m.actors.map((a) => `  ${id(a.name)}["${label(a.name)}<br/>${label([a.kind, a.schedules.length ? a.schedules.map(scheduleLabel).join(" \xB7 ") : null].filter(Boolean).join(" \xB7 "))}"]`),
     ...[...arrows.values()].map((a) => `  ${id(a.from)} -->|"${a.messages.join("<br/>")}"| ${id(a.to)}`)
   ];
   return lines.join("\n");
@@ -1276,7 +1747,7 @@ function renderGraph(m) {
     "Actors"
   ];
   for (const a of m.actors) {
-    const facts = [a.kind, a.schedule ? `every ${a.schedule.every}` : null, a.effects.length ? `effects ${a.effects.join(", ")}` : null, `justified by ${a.justification.join(", ") || "nothing"}`].filter(Boolean);
+    const facts = [a.kind, a.schedules.length ? a.schedules.map(scheduleLabel).join(" \xB7 ") : null, a.effects.length ? `effects ${a.effects.join(", ")}` : null, `justified by ${a.justification.join(", ") || "nothing"}`].filter(Boolean);
     lines.push(`  ${a.name} (${a.binding}): ${facts.join(" \xB7 ")}`, `    ${a.purpose}`);
   }
   if (m.effects.length) {

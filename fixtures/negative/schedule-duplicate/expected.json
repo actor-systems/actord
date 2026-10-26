@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "SCHEDULE_DUPLICATE"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

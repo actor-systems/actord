@@ -1,7 +1,7 @@
 // `actord diff`: compare two normalized models and classify every architectural change, then produce a
 // deploy plan. All actors in one Worker deploy atomically, so the compatibility question for messages is
 // whether the new code accepts what is already in flight (outboxes, alarms) when the deploy lands.
-import type { Manifest, ManifestActor, ManifestEffect, ManifestMessage } from "./manifest.ts";
+import { scheduleLabel, type Manifest, type ManifestActor, type ManifestEffect, type ManifestMessage } from "./manifest.ts";
 
 export type Compatibility = "compatible" | "breaking" | "risky";
 
@@ -99,8 +99,12 @@ function diffActor(b: ManifestActor, h: ManifestActor, add: Add) {
   const s = h.name;
   if (b.binding !== h.binding) add("actor.binding", s, "breaking", `Binding renamed ${b.binding} → ${h.binding}; wrangler.jsonc and every env reference must change together`);
   if (b.kind !== h.kind) add("actor.kind", s, "risky", `Kind ${b.kind} → ${h.kind}${h.kind !== "deterministic" ? ": its output is no longer deterministic" : ""}`);
-  if (JSON.stringify(b.schedule) !== JSON.stringify(h.schedule))
-    add("actor.schedule", s, "risky", `Schedule ${b.schedule ? `${b.schedule.message} every ${b.schedule.every}` : "none"} → ${h.schedule ? `${h.schedule.message} every ${h.schedule.every}` : "none"}`);
+  // A baseline manifest written before several schedules has no `schedules`; read it as none.
+  const bs = b.schedules ?? [];
+  if (JSON.stringify(bs) !== JSON.stringify(h.schedules)) {
+    const describe = (list: ManifestActor["schedules"]) => (list.length ? list.map((sc) => `${sc.message} ${scheduleLabel(sc)}`).join(", ") : "none");
+    add("actor.schedule", s, "risky", `Schedule ${describe(bs)} → ${describe(h.schedules)}`);
+  }
   for (const e of h.effects.filter((e) => !b.effects.includes(e))) add("actor.effect.added", `${s} → ${e}`, "risky", `${s} may now request external effect ${e}`, { approval: true });
   for (const e of b.effects.filter((e) => !h.effects.includes(e))) add("actor.effect.removed", `${s} → ${e}`, "compatible", `${s} no longer requests ${e}`);
   if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) add("actor.budget", s, "risky", `Model budget ${JSON.stringify(b.budget)} → ${JSON.stringify(h.budget)}`);
