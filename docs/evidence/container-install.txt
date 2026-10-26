@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 00a72c0 @actord/toolkit README for npm
+== repository at 884e3e6 A landing-page README, the reference in a wiki, CONTRIBUTING for the repository
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install

@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-26T02:18:58.295Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-26T02:34:07.344Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -53,7 +53,7 @@ Generated 2026-10-26T02:18:58.295Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g1.validate.marketplace` claude plugin validate --strict (marketplace) | G1 | pass | host | `claude plugin validate --strict .` |  |
 | `g1.install` Clean install from the repo marketplace, use, uninstall (isolated config) | G1 | pass | host | `scripts/install-smoke.sh` |  |
 | `g1.budget` Always-on context cost ≤ 1,500 tokens (target 1,000) | G1 | pass | host | `scripts/budget.sh` | always-on ~803 tokens |
-| `g1.trust` README trust section lists every hook, mod event, mod call, monitor | G1 | pass | host | `node --test tests/trust-section.test.mjs` |  |
+| `g1.trust` The Trust and safety page lists every hook, mod event, mod call, monitor | G1 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g1.start-session` `start` works in a fresh session (eval case start-orients) | G1 | pass | eval-run | `claude plugin eval plugins/claude --case start-orients (model-backed; owner-approved lane)` | score 1 in docs/evidence/evals/2026-10-25-release-m.json |
 | `g2.contract.types` Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors | G2 | pass | host | `npx --no-install tsc -p tsconfig.contract.json` |  |
 | `g2.fixtures.typecheck` tsc passes on valid fixtures and fails where negative fixtures expect it | G2 | pass | host | `node scripts/typecheck-fixtures.mjs` |  |
@@ -86,12 +86,12 @@ Generated 2026-10-26T02:18:58.295Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g6.mod.typecheck` The Room type-checks against this Claude Code build's mod declarations | G6 | pass | host | `node scripts/typecheck-mod.mjs` |  |
 | `g6.mod.test` claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path | G6 | pass | host | `claude plugin test plugins/claude` | 20 mod tests |
 | `g6.monitor` The monitor prints notable events once per session and starts with inspect or reliability | G6 | pass | host | `node --test tests/monitor.test.mjs` |  |
-| `g6.trust` README trust section lists every mod event, mod call, and monitor command; no forbidden calls | G6 | pass | host | `node --test tests/trust-section.test.mjs` |  |
+| `g6.trust` The Trust and safety page lists every mod event, mod call, and monitor command; no forbidden calls | G6 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g6.no-hooks` Core path with disableAllHooks: installs, starter verifies, Room view and guard decision as CLI text | G6 | pass | host | `scripts/no-hooks-smoke.sh` |  |
 | `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | pass | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 11/11 steps recorded passing |
-| `g7.docs` README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
+| `g7.docs` README landing page, wiki pages (install, update, uninstall, CLI, the Room, trust, limitations), CONTRIBUTING, architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
 | `g7.release-evidence` Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded | G7 | pass | host | `claude plugin validate plugins/claude > docs/evidence/mod-listing.txt` | docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt |
-| `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugins/claude --dry-run --force` | actord--v0.2.0, tagged at abb1299 |
+| `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugins/claude --dry-run --force` | actord--v0.2.0, tagged at 0020f21 |
 | `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds both plugin distributions byte-for-byte, and passes npm run verify | G7 | pass | host | `scripts/clean-checkout.sh` |  |
 | `g7.container` Clean-container install from the marketplace: install, starter verifies in workerd, uninstall | G7 | pass | host | `scripts/container-install.sh` |  |
 
