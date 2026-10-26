@@ -1248,6 +1248,19 @@ export async function ingress<S extends AnySystem, A extends ActorName<S>, M ext
   payload: PayloadIn<S, M>,
   options: { key?: string; id?: string } = {},
 ): Promise<Receipt> {
+  return deliverExternal(env, system, "@ingress", to, type, payload, options);
+}
+
+/** Deliver into the system from an external sender ("@ingress", "@github", "@email", ...). Exported for @actord/toolkit/sources. */
+export async function deliverExternal(
+  env: unknown,
+  system: AnySystem,
+  from: `@${string}`,
+  to: string,
+  type: string,
+  payload: unknown,
+  options: { key?: string; id?: string; correlationId?: string } = {},
+): Promise<Receipt> {
   const spec = system.actors[to];
   if (!spec) throw new Error(`actord: ${to} is not declared`);
   const ns = (env as Record<string, NamespaceLike>)[spec.binding];
@@ -1259,9 +1272,9 @@ export async function ingress<S extends AnySystem, A extends ActorName<S>, M ext
     id,
     type,
     version: system.messages[type]!.version,
-    from: "@ingress",
+    from,
     to: `${to}:${key}`,
-    correlationId: id,
+    correlationId: options.correlationId ?? id,
     causationId: null,
     attempt: 1,
     sentAt: Date.now(),

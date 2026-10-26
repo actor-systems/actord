@@ -3,7 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents/lifecycle";
 import { z } from "zod";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
-import { defineSystem, message } from "../../src/system.ts";
+import { defineSystem, message, webhook } from "../../src/system.ts";
 
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
@@ -21,8 +21,12 @@ export const system = defineSystem({
     "probe.job.start": message({ version: 1, description: "Start a job", payload: z.object({ key: z.string() }) }),
     "probe.job.done": message({ version: 1, description: "A job reports it finished", payload: z.object({ key: z.string(), ok: z.boolean(), effect: z.enum(["gateway.job", "gateway.job-plain", "gateway.job-approval"]).optional() }) }),
     "probe.job.cancel": message({ version: 1, description: "Cancel a job", payload: z.object({ key: z.string() }) }),
+    "probe.poked": message({ version: 1, description: "A declared source poked the probe", payload: z.object({ key: z.string() }) }),
     "probe.approve": message({ version: 1, description: "A person approves a parked effect", payload: z.object({ key: z.string(), by: z.string() }) }),
     "probe.deny": message({ version: 1, description: "A person denies a parked effect", payload: z.object({ key: z.string(), by: z.string(), effect: z.enum(["gateway.approval", "gateway.job-approval"]).optional() }) }),
+  },
+  sources: {
+    hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
   },
   actors: {
     Probe: {
@@ -59,6 +63,7 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.job.start", to: "Probe" },
     { from: "@ingress", message: "probe.job.done", to: "Probe" },
     { from: "@ingress", message: "probe.job.cancel", to: "Probe" },
+    { from: "@hooks", message: "probe.poked", to: "Probe" },
     { from: "@ingress", message: "probe.approve", to: "Probe" },
     { from: "@ingress", message: "probe.deny", to: "Probe" },
   ],
@@ -89,6 +94,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL, at INTEGER)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS approvals (key TEXT NOT NULL, ok INTEGER NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS pokes (id TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
   }
 
@@ -145,6 +151,9 @@ export class Probe extends DurableObject<Env> {
     "probe.job.cancel": ({ payload }, ctx) => {
       ctx.cancelJob("gateway.job", payload.key);
     },
+    "probe.poked": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO pokes (id) VALUES (?)", payload.key);
+    },
     "probe.approve": ({ payload }, ctx) => {
       const ok = ctx.approve("gateway.approval", payload.key, { by: payload.by });
       ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.key, ok ? 1 : 0);
@@ -181,6 +190,9 @@ export class Probe extends DurableObject<Env> {
   }
   approvals(): Array<{ key: string; ok: boolean }> {
     return this.ctx.storage.sql.exec<{ key: string; ok: number }>("SELECT key, ok FROM approvals ORDER BY rowid").toArray().map((r) => ({ key: r.key, ok: r.ok === 1 }));
+  }
+  poked(): string[] {
+    return this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM pokes ORDER BY rowid").toArray().map((r) => r.id);
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);

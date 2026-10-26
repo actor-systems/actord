@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it, vi } from "vitest";
-import { deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
+import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
 import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
@@ -1090,4 +1090,15 @@ it("[approve-before-alarm] a late approval or decision is refused even before th
   expect(runs).toBe(0);
   expect(await probe("early-ap").outcomes()).toMatchObject([{ key: "early-ap", status: "failed", error: "approval expired" }]);
   expect(await probe("early-rpc").outcomes()).toMatchObject([{ key: "early-rpc", status: "failed", error: "approval expired" }]);
+});
+
+it("[external-sender] a message from a declared source's sender is accepted on its route", async () => {
+  const r = await deliverExternal(env, system, "@hooks", "Probe", "probe.poked", { key: "ext" }, { key: "ext", id: "d-1" });
+  expect(r).toMatchObject({ status: "handled", messageId: "d-1" });
+  expect(await probe("ext").poked()).toEqual(["ext"]);
+});
+it("[external-sender-route] the same message from a sender with no route is refused", async () => {
+  const r = await deliverExternal(env, system, "@other", "Probe", "probe.poked", { key: "ext2" }, { key: "ext2" });
+  expect(r).toMatchObject({ status: "rejected", reason: "unauthorized_route" });
+  expect(await probe("ext2").poked()).toEqual([]);
 });
