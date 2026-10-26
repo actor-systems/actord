@@ -132,12 +132,14 @@ it("derived message ids are deterministic and position-sensitive", () => {
 const setTimer = (key: string, tk: string, delayMs: number, fail = false, extra: { label?: string } = {}) =>
   ingress(env, system, "Probe", "probe.timer.set", { key: tk, delayMs, ...(fail ? { fail } : {}), ...extra }, { key });
 
-it("[timer-fires] a timer set in a handler arrives later as a message from @timer", async () => {
+it("[timer-fires] a timer set in a handler arrives later as a message from @timer, and not before its delay", async () => {
   await setTimer("tm", "t1", 20);
+  await setTimer("tm", "t1-later", 60_000);
   expect(await probe("tm").fired()).toEqual([]);
   await new Promise((r) => setTimeout(r, 30));
-  await settle(env, system);
+  await settle(env, system); // drives the instance: t1 is due, and t1-later isn't for another minute
   expect(await probe("tm").fired()).toEqual(["t1"]);
+  expect(await timerRows("tm")).toMatchObject([{ key: "t1-later", attempts: 0 }]);
 });
 
 it("[timer-survives-restart] a pending timer fires after the object restarts", async () => {
@@ -635,6 +637,26 @@ it("[job-arms-alarm] a waiting job holds actord's wake at its next look", async 
   expect(wake).toBe(row!.nextAt);
 });
 
+it("[heartbeat-armed-cancelling] while a cancel is in flight, actord keeps a wake at most 30 s away", async () => {
+  // Made here, in the test's context: see [job-settle-while-cancelling].
+  let answer!: (confirmed: boolean) => void;
+  const reply = new Promise<boolean>((r) => (answer = r));
+  overrideEffect("gateway.job", { start: async () => ({ runId: "hbc" }), cancel: () => reply });
+  await startJob("hbc");
+  await settle(env, system);
+  await cancelJob("hbc"); // the cancel waits for its answer below
+  expect(await jobRow("hbc")).toMatchObject({ status: "cancelling" });
+  try {
+    // Nothing else is near: the job's next look is gone with awaiting_job, and the schedules are an hour or more away.
+    const due = await runInDurableObject(probe("hbc"), (_i, s) => Number(s.storage.sql.exec("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").one().time));
+    expect(due).toBeLessThanOrEqual(Date.now() + 30_000);
+  } finally {
+    answer(true); // pass or fail, let the cancel finish, so no later test waits on it
+  }
+  await settle(env, system);
+  expect(await probe("hbc").outcomes()).toMatchObject([{ key: "hbc", status: "failed", error: "cancelled" }]);
+});
+
 it("[job-probe-in-flight] a look that comes due while a probe still runs books the next one, not an immediate wake", async () => {
   overrideEffectBudget("gateway.job", { timeoutMs: 150 });
   let probes = 0;
@@ -918,17 +940,26 @@ it("[approval-expiry] an approval nobody answers expires and the actor hears it 
 });
 
 it("[approval-expiry-wake] a parked approval holds the alarm until it expires, and an unexpired one is left alone", async () => {
-  overrideEffect("gateway.approval", { run: async () => "ran" });
+  let runs = 0;
+  overrideEffect("gateway.approval", { run: async () => ++runs });
   await send("wake", "gateway.approval");
   await settle(env, system);
   const row = await runInDurableObject(probe("wake"), (_i, s) => s.storage.sql.exec("SELECT status, next_at FROM _actors_outbox WHERE id LIKE 'fx:%:wake'").one());
   expect(row.status).toBe("awaiting_approval");
   expect(Number(row.next_at) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
-  const alarm = await runInDurableObject(probe("wake"), (_i, s) => s.storage.getAlarm());
-  expect(alarm).not.toBeNull();
-  expect(alarm!).toBeLessThanOrEqual(Number(row.next_at));
   await settle(env, system);
   expect(await probe("wake").outcomes()).toEqual([]);
+  // Bring the expiry nearer than every other wake (the schedules are an hour or more away), and let a message re-arm.
+  const expiresAt = Date.now() + 100;
+  await runInDurableObject(probe("wake"), (_i, s) => void s.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", expiresAt));
+  await ingress(env, system, "Probe", "probe.timer.cancel", { key: "none" }, { key: "wake" });
+  const job = await runInDurableObject(probe("wake"), (_i, s) => Number(s.storage.sql.exec("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").one().time));
+  expect(job).toBe(expiresAt);
+  await new Promise((r) => setTimeout(r, 120));
+  // Only the alarm drives it from here: no settle(), which drives directly, and no expireApprovals().
+  await runDurableObjectAlarm(probe("wake"));
+  expect(await probe("wake").outcomes()).toMatchObject([{ key: "wake", status: "failed", error: "approval expired" }]);
+  expect(runs).toBe(0);
 });
 
 it("[approval-identity] an approval records who approved and through which sender", async () => {
