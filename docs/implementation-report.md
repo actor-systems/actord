@@ -6,7 +6,7 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-26T00:07:45.443Z): **54 pass · 0 fail · 1 blocked.** G0 passed, G1 passed, G2 passed, G3 passed, G4 passed, G5 passed, G6 blocked, G7 passed.
+`npm run verify` (2026-10-26T00:28:39.477Z): **55 pass · 0 fail · 0 blocked.** G0 through G7 passed.
 
 Since the 51-check release candidate: a review from the Codex implementation of the same charter found
 unsafe payload classifications, now corrected (decision 0011); Codex consolidated its adapter onto this
@@ -31,11 +31,12 @@ and a hook puts a note beside a refused heredoc (decision 0013). Release runs L 
   plugin runs), so these runs show the note working, not a lower rate.
 - **The handler regression stays fixed.** No plugin run in L or M changed an existing read method or broke
   an existing test of the handler case. G1 passes: `start-orients` is 1.00 in both runs.
-- **G6 is blocked on one step only you can run:** acceptance step A10 (the SVG topology in the Desktop app).
-  Every other Room step, including a real deploy request held by the Room, passed in recorded interactive runs.
+- **G6 passes:** every Room acceptance step is recorded passing, A10 in the Desktop app (3.6556.2, running
+  Claude Code 2.1.308). The run showed the topology unreadable on the dark theme and a misleading reply; both
+  are fixed (`1a80691`), and the fixed diagram hasn't been looked at in the Desktop app yet.
 
-The release tag (`actord--v0.1.0`, validated by `claude plugin tag --dry-run`) waits for A10; it would be
-local only and never pushed without your authorization. Nothing was deployed, published, or run against a
+The release tag (`actord--v0.1.0`, validated by `claude plugin tag --dry-run`) waits only for your go-ahead;
+it would be local only and never pushed without your authorization. Nothing was deployed, published, or run against a
 Cloudflare account. Model-backed spend, all approved: $145.02 ($41.56 of $50, $21.44 of $25, $10.35 of
 about $10, $10.74 of about $20, $20.34 of about $22, $20.54 of about $21, $10.00 and $10.05 of about $10
 each).
@@ -201,11 +202,7 @@ Per-component (rounded)
 
 ## Failing and blocked checks
 
-| Check | Status | Why | What unblocks it |
-| --- | --- | --- | --- |
-| `g6.acceptance` A10 | blocked | The SVG topology in the Desktop app needs the Desktop app | You run step A10 of `docs/acceptance/room.md` |
-| `g5.evals.run` | fail | Run I: `safety-undeclared-capability` 0.87 with the plugin (a refused heredoc; no evidence file in one run) | A further owner-approved run; recorded evidence, not an offline failure |
-| `g5.evals.host` | fail | Run I: `evolve-scheduled-digest` host 0/3 vs 3/3 (the plugin runs' own new tests fail) | Making those changes runtime-correct, then an owner-approved run |
+None: every check passes (`npm run verify`, 2026-10-26T00:28:39.477Z).
 
 ## Limitations and unverified claims
 
@@ -219,7 +216,9 @@ Per-component (rounded)
   what runs in eval runs.
 - Δ is measured at three runs per arm, so differences of about 0.2 on one case are within run-to-run noise.
 - The effect guard and generated `ask` rules match command text; other spellings slip past.
-- Mods are early access; the Room is tested on Claude Code 2.1.310 only. The core works without it.
+- Mods are early access; the Room is tested on Claude Code 2.1.310 in the terminal and 2.1.308 in the Desktop
+  app. In the Desktop app the first `/actord-room` of a session can be flagged "isn't a command here"; it runs
+  anyway. The core works without the Room.
 - `@actord/toolkit` isn't on npm; `actord init` vendors the tarball the plugin ships.
 - The mod type-check needs this build's declarations on the machine (CI reports it blocked without them).
 
@@ -256,8 +255,8 @@ Then `/actord:start` in a session. Requirements: Claude Code 2.1.287+, Node 22.1
 | G2 — Model and CLI | **passed** | `g2.contract.types` pass; `g2.fixtures.typecheck` pass; `g2.cli.model` pass; `g2.negative.unchanged` pass |
 | G3 — Runtime evidence | **passed** | `g3.radar.typecheck` pass; `g3.radar.check` pass; `g3.radar.runtime` pass; `g3.radar.trace` pass; `g3.radar.dev` pass; `g3.cli.events` pass |
 | G4 — Agentic example | **passed** | `g4.desk.typecheck` pass; `g4.desk.check` pass; `g4.desk.runtime` pass; `g4.desk.trace` pass; `g4.desk.dev` pass; `g4.runtime.probe` pass |
-| G5 — Agent-guided development | **failed** | `g5.cli.unit` pass; `g5.skills.lint` pass; `g5.evals.static` pass; `g5.inventory` pass; `g5.starter.smoke` pass; `g5.verify.blocked` pass; `g5.examples.verify` pass; `g5.evals.run` fail (safety or negative case below 1.0: safety-undeclared-capability in …); `g5.evals.host` fail (plugin arm trails the baseline by more than one run: evolve-scheduled-digest 0/3 vs …) |
-| G6 — The Room | **blocked** | `g6.cli.room` pass; `g6.fixtures` pass; `g6.mod.validate` pass; `g6.mod.typecheck` pass; `g6.mod.test` pass; `g6.monitor` pass; `g6.trust` pass; `g6.no-hooks` pass; `g6.acceptance` blocked (10/11 steps recorded passing; not run: A10) |
+| G5 — Agent-guided development | **passed** | `g5.cli.unit` pass; `g5.skills.lint` pass; `g5.evals.static` pass; `g5.inventory` pass; `g5.starter.smoke` pass; `g5.verify.blocked` pass; `g5.examples.verify` pass; `g5.evals.run` pass; `g5.evals.host` pass |
+| G6 — The Room | **passed** | `g6.cli.room` pass; `g6.fixtures` pass; `g6.mod.validate` pass; `g6.mod.typecheck` pass; `g6.mod.test` pass; `g6.monitor` pass; `g6.trust` pass; `g6.no-hooks` pass; `g6.acceptance` pass |
 | G7 — Release candidate | **passed** | `g7.docs` pass; `g7.release-evidence` pass; `g7.tag` pass; `g7.clean-checkout` pass; `g7.container` pass |
 
 Records: `docs/verification-report.md` (generated 2026-10-25T11:04:20.742Z), `docs/evidence/clean-checkout-verification-report.md`, `docs/evidence/container-install.txt`, `docs/evidence/room-acceptance.md`, `docs/evidence/evals/README.md`.

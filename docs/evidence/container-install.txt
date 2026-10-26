@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at a79a350 Record release runs L and M; supersede runs J and K
+== repository at 53ed6cd Room acceptance A10 passes in the Desktop app (3.6556.2, Claude Code 2.1.308)
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install

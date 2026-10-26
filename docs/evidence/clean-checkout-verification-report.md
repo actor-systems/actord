@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-26T00:07:17.937Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-26T00:28:15.002Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -26,10 +26,10 @@ Generated 2026-10-26T00:07:17.937Z by `npm run verify` (`scripts/verify.mjs`). M
 | G3 — Runtime evidence | **passed** | — |
 | G4 — Agentic example | **passed** | — |
 | G5 — Agent-guided development | **passed** | — |
-| G6 — The Room | **blocked** | — |
+| G6 — The Room | **passed** | — |
 | G7 — Release candidate | **incomplete** | — |
 
-## Checks (52 pass · 0 fail · 1 blocked · 2 skipped)
+## Checks (53 pass · 0 fail · 0 blocked · 2 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -78,11 +78,11 @@ Generated 2026-10-26T00:07:17.937Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g6.fixtures` The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin) | G6 | pass | host | `node scripts/record-room-fixtures.mjs --check` |  |
 | `g6.mod.validate` claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch | G6 | pass | host | `claude plugin validate plugin` |  |
 | `g6.mod.typecheck` The Room type-checks against this Claude Code build's mod declarations | G6 | pass | host | `node scripts/typecheck-mod.mjs` |  |
-| `g6.mod.test` claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path | G6 | pass | host | `claude plugin test plugin` | 18 mod tests |
+| `g6.mod.test` claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path | G6 | pass | host | `claude plugin test plugin` | 20 mod tests |
 | `g6.monitor` The monitor prints notable events once per session and starts with inspect or reliability | G6 | pass | host | `node --test tests/monitor.test.mjs` |  |
 | `g6.trust` README trust section lists every mod event, mod call, and monitor command; no forbidden calls | G6 | pass | host | `node --test tests/trust-section.test.mjs` |  |
 | `g6.no-hooks` Core path with disableAllHooks: installs, starter verifies, Room view and guard decision as CLI text | G6 | pass | host | `scripts/no-hooks-smoke.sh` |  |
-| `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | blocked | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 10/11 steps recorded passing; not run: A10 |
+| `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | pass | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 11/11 steps recorded passing |
 | `g7.docs` README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
 | `g7.release-evidence` Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded | G7 | pass | host | `claude plugin validate plugin > docs/evidence/mod-listing.txt` | docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt |
 | `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugin --dry-run` | actord--v0.1.0 |

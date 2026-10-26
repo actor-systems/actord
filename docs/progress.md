@@ -5,11 +5,11 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**Release candidate; one owner step open.** Second eval round done (approved $25, spent $21.44; lane total
-$63.00): release runs D and E plus two deploy-case re-measurements; `g5.evals.run` passes
-(`docs/evidence/evals/README.md`). Open: acceptance A10 (Desktop app), the owner's. Then the local tag
-`actord--v0.1.0` (never pushed without authorization). Watch item: host runtime correctness of plugin runs on
-`add-message-handler` (0/6 vs 4/6). Report: `docs/implementation-report.md`.
+**Release candidate; every gate passes** (G0–G7, `npm run verify`). Release runs L and M are the eval record
+(`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds). Room acceptance A10 passed in
+the Desktop app; the topology fixes it prompted (`1a80691`) haven't been looked at there yet. Next, only with
+the owner's go-ahead: the local tag `actord--v0.1.0` (never pushed without authorization). Report:
+`docs/implementation-report.md`.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
@@ -53,12 +53,16 @@ $63.00): release runs D and E plus two deploy-case re-measurements; `g5.evals.ru
   (CLI file mode), absolute path in a snapshot, skipped checks counted as passing, machine paths in reports.
 
 ## Next
-- Then ASK OWNER: eval lane approval (calibration run ≤$2, then full suite ×2 within $50), and the two
-  Room acceptance steps only a person can run (A9: one model turn holding a deploy; A10: Desktop app).
+- ASK OWNER before creating the local tag `actord--v0.1.0`, and before any further model-backed eval run.
+- Optional: the owner updates the installed plugin and re-opens `/actord-room` in the Desktop app to see the
+  topology fixes from `1a80691`.
 
 ## Open issues
-- Eval runs and local port binding are unverified until the first approved eval run (decision 0004).
-- "`start` works in a fresh session" (G1) and every eval need model calls, so ask the owner before running.
+- Eval runs deny the loopback port workerd needs (decision 0004), so agents in evals can't run their own
+  workerd tests; kept workspaces are re-run on the host (`scripts/rerun-eval-workspaces.sh`).
+- The Desktop app's first `/actord-room` in a session can be flagged "isn't a command here"; it runs anyway.
+- Claude Code fills `${user_config.*}` in skill text only once an option is saved; skills state defaults beside
+  placeholders.
 
 ## Owner approvals
 - 2026-10-25: eval lane approved: Sonnet 5.5 agent (`claude-sonnet-5-5`), Haiku 5.5 judge
@@ -68,11 +72,20 @@ $63.00): release runs D and E plus two deploy-case re-measurements; `g5.evals.ru
 - 2026-10-25: second round approved ("approved." to the proposal): fix skill evidence injection and the
   deploy-plan step, then two more release runs; ceiling $25 for the round (~$20 expected), Sonnet 5.5 agent,
   Haiku 5.5 judge, `--max-cost-usd` on every run.
+- 2026-10-25, later rounds, each approved before it ran with `--max-cost-usd` per run: run F (~$10), run G and
+  start-skill probes (~$20), runs H and I (~$22), runs J and K (~$21), run L (~$10), run M (~$10). Full list
+  and spend in `docs/evidence/evals/README.md`.
+- 2026-10-25: G5 gates on host re-runs ("no worse than baseline", one run of slack; decision 0010); runs
+  measuring a changed plugin move to `superseded/` (J and K, after L and M).
+- 2026-10-25: rename to `actord` everywhere (CLI, plugin, marketplace; npm `@actord/toolkit`), leaving no
+  record of the old name in the current files (git history unchanged). The Codex adapter repository is
+  Codex's to change: hand it a list, don't edit it.
 
 ## Standing constraints (from the owner)
 - Ask before: any deploy, real credentials, publishing/submitting, contacting external services
   (beyond reading docs and installing npm packages), and any model-backed `claude plugin eval` run.
-- Eval budget: total ceiling $50, `--max-cost-usd` on every run, always `--no-publish`.
+- Eval spend: each round needs the owner's approval first; `--max-cost-usd` on every run, always
+  `--no-publish`.
 - Blocked ≠ passed. Evidence = commands actually run, recorded in the verification report.
 - Session sandbox stays off for development (npm + workerd need it off). `.claude/settings.local.json`
   is local only.
