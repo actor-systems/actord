@@ -129,8 +129,8 @@ it("derived message ids are deterministic and position-sensitive", () => {
   expect(deriveId("m-1", "send", 0, "a.b", "X", "main")).not.toBe(deriveId("m-1", "send", 1, "a.b", "X", "main"));
 });
 
-const setTimer = (key: string, tk: string, delayMs: number, fail = false) =>
-  ingress(env, system, "Probe", "probe.timer.set", { key: tk, delayMs, ...(fail ? { fail } : {}) }, { key });
+const setTimer = (key: string, tk: string, delayMs: number, fail = false, extra: { label?: string } = {}) =>
+  ingress(env, system, "Probe", "probe.timer.set", { key: tk, delayMs, ...(fail ? { fail } : {}), ...extra }, { key });
 
 it("[timer-fires] a timer set in a handler arrives later as a message from @timer", async () => {
   await setTimer("tm", "t1", 20);
@@ -166,11 +166,34 @@ it("[timer-cancel] a cancelled timer never fires", async () => {
   expect(await probe("tm4").fired()).toEqual([]);
 });
 
-it("[timer-replace] setting the same key again replaces the pending timer", async () => {
-  await setTimer("tm5", "t5", 60_000);
-  await setTimer("tm5", "t5", 90_000);
+it("[timer-replace] setting the same key again replaces the pending timer: the new one fires, the old one never does", async () => {
+  const before = Date.now();
+  await setTimer("tm5", "t5", 60_000, false, { label: "t5-old" });
+  await setTimer("tm5", "t5", 90_000, false, { label: "t5-new" });
+  const rows = await timerRows("tm5");
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.due_at).toBeGreaterThanOrEqual(before + 90_000);
   expect(await fireTimers(env, system, "Probe", "tm5")).toBe(1);
-  expect(await probe("tm5").fired()).toEqual(["t5"]);
+  expect(await probe("tm5").fired()).toEqual(["t5-new"]);
+  expect(await timerRows("tm5")).toEqual([]);
+});
+
+it("[timer-cancelled-by-earlier-timer] a timer cancelled by the handler of a timer that fired just before it, in the same drive, never fires", async () => {
+  await setTimer("tm9", "kill-zz", 60_000);
+  await setTimer("tm9", "zz", 60_000);
+  expect(await fireTimers(env, system, "Probe", "tm9")).toBe(2); // both due in one drive; kill-zz is delivered first
+  expect(await probe("tm9").fired()).toEqual(["kill-zz"]);
+  expect(await timerRows("tm9")).toEqual([]);
+});
+
+it("[timer-replaced-by-earlier-timer] a timer replaced by the handler of a timer that fired just before it, in the same drive, fires once, as the replacement", async () => {
+  await setTimer("tm10", "reset-zz", 60_000);
+  await setTimer("tm10", "zz", 60_000);
+  expect(await fireTimers(env, system, "Probe", "tm10")).toBe(2); // both due in one drive; reset-zz sets zz again first
+  expect(await probe("tm10").fired()).toEqual(["reset-zz"]);
+  expect(await timerRows("tm10")).toMatchObject([{ key: "zz", attempts: 0 }]);
+  expect(await fireTimers(env, system, "Probe", "tm10")).toBe(1);
+  expect(await probe("tm10").fired()).toEqual(["reset-zz", "zz-new"]);
 });
 
 it("[timer-atomic] a handler that sets a timer and then throws leaves no timer", async () => {

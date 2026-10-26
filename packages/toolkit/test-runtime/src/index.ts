@@ -13,7 +13,7 @@ export const system = defineSystem({
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
-    "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional() }) }),
+    "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
     "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
     "probe.tick.hourly": message({ version: 1, description: "The hourly schedule ticked", payload: z.object({ at: z.number() }) }),
@@ -105,7 +105,9 @@ export class Probe extends DurableObject<Env> {
       ctx.sql.exec("INSERT INTO outcomes (key, status, error, usage) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET status = excluded.status, error = excluded.error, usage = excluded.usage", payload.key, payload.status, payload.error ?? null, payload.usage ? JSON.stringify(payload.usage) : null);
     },
     "probe.timer.set": ({ payload }, ctx) => {
-      ctx.after(payload.delayMs, "probe.timer.fired", { key: payload.key }, { key: payload.key });
+      // `label` is what the timer delivers (and fired() records); it defaults to the timer's key.
+      const fired = { key: payload.label ?? payload.key };
+      ctx.after(payload.delayMs, "probe.timer.fired", fired, { key: payload.key });
       if (payload.fail) throw new Error("set then fail");
     },
     "probe.timer.cancel": ({ payload }, ctx) => {
@@ -114,6 +116,13 @@ export class Probe extends DurableObject<Env> {
     "probe.timer.fired": ({ payload }, ctx) => {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
+      // Timers that act on other timers when they fire: kill-<k> cancels timer k, and reset-<k> sets k again
+      // to deliver "<k>-new".
+      if (payload.key.startsWith("kill-")) ctx.cancelTimer(payload.key.slice("kill-".length));
+      if (payload.key.startsWith("reset-")) {
+        const k = payload.key.slice("reset-".length);
+        ctx.after(60_000, "probe.timer.fired", { key: `${k}-new` }, { key: k });
+      }
     },
     "probe.tick.hourly": ({ payload }, ctx) => {
       ctx.sql.exec("INSERT INTO ticks (message, at) VALUES ('probe.tick.hourly', ?)", payload.at);

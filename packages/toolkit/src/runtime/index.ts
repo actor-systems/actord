@@ -35,7 +35,7 @@ import type {
   TimerMessages,
 } from "../system.ts";
 import { durationMs, type Duration } from "../system.ts";
-import { TIMERS_SCHEMA, type TimerRow, cancelTimer, dueTimers, earliestTimer, setTimer } from "./timers.ts";
+import { TIMERS_SCHEMA, type TimerRow, cancelTimer, consumeTimer, dueTimers, earliestTimer, retryTimer, setTimer, timerSet } from "./timers.ts";
 import type { Lifecycle } from "agents/lifecycle";
 import { ActordCapability } from "./capability.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "./schedules.ts";
@@ -447,7 +447,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     return { status: "rejected", messageId: env?.id ?? null, reason, ...(detail ? { detail } : {}) };
   }
 
-  async function receive(raw: unknown): Promise<Receipt> {
+  /**
+   * `timer` is set only by fireTimer, for a timer's delivery: the handler then runs only if that timer's row
+   * is still set when its transaction starts, and the row is removed in the same transaction.
+   */
+  async function receive(raw: unknown, timer?: TimerRow): Promise<Receipt> {
     await cap.ready();
     await recoverOrphans();
     const e = raw as Partial<Envelope>;
@@ -476,6 +480,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const cancels: string[] = [];
     const handler = (handlers as Record<string, (m: unknown, c: unknown) => void | Promise<void>>)[envelope.type];
     let duplicate = false;
+    // The timer being delivered was cancelled or replaced after it was found due: it doesn't fire.
+    let timerGone = false;
     try {
       if (!handler) throw new Error(`${actorName} has no handler for ${envelope.type}`);
       await ctx.storage.transaction(async () => {
@@ -483,6 +489,12 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         // is only a fast path, and this one decides.
         if (sql.exec("SELECT 1 FROM _actors_inbox WHERE id = ?", envelope.id).toArray().length > 0) {
           duplicate = true;
+          return;
+        }
+        // A cancel or a replacement that committed first wins. Removing the row here means a handler that
+        // throws leaves it set, to be retried, and one that commits can't fire it again.
+        if (timer && !consumeTimer(sql, timer)) {
+          timerGone = true;
           return;
         }
         maybeFault(actorName, envelope.type, "before-handler");
@@ -509,6 +521,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     }
     if (duplicate) {
       emit({ kind: "duplicate", at: now(), actor: self, ...ids(envelope) });
+      return { status: "duplicate", messageId: envelope.id };
+    }
+    if (timerGone) {
+      // Only fireTimer passes a timer, and it reads this as "nothing to deliver": not handled, never to be.
+      emit({ kind: "note", at: now(), actor: self, ...ids(envelope), reason: "timer cancelled or replaced before it fired; not delivered" });
       return { status: "duplicate", messageId: envelope.id };
     }
     emit({ kind: "handled", at: now(), actor: self, ...ids(envelope) });
@@ -1123,8 +1140,13 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     }
   }
 
-  /** Deliver one due timer to this instance. The id is derived from the key and due time, so a redelivery is a duplicate. */
+  /**
+   * Deliver one due timer to this instance, if it is still set: an earlier timer's handler, or a message
+   * handled meanwhile, may have cancelled or replaced it. The id is derived from the key and due time, so a
+   * redelivery is a duplicate.
+   */
   async function fireTimer(t: TimerRow): Promise<void> {
+    if (!timerSet(sql, t)) return;
     const id = deriveId(self, "timer", t.key, t.due_at);
     const envelope: Envelope = {
       v: 1,
@@ -1141,27 +1163,28 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     };
     const event = ids(envelope);
     emit({ kind: "timer.fired", at: now(), actor: self, ...event, detail: { key: t.key, dueAt: t.due_at } });
-    const receipt = await receive(envelope);
-    // Match on due_at too: the handler may have set this key again, and that new timer must survive.
-    const remove = () => sql.exec("DELETE FROM _actors_timers WHERE key = ? AND due_at = ?", t.key, t.due_at);
+    // A handled delivery removed the row in its own transaction. Every other outcome left it set, and only
+    // this timer's row is touched: the key may have been set again meanwhile, and that new timer must survive.
+    const receipt = await receive(envelope, t);
     if (receipt.status === "failed") {
       const attempts = t.attempts + 1;
       if (attempts >= maxAttempts) {
-        remove();
+        consumeTimer(sql, t);
         emit({ kind: "retry.exhausted", at: now(), actor: self, ...event, attempt: attempts, reason: receipt.error });
       } else {
         const delay = backoff(attempts);
-        sql.exec("UPDATE _actors_timers SET attempts = ?, due_at = ? WHERE key = ? AND due_at = ?", attempts, now() + delay, t.key, t.due_at);
+        retryTimer(sql, t, attempts, now() + delay);
         emit({ kind: "retry.scheduled", at: now(), actor: self, ...event, attempt: attempts + 1, reason: receipt.error, detail: { delayMs: delay } });
       }
       return;
     }
-    remove();
+    // Refused, or already handled: this row will never be delivered.
+    consumeTimer(sql, t);
     if (receipt.status === "rejected") emit({ kind: "undeliverable", at: now(), actor: self, ...event, reason: receipt.reason });
   }
 
   const runtime: ActorRuntime = {
-    receive,
+    receive: (envelope) => receive(envelope),
     drive,
     async decide(effectKey, decision, reason) {
       await cap.ready();
