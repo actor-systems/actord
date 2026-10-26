@@ -578,7 +578,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       },
       approve(name, effectKey, identity) {
         const id = `fx:${name as string}:${effectKey}`;
-        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval'", id).toArray()[0];
+        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval' AND next_at > ?", id, now()).toArray()[0];
         if (!row) return false;
         sql.exec("UPDATE _actors_outbox SET status = 'pending', next_at = ?, body = ? WHERE id = ?", now(), JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: { messageId: current.id, from: current.from, by: identity?.by ?? null } }), id);
         notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: name as string, effectKey, reason: "approved by a person", detail: { by: identity?.by ?? null, via: current.from } });
@@ -586,7 +586,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       },
       deny(name, effectKey, reason, identity) {
         const id = `fx:${name as string}:${effectKey}`;
-        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval'", id).toArray()[0];
+        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval' AND next_at > ?", id, now()).toArray()[0];
         if (!row) return false;
         const req = JSON.parse(row.body) as { causationId: string; correlationId: string };
         sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason, id);
@@ -1166,7 +1166,13 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     async decide(effectKey, decision, reason) {
       await cap.ready();
       await recoverOrphans();
-      const row = sql.exec<{ id: string; body: string; attempts: number; target: string }>("SELECT id, body, attempts, target FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval'", `fx:%:${effectKey}`).toArray()[0];
+      // A request past its expiry time is expired even if the alarm hasn't yet processed it.
+      const row = sql.exec<{ id: string; body: string; attempts: number; target: string }>("SELECT id, body, attempts, target FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval' AND next_at > ?", `fx:%:${effectKey}`, now()).toArray()[0];
+      if (!row && sql.exec("SELECT 1 FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval'", `fx:%:${effectKey}`).toArray().length > 0) {
+        expireApprovals();
+        await drain();
+        return { status: "denied", key: effectKey, error: APPROVAL_EXPIRED };
+      }
       if (!row) return { status: "denied", key: effectKey, error: "no effect awaiting approval with that key" };
       const req = JSON.parse(row.body) as { name: string; causationId: string; correlationId: string };
       if (decision === "deny") {

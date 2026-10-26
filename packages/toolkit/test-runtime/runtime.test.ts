@@ -953,3 +953,21 @@ it("[decide-cold] decide() on a freshly aborted instance recovers orphans first"
   expect(runs).toBe(1);
   expect(keyedRuns).toBe(1);
 });
+
+it("[approve-before-alarm] a late approval or decision is refused even before the alarm expires the request", async () => {
+  let runs = 0;
+  overrideEffect("gateway.approval", { run: async () => ++runs });
+  for (const k of ["early-ap", "early-rpc"]) {
+    await send(k, "gateway.approval");
+    await settle(env, system);
+    await runInDurableObject(probe(k), (_i, s) => { s.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", Date.now() - 1000); });
+  }
+  await ingress(env, system, "Probe", "probe.approve", { key: "early-ap", by: "owner@example.com" }, { key: "early-ap" });
+  expect(await probe("early-rpc").decide("early-rpc", "approve")).toMatchObject({ status: "denied", error: "approval expired" });
+  await expireApprovals(env, system, "Probe", "early-ap");
+  await settle(env, system);
+  expect(await probe("early-ap").approvals()).toEqual([{ key: "early-ap", ok: false }]);
+  expect(runs).toBe(0);
+  expect(await probe("early-ap").outcomes()).toMatchObject([{ key: "early-ap", status: "failed", error: "approval expired" }]);
+  expect(await probe("early-rpc").outcomes()).toMatchObject([{ key: "early-rpc", status: "failed", error: "approval expired" }]);
+});
