@@ -1,6 +1,6 @@
 # 0013 — A note beside refused heredocs, and `reliability` for reported failures
 
-- **Date:** 2026-10-25 · **Gate:** G5 · **Status:** accepted, not yet measured · **Reversibility:** easy
+- **Date:** 2026-10-25 · **Gate:** G5 · **Status:** accepted, measured in runs L and M · **Reversibility:** easy
 
 ## Context
 Two findings from release runs H through K (`docs/evidence/evals/README.md`).
@@ -46,5 +46,8 @@ Two findings from release runs H through K (`docs/evidence/evals/README.md`).
   don't-ask mode.
 
 ## Consequences
-Neither change is measured. A run on the recover case (or a full run) will show whether `reliability` fires,
-and the transcripts of any refused heredoc will show the note beside the refusal.
+Measured in release runs L and M (`docs/evidence/evals/README.md`). `reliability` fired on the recover case
+in 6 of 6 plugin runs (1 of 12 across H to K). Six heredocs were refused in plugin runs, and the note sat
+beside each refusal in the kept session transcripts (the eval trace doesn't carry hook context). Every one
+of those runs used Bash again, and none stopped early. The stop was rare before, so this shows the
+mechanism working rather than a measured drop in rate.
