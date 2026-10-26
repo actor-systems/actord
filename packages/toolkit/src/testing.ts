@@ -116,3 +116,19 @@ export async function tick(env: unknown, system: System, actor: string, key = "m
   });
   return true;
 }
+
+/**
+ * Make an instance's pending timers due now and drive it, as when its job fires after their delays.
+ * Returns how many were due.
+ */
+export async function fireTimers(env: unknown, system: System, actor: string, key = "main"): Promise<number> {
+  const spec = system.actors[actor];
+  if (!spec) throw new Error(`${actor} is not declared`);
+  const stub = (env as Env)[spec.binding]!.getByName(key);
+  return runInDurableObject(stub, async (_i, state) => {
+    const due = Number(state.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_timers").toArray()[0]!.n);
+    state.storage.sql.exec("UPDATE _actors_timers SET due_at = 0");
+    await seams().runtimes.get(state.id.toString())?.drive();
+    return due;
+  });
+}

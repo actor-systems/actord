@@ -663,7 +663,7 @@ function serializeManifest(m) {
 // src/model/check.ts
 var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
-var EXTERNAL = /* @__PURE__ */ new Set(["@clock", "@ingress"]);
+var EXTERNAL = /* @__PURE__ */ new Set(["@clock", "@ingress", "@timer"]);
 function checkProject(project) {
   const out = [];
   const add = (severity, code, subject, message, fix = null) => out.push({ code, severity, subject, message, fix });
@@ -708,7 +708,7 @@ function checkProject(project) {
     const label2 = `${r.from} \u2192 ${r.message} \u2192 ${r.to}`;
     if (seen.has(label2)) add("error", "ROUTE_DUPLICATE", label2, `Route ${label2} is declared twice`);
     seen.add(label2);
-    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label2, `${r.from} isn't a sender; use @clock, @ingress, or an actor`);
+    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label2, `${r.from} isn't a sender; use @clock, @ingress, @timer, or an actor`);
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label2, `Route message ${r.message} isn't declared`);

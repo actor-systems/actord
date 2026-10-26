@@ -15,7 +15,7 @@ export interface Diagnostic {
 
 const ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 const MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
-const EXTERNAL = new Set(["@clock", "@ingress"]);
+const EXTERNAL = new Set(["@clock", "@ingress", "@timer"]);
 
 export function checkProject(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
@@ -66,7 +66,7 @@ export function checkProject(project: Project): Diagnostic[] {
     const label = `${r.from} → ${r.message} → ${r.to}`;
     if (seen.has(label)) add("error", "ROUTE_DUPLICATE", label, `Route ${label} is declared twice`);
     seen.add(label);
-    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label, `${r.from} isn't a sender; use @clock, @ingress, or an actor`);
+    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label, `${r.from} isn't a sender; use @clock, @ingress, @timer, or an actor`);
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label, `Route message ${r.message} isn't declared`);

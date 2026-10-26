@@ -13,6 +13,9 @@ export const system = defineSystem({
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed"]), key: z.string() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
+    "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional() }) }),
+    "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
+    "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
   },
   actors: {
     Probe: {
@@ -33,6 +36,9 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
+    { from: "@ingress", message: "probe.timer.set", to: "Probe" },
+    { from: "@ingress", message: "probe.timer.cancel", to: "Probe" },
+    { from: "@timer", message: "probe.timer.fired", to: "Probe" },
   ],
 });
 
@@ -57,6 +63,7 @@ export class Probe extends DurableObject<Env> {
     super(ctx, env);
     this.lifecycle.use(this.pinger);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS outcomes (key TEXT PRIMARY KEY, status TEXT NOT NULL, error TEXT)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
   }
 
@@ -70,6 +77,16 @@ export class Probe extends DurableObject<Env> {
     "probe.outcome": ({ payload }, ctx) => {
       ctx.sql.exec("INSERT INTO outcomes (key, status, error) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET status = excluded.status, error = excluded.error", payload.key, payload.status, payload.error ?? null);
     },
+    "probe.timer.set": ({ payload }, ctx) => {
+      ctx.after(payload.delayMs, "probe.timer.fired", { key: payload.key }, { key: payload.key });
+      if (payload.fail) throw new Error("set then fail");
+    },
+    "probe.timer.cancel": ({ payload }, ctx) => {
+      ctx.cancelTimer(payload.key);
+    },
+    "probe.timer.fired": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
+    },
   }, { backoffMs: () => 40 });
 
   receive(envelope: Envelope) {
@@ -80,6 +97,9 @@ export class Probe extends DurableObject<Env> {
   }
   outcomes() {
     return this.ctx.storage.sql.exec<{ key: string; status: string; error: string | null }>("SELECT key, status, error FROM outcomes ORDER BY key").toArray();
+  }
+  fired(): string[] {
+    return this.ctx.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key);
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);

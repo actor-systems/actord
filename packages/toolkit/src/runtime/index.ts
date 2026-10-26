@@ -30,8 +30,10 @@ import type {
   Receivers,
   StandardSchemaV1,
   System,
+  TimerMessages,
 } from "../system.ts";
-import { durationMs } from "../system.ts";
+import { durationMs, type Duration } from "../system.ts";
+import { TIMERS_SCHEMA, type TimerRow, cancelTimer, dueTimers, earliestTimer, setTimer } from "./timers.ts";
 import type { Lifecycle } from "agents/lifecycle";
 import { ActordCapability } from "./capability.ts";
 
@@ -113,6 +115,9 @@ export type EventKind =
   | "effect.denied"
   | "effect.awaiting_approval"
   | "scheduled"
+  | "timer.set"
+  | "timer.cancelled"
+  | "timer.fired"
   | "note";
 
 /** One structured event, written as a single JSON console line (Workers Logs in production). */
@@ -193,6 +198,12 @@ export interface HandlerContext<S extends AnySystem, A extends ActorName<S>> {
   approve(name: EffectsOf<S, A>, key: string): boolean;
   /** Refuse an effect parked for human approval. False if none is waiting. */
   deny(name: EffectsOf<S, A>, key: string, reason: string): boolean;
+  /** Deliver `type` to this instance after `delay` (a Duration like "5m", or milliseconds). One timer per key: setting it again replaces it. Set only if this handler commits. */
+  after<M extends TimerMessages<S, A>>(delay: Duration | number, type: M, payload: PayloadIn<S, M>, options: { key: string }): void;
+  /** Deliver `type` to this instance at `when` (epoch milliseconds). Same rules as `after`. */
+  at<M extends TimerMessages<S, A>>(when: number, type: M, payload: PayloadIn<S, M>, options: { key: string }): void;
+  /** Cancel a pending timer. False if none is pending under that key. */
+  cancelTimer(key: string): boolean;
   /** Record a structured note in the event log (for inspection; no behavior). */
   note(text: string, detail?: Record<string, unknown>): void;
   now(): number;
@@ -298,7 +309,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const retention = options.inboxRetentionMs ?? 7 * 86_400_000;
   const defaultKey = options.defaultKey ?? "main";
   const effectsDeclared = new Set<string>(spec.effects ?? []);
-  for (const q of SCHEMA) ctx.storage.sql.exec(q);
+  for (const q of [...SCHEMA, ...TIMERS_SCHEMA]) ctx.storage.sql.exec(q);
   // Lifecycle runs start() once per instance, before its first fetch or alarm; receive() and drive()
   // start it themselves, since native RPC and the test helpers bypass that.
   const cap = new ActordCapability({ start, drive });
@@ -417,6 +428,12 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>): HandlerContext<S, A> {
     let n = 0;
+    const schedule = (dueAt: number, type: string, payload: unknown, timerKey: string) => {
+      // A timer is a self-delivery from @timer, so the route @timer → type → this actor must exist.
+      if (!system.routes.some((r) => r.from === "@timer" && r.message === type && r.to === actorName)) throw new Error(`${actorName} has no route @timer → ${type} → ${actorName}; declare it in system.ts`);
+      setTimer(sql, { key: timerKey, type, payload: JSON.stringify(payload), due_at: dueAt, causation_id: current.id, correlation_id: current.correlationId });
+      notes.push({ kind: "timer.set", at: now(), actor: self, messageId: current.id, type, correlationId: current.correlationId, detail: { key: timerKey, dueAt } });
+    };
     return {
       self,
       key,
@@ -468,6 +485,19 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         const req = JSON.parse(row.body) as { causationId: string; correlationId: string };
         sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason, id);
         notes.push({ kind: "effect.denied", at: now(), actor: self, effect: name as string, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason });
+        return true;
+      },
+      after(delay, type, payload, opts) {
+        const ms = typeof delay === "number" ? delay : durationMs(delay);
+        if (ms === null) throw new Error(`${actorName} set a timer with an invalid delay: ${String(delay)}`);
+        schedule(now() + ms, type as string, payload, opts.key);
+      },
+      at(when, type, payload, opts) {
+        schedule(when, type as string, payload, opts.key);
+      },
+      cancelTimer(timerKey) {
+        if (!cancelTimer(sql, timerKey)) return false;
+        notes.push({ kind: "timer.cancelled", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, detail: { key: timerKey } });
         return true;
       },
       note(text, detail) {
@@ -688,6 +718,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (next !== null && next !== undefined) candidates.push(next);
     const tick = meta("schedule.next");
     if (tick) candidates.push(Number(tick));
+    const timer = earliestTimer(sql);
+    if (timer !== null) candidates.push(timer);
     return candidates.length === 0 ? null : Math.min(...candidates);
   }
 
@@ -721,8 +753,46 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         payload: { at: Number(tick) },
       });
     }
+    for (const t of dueTimers(sql, now())) await fireTimer(t);
     sql.exec("DELETE FROM _actors_inbox WHERE handled_at < ?", now() - retention);
     await drain();
+  }
+
+  /** Deliver one due timer to this instance. The id is derived from the key and due time, so a redelivery is a duplicate. */
+  async function fireTimer(t: TimerRow): Promise<void> {
+    const id = deriveId(self, "timer", t.key, t.due_at);
+    const envelope: Envelope = {
+      v: 1,
+      id,
+      type: t.type,
+      version: system.messages[t.type]?.version ?? 1,
+      from: "@timer",
+      to: self,
+      correlationId: t.correlation_id,
+      causationId: t.causation_id,
+      attempt: t.attempts + 1,
+      sentAt: now(),
+      payload: JSON.parse(t.payload),
+    };
+    const event = ids(envelope);
+    emit({ kind: "timer.fired", at: now(), actor: self, ...event, detail: { key: t.key, dueAt: t.due_at } });
+    const receipt = await receive(envelope);
+    // Match on due_at too: the handler may have set this key again, and that new timer must survive.
+    const remove = () => sql.exec("DELETE FROM _actors_timers WHERE key = ? AND due_at = ?", t.key, t.due_at);
+    if (receipt.status === "failed") {
+      const attempts = t.attempts + 1;
+      if (attempts >= maxAttempts) {
+        remove();
+        emit({ kind: "retry.exhausted", at: now(), actor: self, ...event, attempt: attempts, reason: receipt.error });
+      } else {
+        const delay = backoff(attempts);
+        sql.exec("UPDATE _actors_timers SET attempts = ?, due_at = ? WHERE key = ? AND due_at = ?", attempts, now() + delay, t.key, t.due_at);
+        emit({ kind: "retry.scheduled", at: now(), actor: self, ...event, attempt: attempts + 1, reason: receipt.error, detail: { delayMs: delay } });
+      }
+      return;
+    }
+    remove();
+    if (receipt.status === "rejected") emit({ kind: "undeliverable", at: now(), actor: self, ...event, reason: receipt.reason });
   }
 
   const runtime: ActorRuntime = {

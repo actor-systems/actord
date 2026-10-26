@@ -10,6 +10,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A handler's writes, its outgoing messages, and its effect intents commit together or not at all | `ctx.storage.transaction()` around each handler |
 | Delivers at least once, then dead-letters | SQLite outbox; alarm retries with backoff, up to 6 attempts |
 | Never reports an unacknowledged external effect as delivered | Retries only with an idempotency key; otherwise `in_doubt` |
+| A timer set by a handler is delivered once, after its delay, even across restarts; it is set only if the handler commits | `_actors_timers` row in the handler's transaction; derived id |
 
 Not guaranteed: exactly-once external effects, global ordering, cross-actor transactions, or a route as a
 security boundary. Decision 0007 has the details and the platform behavior they rest on.

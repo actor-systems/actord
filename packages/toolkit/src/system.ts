@@ -77,8 +77,8 @@ export interface EffectSpec {
   readonly result?: string;
 }
 
-/** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron). */
-export type ExternalSender = "@clock" | "@ingress";
+/** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron); "@timer" delivers timers an actor set for itself. */
+export type ExternalSender = "@clock" | "@ingress" | "@timer";
 
 export interface RouteSpec<A extends string = string, M extends string = string> {
   readonly from: A | ExternalSender;
@@ -161,6 +161,8 @@ export type MessagesTo<S extends AnySystem, A extends string> = Extract<Extract<
 export type MessagesFrom<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: A }>["message"], MessageName<S>>;
 /** Messages the Worker may send to actor A from its own code (route sender "@ingress"). */
 export type IngressMessages<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: "@ingress"; to: A }>["message"], MessageName<S>>;
+/** Messages actor A may set as timers for itself (route sender "@timer"). */
+export type TimerMessages<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: "@timer"; to: A }>["message"], MessageName<S>>;
 /** The receivers of message M from actor A. */
 export type Receivers<S extends AnySystem, A extends string, M extends string> = Extract<S["routes"][number], { from: A; message: M }>["to"];
 
