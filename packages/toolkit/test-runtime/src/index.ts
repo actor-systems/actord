@@ -4,7 +4,7 @@ import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents
 import { z } from "zod";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
 import { defineSystem, inboundEmail, message, webhook } from "../../src/system.ts";
-import { applyDecision, approvalDecided, handleWebhook } from "../../src/sources/index.ts";
+import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
 
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
@@ -12,7 +12,7 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
-    "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
+    "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional(), at: z.enum(["infinity", "nan", "negative"]).optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
@@ -38,7 +38,7 @@ export const system = defineSystem({
       kind: "deterministic",
       purpose: "Exercises runtime edge cases",
       justification: ["state"],
-      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain", "gateway.job-approval", "notify.approval"],
+      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain", "gateway.job-approval", "notify.approval"],
       schedules: [
         { every: "1h", message: "probe.tick.hourly" },
         { cron: "0 9 * * *", message: "probe.tick.daily" },
@@ -49,6 +49,7 @@ export const system = defineSystem({
     "gateway.reconcilable": { description: "No key, but outcomes can be looked up", idempotency: "none", reconcile: true, result: "probe.outcome" },
     "gateway.plain": { description: "No key, no lookup", idempotency: "none", result: "probe.outcome" },
     "gateway.approval": { description: "Needs a person", idempotency: "key", approval: "human", result: "probe.outcome" },
+    "gateway.publish": { description: "Makes something public, so a person must approve it", idempotency: "key", approval: "human", publishes: true, result: "probe.outcome" },
     "gateway.keyed": { description: "Keyed", idempotency: "key", result: "probe.outcome" },
     "gateway.budgeted": { description: "Keyed, with its own budget", idempotency: "key", result: "probe.outcome", budget: { timeoutMs: 15, maxAttempts: 8 } },
     "gateway.job": { description: "Long work, settled later", kind: "job", idempotency: "key", deadline: "1h", probe: { every: "1m" }, completes: { message: "probe.job.done" }, result: "probe.outcome" },
@@ -106,6 +107,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS approvals (key TEXT NOT NULL, ok INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS pokes (id TEXT NOT NULL, cid TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS decided (payload TEXT NOT NULL)");
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
@@ -175,6 +177,7 @@ export class Probe extends DurableObject<Env> {
     "approval.decided": ({ payload }, ctx) => {
       const ok = applyDecision(ctx, payload);
       ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.effectKey, ok ? 1 : 0);
+      ctx.sql.exec("INSERT INTO decided (payload) VALUES (?)", JSON.stringify(payload));
     },
   }, { backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40 }); // a test can hold a retry back
 
@@ -205,6 +208,10 @@ export class Probe extends DurableObject<Env> {
   approvals(): Array<{ key: string; ok: boolean }> {
     return this.ctx.storage.sql.exec<{ key: string; ok: number }>("SELECT key, ok FROM approvals ORDER BY rowid").toArray().map((r) => ({ key: r.key, ok: r.ok === 1 }));
   }
+  /** Every approval.decided payload this instance handled, as delivered. */
+  decisions(): ApprovalDecided[] {
+    return this.ctx.storage.sql.exec<{ payload: string }>("SELECT payload FROM decided ORDER BY rowid").toArray().map((r) => JSON.parse(r.payload) as ApprovalDecided);
+  }
   poked(): string[] {
     return this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM pokes ORDER BY rowid").toArray().map((r) => r.id);
   }
@@ -225,4 +232,5 @@ export default {
     if (hooked !== null) return hooked;
     return new Response("runtime probe");
   },
+  email: (message, env) => handleEmail(message, env, system),
 } satisfies ExportedHandler<Env>;

@@ -39,6 +39,15 @@ export async function verifyApprovalToken(secret: string, token: string, now: nu
   return { ok: true, claims };
 }
 
+/**
+ * The claims a token carries, read without checking its signature. Only for a token that
+ * verifyApprovalToken already found signed but expired, to say when it expired.
+ */
+export function claimsOf(token: string): ApprovalClaims | null {
+  const parts = SHAPE.exec(token);
+  return parts ? parseClaims(parts[1]!) : null;
+}
+
 function parseClaims(payload: string): ApprovalClaims | null {
   try {
     const bytes = fromBase64Url(payload);

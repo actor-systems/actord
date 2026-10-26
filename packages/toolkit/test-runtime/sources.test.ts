@@ -2,8 +2,8 @@
 import { env } from "cloudflare:workers";
 import { SELF, abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
-import { EffectRejected, ingress } from "../src/runtime/index.ts";
-import { approvalEmail, handleWebhook, SUBJECT_TAG, verifyApprovalToken } from "../src/sources/index.ts";
+import { type ActorEvent, EffectRejected, deriveId, ingress } from "../src/runtime/index.ts";
+import { type ApprovalClaims, approvalEmail, type ForwardableEmailLike, handleEmail, handleWebhook, SUBJECT_TAG, signApprovalToken, verifyApprovalToken } from "../src/sources/index.ts";
 import { captureEvents, expireApprovals, injectFault, overrideEffect, resetSeams, settle } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
@@ -255,4 +255,313 @@ it("[approval-notify-fails] a notification that fails or ends in doubt leaves th
     await settle(env, system);
     expect(await probe(key).outcomes()).toMatchObject([{ key, status: "failed", error: "approval expired" }]);
   }
+});
+
+// ---- Answering by email (plan 2, Task 6) ----
+
+const OWNER = "owner@probe.example";
+/** What a receiving server that checked the reply writes above it. */
+const PASS = "mx.cloudflare.net; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example; dmarc=pass (p=reject dis=none) header.from=probe.example";
+type Answer = { from: unknown; to: unknown; subject: string; text: string; headers?: Record<string, string> };
+
+/** The env the Worker's email handler sees: the probe's, plus a fake send binding that keeps every reply it sends. */
+function answering(): { replies: Answer[]; env: unknown } {
+  const replies: Answer[] = [];
+  const e = env as unknown as Record<string, unknown>;
+  return { replies, env: { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_OWNER: e.PROBE_OWNER, PROBE_FROM: e.PROBE_FROM, PROBE_SEND: { send: async (m: Answer) => void replies.push(m) } } };
+}
+
+let replyCount = 0;
+/**
+ * A fake ForwardableEmailMessage: the minimal multipart/alternative MIME reply a mail client sends. `headers`
+ * come first, as a receiving server prepends Authentication-Results, and one given as an array repeats.
+ * The envelope sender is `from`'s unless `envelopeFrom` is given; `messageId: null` leaves the Message-ID out.
+ */
+function reply({ from, subject, text, headers = {}, envelopeFrom = from, messageId }: { from: string; subject: string; text: string; headers?: Record<string, string | string[]>; envelopeFrom?: string; messageId?: string | null }): ForwardableEmailLike {
+  const id = messageId === undefined ? `<reply-${++replyCount}.${crypto.randomUUID()}@mail.probe.example>` : messageId;
+  const head: Array<[string, string]> = [
+    ...Object.entries(headers).flatMap(([k, v]) => [v].flat().map((one): [string, string] => [k, one])),
+    ["From", from],
+    ["To", "actord@probe.example"],
+    ["Subject", subject],
+    ...(id === null ? [] : [["Message-ID", id] as [string, string]]),
+    ["Date", "Mon, 26 Oct 2026 09:00:00 +0000"],
+    ["MIME-Version", "1.0"],
+    ["Content-Type", 'multipart/alternative; boundary="part"'],
+  ];
+  const html = text.split("\n").map((l) => l.replace(/&/g, "&amp;").replace(/</g, "&lt;")).join("<br>");
+  const mime = [...head.map(([k, v]) => `${k}: ${v}`), "", "--part", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: 8bit", "", text, "--part", "Content-Type: text/html; charset=utf-8", "", `<div>${html}</div>`, "--part--", ""].join("\n");
+  const raw = enc.encode(mime.replace(/\r?\n/g, "\r\n"));
+  return { from: envelopeFrom, to: "actord@probe.example", headers: new Headers(head), raw: new ReadableStream({ start: (c) => { c.enqueue(raw); c.close(); } }), rawSize: raw.byteLength };
+}
+
+/** Park `effect` under `key`, counting its runs, and return the approval request the owner was emailed and its token. */
+async function asked(key: string, effect: "gateway.approval" | "gateway.publish" = "gateway.approval") {
+  const sent = mailbox();
+  const fx = { runs: 0 };
+  overrideEffect(effect, { run: async () => ++fx.runs });
+  await ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
+  await settle(env, system);
+  expect(sent).toHaveLength(1);
+  const request = sent[0]!;
+  return { request, fx, token: SUBJECT_TAG.exec(request.subject)![1]! };
+}
+/** A Gmail-style reply body: the owner's lines, then the request quoted below an "On … wrote:" line. */
+const below = (request: Sent, ...lines: string[]) => [...lines, "", "On Mon, Oct 26, 2026 at 9:00 AM actord <actord@probe.example> wrote:", ...request.text.trimEnd().split("\n").map((l) => `> ${l}`)].join("\n");
+const sourceEvents = (events: ActorEvent[]) => events.filter((e) => e.kind.startsWith("source."));
+const fxStatus = (key: string, effect = "gateway.approval") => runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ status: string }>("SELECT status FROM _actors_outbox WHERE id = ?", `fx:${effect}:${key}`).one().status);
+
+it("[email-approves] the owner's 'approve' with dmarc=pass approves the parked effect, which runs once, by the owner via @mail", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-ok");
+  const { replies, env: e } = answering();
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS } }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
+  expect(await probe("em-ok").outcomes()).toMatchObject([{ key: "em-ok", status: "confirmed" }]);
+  expect(await probe("em-ok").decisions()).toEqual([{ effect: "gateway.approval", effectKey: "em-ok", decision: "approve", reason: null, by: OWNER, authenticated: "pass" }]);
+  expect(await probe("em-ok").approvals()).toEqual([{ key: "em-ok", ok: true }]);
+  expect(events.find((ev) => ev.kind === "note" && ev.effectKey === "em-ok")).toMatchObject({ reason: "approved by a person", detail: { by: OWNER, via: "@mail" } });
+  expect(replies).toEqual([]);
+  expect(sourceEvents(events)).toEqual([]);
+});
+
+it("[email-denies] 'deny not now' denies the parked effect with that reason, and it never runs", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-no");
+  const { replies, env: e } = answering();
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "deny not now"), headers: { "Authentication-Results": PASS } }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(0);
+  expect(await probe("em-no").decisions()).toEqual([{ effect: "gateway.approval", effectKey: "em-no", decision: "deny", reason: "not now", by: OWNER, authenticated: "pass" }]);
+  expect(events.find((ev) => ev.kind === "effect.denied" && ev.effectKey === "em-no")).toMatchObject({ reason: "not now", detail: { by: OWNER, via: "@mail" } });
+  expect(await fxStatus("em-no")).toBe("denied");
+  // A bare "Deny" gives no reason.
+  const bare = await asked("em-no-bare");
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${bare.request.subject}`, text: below(bare.request, "Deny"), headers: { "Authentication-Results": PASS } }), e, system);
+  await settle(env, system);
+  expect(await probe("em-no-bare").decisions()).toMatchObject([{ decision: "deny", reason: null }]);
+  expect(await fxStatus("em-no-bare")).toBe("denied");
+  expect(bare.fx.runs).toBe(0);
+  expect(replies).toEqual([]);
+});
+
+it("[email-not-owner] a reply that isn't from the owner gets no reply and no delivery, and is recorded", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-who");
+  const { replies, env: e } = answering();
+  const subject = `Re: ${request.subject}`;
+  const text = below(request, "approve");
+  const headers = { "Authentication-Results": PASS };
+  for (const m of [
+    reply({ from: "mallory@evil.example", subject, text, headers }),
+    // The owner's From over someone else's envelope, someone else's From over the owner's envelope, and a From naming two people.
+    reply({ from: OWNER, envelopeFrom: "mallory@evil.example", subject, text, headers }),
+    reply({ from: "Mallory <mallory@evil.example>", envelopeFrom: OWNER, subject, text, headers }),
+    reply({ from: `${OWNER}, mallory@evil.example`, envelopeFrom: OWNER, subject, text, headers }),
+    // Nobody else hears anything back, not even that a subject has no token.
+    reply({ from: "mallory@evil.example", subject: "hello", text: "approve" }),
+  ])
+    await handleEmail(m, e, system);
+  await settle(env, system);
+  expect(replies).toEqual([]);
+  expect(await probe("em-who").approvals()).toEqual([]);
+  expect(fx.runs).toBe(0);
+  expect(await fxStatus("em-who")).toBe("awaiting_approval");
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.actor, ev.reason])).toEqual(Array(5).fill(["source.rejected", "@mail", "not_owner"]));
+});
+
+it("[email-bad-token] a reply whose subject token was edited, or that has none, gets a reply and no delivery", async () => {
+  const events = captureEvents();
+  const { request, token, fx } = await asked("em-bad");
+  const { replies, env: e } = answering();
+  const [payload, signature] = token.split(".") as [string, string];
+  const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as ApprovalClaims;
+  const edited = [
+    `${payload}.${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`, // a changed signature
+    `${b64url(JSON.stringify({ ...claims, effectKey: "someone-elses" }))}.${signature}`, // changed claims under the old signature
+  ];
+  const headers = { "Authentication-Results": PASS };
+  const text = below(request, "approve");
+  for (const t of edited) await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject.replace(token, t)}`, text, headers, messageId: `<edited-${t.length}@mail.probe.example>` }), e, system);
+  await handleEmail(reply({ from: OWNER, subject: "Re: Approve gateway.approval?", text, headers }), e, system);
+  await settle(env, system);
+  expect(replies.map((r) => r.text)).toEqual(Array(3).fill("this address only accepts replies to actord approval requests"));
+  const first = replies[0]!;
+  expect(first).toMatchObject({ from: "actord@probe.example", to: OWNER, subject: `Re: ${request.subject.replace(token, edited[0]!)}`, headers: { "In-Reply-To": `<edited-${edited[0]!.length}@mail.probe.example>` } });
+  expect(await probe("em-bad").approvals()).toEqual([]);
+  expect(fx.runs).toBe(0);
+  expect(await fxStatus("em-bad")).toBe("awaiting_approval");
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual([
+    ["source.rejected", "bad_signature"],
+    ["source.rejected", "bad_signature"],
+    ["source.ignored", "no_token"],
+  ]);
+});
+
+it("[email-expired-token] a reply that arrives after its request expired is told so, and nothing reaches the actor", async () => {
+  const events = captureEvents();
+  const { request, token, fx } = await asked("em-late");
+  const { replies, env: e } = answering();
+  await expireApprovals(env, system, "Probe", "em-late");
+  await settle(env, system);
+  // The request's own claims, signed with the system's secret, with their expiry passed: a reply that comes too late.
+  const { claims } = (await verifyApprovalToken("probe-approval-secret", token, Date.now())) as { claims: ApprovalClaims };
+  const exp = Date.now() - 60_000;
+  const late = await signApprovalToken("probe-approval-secret", { ...claims, exp });
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject.replace(token, late)}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS } }), e, system);
+  await settle(env, system);
+  expect(replies.map((r) => r.text)).toEqual([`this request expired at ${new Date(exp).toISOString()}; nothing was approved`]);
+  expect(await probe("em-late").approvals()).toEqual([]);
+  expect(fx.runs).toBe(0);
+  expect(await probe("em-late").outcomes()).toMatchObject([{ key: "em-late", status: "failed", error: "approval expired" }]);
+  expect(sourceEvents(events)).toMatchObject([{ kind: "source.rejected", actor: "@mail", reason: "expired", effect: "gateway.approval", effectKey: "em-late" }]);
+});
+
+it("[email-quoted-approve] an 'approve' only in the quoted text below the owner's first line asks again", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-quote");
+  const { replies, env: e } = answering();
+  const subject = `Re: ${request.subject}`;
+  const headers = { "Authentication-Results": PASS };
+  for (const text of [
+    below(request, "hmm", "", "> approve"),
+    below(request), // nothing written above the quote
+    "> approve",
+  ])
+    await handleEmail(reply({ from: OWNER, subject, text, headers }), e, system);
+  await settle(env, system);
+  expect(replies.map((r) => r.text)).toEqual(Array(3).fill("reply with approve, or deny followed by a reason, on the first line"));
+  expect(await probe("em-quote").approvals()).toEqual([]);
+  expect(fx.runs).toBe(0);
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual(Array(3).fill(["source.ignored", "unparsed"]));
+  // The ask keeps the request's subject, so answering it on the first line counts.
+  await handleEmail(reply({ from: OWNER, subject: replies[0]!.subject, text: "approve", headers }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
+});
+
+it("[email-unknown-auth-tool] with no authentication result, 'approve' approves an effect that doesn't publish, marked unknown", async () => {
+  const { request, fx } = await asked("em-unk");
+  const { replies, env: e } = answering();
+  // A display name and another letter case are still the owner's address.
+  await handleEmail(reply({ from: "The Owner <Owner@Probe.Example>", envelopeFrom: OWNER, subject: `Re: ${request.subject}`, text: below(request, "  Approve  ") }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
+  expect(await probe("em-unk").decisions()).toEqual([{ effect: "gateway.approval", effectKey: "em-unk", decision: "approve", reason: null, by: OWNER, authenticated: "unknown" }]);
+  expect(replies).toEqual([]);
+});
+
+it("[email-unknown-auth-publishes] with no authentication result, 'approve' can't approve an effect that publishes, though a deny can", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-pub", "gateway.publish");
+  const { replies, env: e } = answering();
+  const subject = `Re: ${request.subject}`;
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "approve") }), e, system);
+  await settle(env, system);
+  expect(replies.map((r) => r.text)).toEqual(["this effect publishes; approve it in GitHub"]);
+  expect(fx.runs).toBe(0);
+  expect(await probe("em-pub").approvals()).toEqual([]);
+  expect(await fxStatus("em-pub", "gateway.publish")).toBe("awaiting_approval");
+  expect(sourceEvents(events)).toMatchObject([{ kind: "source.rejected", actor: "@mail", reason: "publishes_unauthenticated", effect: "gateway.publish", effectKey: "em-pub" }]);
+  // Refusing needs no proof of who sent it, so a deny goes through.
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "deny wrong repo") }), e, system);
+  await settle(env, system);
+  expect(await probe("em-pub").decisions()).toMatchObject([{ decision: "deny", reason: "wrong repo", authenticated: "unknown" }]);
+  expect(await fxStatus("em-pub", "gateway.publish")).toBe("denied");
+  // With dmarc=pass, the same approve of an effect that publishes counts.
+  const ok = await asked("em-pub-ok", "gateway.publish");
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${ok.request.subject}`, text: below(ok.request, "approve"), headers: { "Authentication-Results": PASS } }), e, system);
+  await settle(env, system);
+  expect(ok.fx.runs).toBe(1);
+  expect(fx.runs).toBe(0);
+});
+
+it("[email-dmarc-fail] a reply whose Authentication-Results says dmarc=fail is refused, with no reply", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-forged");
+  const { replies, env: e } = answering();
+  const subject = `Re: ${request.subject}`;
+  const text = below(request, "approve");
+  await handleEmail(reply({ from: OWNER, subject, text, headers: { "Authentication-Results": "mx.cloudflare.net; spf=fail smtp.mailfrom=probe.example; dkim=none; dmarc=fail (p=reject) header.from=probe.example" } }), e, system);
+  // A pass in one header doesn't outweigh a fail in another.
+  await handleEmail(reply({ from: OWNER, subject, text, headers: { "Authentication-Results": [PASS, "mx.cloudflare.net; dmarc=FAIL header.from=probe.example"] } }), e, system);
+  await settle(env, system);
+  expect(replies).toEqual([]);
+  expect(fx.runs).toBe(0);
+  expect(await probe("em-forged").approvals()).toEqual([]);
+  expect(await fxStatus("em-forged")).toBe("awaiting_approval");
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.actor, ev.reason])).toEqual(Array(2).fill(["source.rejected", "@mail", "dmarc_fail"]));
+});
+
+it("[email-second-reply] when the owner answers twice, the first answer wins; the second is delivered and finds nothing waiting", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-twice");
+  const { replies, env: e } = answering();
+  const subject = `Re: ${request.subject}`;
+  const headers = { "Authentication-Results": PASS };
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "approve"), headers }), e, system);
+  await settle(env, system);
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "deny changed my mind"), headers }), e, system);
+  await settle(env, system);
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "approve"), headers }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
+  expect(await probe("em-twice").decisions()).toMatchObject([{ decision: "approve" }, { decision: "deny", reason: "changed my mind" }, { decision: "approve" }]);
+  // What applyDecision (ctx.approve or ctx.deny) answered each time.
+  expect(await probe("em-twice").approvals()).toEqual([
+    { key: "em-twice", ok: true },
+    { key: "em-twice", ok: false },
+    { key: "em-twice", ok: false },
+  ]);
+  expect(await probe("em-twice").outcomes()).toMatchObject([{ key: "em-twice", status: "confirmed" }]);
+  expect(events.filter((ev) => ev.kind === "effect.denied" || ev.kind === "duplicate")).toEqual([]);
+  expect(replies).toEqual([]);
+  expect(sourceEvents(events)).toEqual([]);
+});
+
+it("[email-duplicate-delivery] the same email, with the same Message-ID, handled twice is delivered once", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-dup");
+  const { env: e } = answering();
+  const same = (messageId: string | null) => reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": PASS }, messageId });
+  await handleEmail(same("<dup-1@mail.probe.example>"), e, system);
+  await settle(env, system);
+  await handleEmail(same("<dup-1@mail.probe.example>"), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
+  expect(await probe("em-dup").approvals()).toEqual([{ key: "em-dup", ok: true }]);
+  const id = deriveId("email", "<dup-1@mail.probe.example>");
+  expect(events.filter((ev) => ev.kind === "received" && ev.messageId === id)).toHaveLength(1);
+  expect(events.filter((ev) => ev.kind === "duplicate")).toMatchObject([{ messageId: id, from: "@mail" }]);
+  // With no Message-ID, the same answer to the same request from the same sender is one delivery too.
+  const bare = await asked("em-dup-bare");
+  const again = () => reply({ from: OWNER, subject: `Re: ${bare.request.subject}`, text: below(bare.request, "approve"), headers: { "Authentication-Results": PASS }, messageId: null });
+  await handleEmail(again(), e, system);
+  await settle(env, system);
+  await handleEmail(again(), e, system);
+  await settle(env, system);
+  expect(bare.fx.runs).toBe(1);
+  expect(await probe("em-dup-bare").approvals()).toEqual([{ key: "em-dup-bare", ok: true }]);
+});
+
+it("[email-misconfigured] without a secret or an owner nothing is accepted, and a reply that can't be sent is recorded", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-cfg");
+  const e = env as unknown as Record<string, unknown>;
+  const answer = (text: string) => reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, text), headers: { "Authentication-Results": PASS } });
+  await handleEmail(answer("approve"), { PROBE: e.PROBE, PROBE_OWNER: OWNER, PROBE_FROM: e.PROBE_FROM }, system);
+  await handleEmail(answer("approve"), { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_FROM: e.PROBE_FROM }, system);
+  // No send binding: the ask can't go out, and that is recorded rather than thrown.
+  await handleEmail(answer("hmm"), { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_OWNER: OWNER, PROBE_FROM: e.PROBE_FROM }, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(0);
+  expect(await probe("em-cfg").approvals()).toEqual([]);
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual([
+    ["source.rejected", "secret_missing"],
+    ["source.rejected", "owner_missing"],
+    ["source.ignored", "unparsed"],
+    ["source.failed", "reply_failed"],
+  ]);
 });
