@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 884e3e6 A landing-page README, the reference in a wiki, CONTRIBUTING for the repository
+== repository at 74bdf89 Spec and plan: a timer's id includes the message that set it
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -128,9 +128,13 @@ not installed
     "package/dist/system.mjs",
     "package/dist/testing.mjs",
     "package/dist/vitest.mjs",
+    "package/dist/types/runtime/capability.d.ts",
     "package/dist/types/runtime/index.d.ts",
+    "package/dist/types/runtime/jobs.d.ts",
+    "package/dist/types/runtime/schedules.d.ts",
     "package/dist/types/system.d.ts",
     "package/dist/types/testing.d.ts",
+    "package/dist/types/runtime/timers.d.ts",
     "package/dist/types/vitest.d.ts"
   ]
 }
