@@ -9,9 +9,9 @@
 //    That is why the sender is checked before the token. Mail an auto-responder sent is then ignored without a
 //    reply, so an out-of-office answer and a reply to it can't loop: Auto-Submitted other than "no" (RFC 3834),
 //    Precedence bulk, junk, list or auto_reply, or an X-Autoreply or X-Autorespond header.
-// 2. Headers. There is exactly one Subject and at most one Message-ID. The parser reads the first of each but
-//    DKIM signs the last, so a header added above a signed one could change what the reply says. A reply with
-//    more is not understood, and the reply asks again.
+// 2. Headers. There is exactly one Subject and at most one Message-ID. A repeated header is ambiguous: this
+//    parser and a DKIM verifier could pick different copies. A reply with more is not understood, and the reply
+//    asks again.
 // 3. Token. The subject's "[actord:<token>]" verifies against env[secret] and hasn't expired. A missing,
 //    edited or expired token gets a reply saying so.
 // 4. Decision. The first non-empty line the owner wrote, above any quoted text, is "approve", or "deny" and
@@ -25,7 +25,8 @@
 // A delivery that throws, or whose handler fails, is tried twice more under the same envelope id, which the
 // actor deduplicates. The owner then gets one reply: "Received: …" once the actor has the answer (handled, or
 // a duplicate of one it already handled), saying that a request already decided or expired is unchanged; that
-// the answer couldn't be recorded, and to reply again, if every attempt failed; or that it couldn't be applied,
+// the answer may not have been recorded, and to reply again, if every attempt failed (a try can land and lose
+// its receipt; replying again is then harmless); or that it couldn't be applied,
 // and why, if the actor refused it.
 // Every outcome other than a delivery is recorded as a source.* event. Every reply goes to the owner through
 // env[send], from env[from], marked Auto-Submitted: auto-replied, with In-Reply-To set to the reply's Message-ID.
@@ -57,7 +58,7 @@ const expiredAt = (exp: number) => `this request expired at ${new Date(exp).toIS
 type Answer = { decision: "approve" | "deny"; effect: string; effectKey: string };
 const what = (a: Answer) => `${a.decision} for ${a.effect} (${a.effectKey})`;
 const RECEIVED = (a: Answer) => `Received: ${what(a)}. If it had already been decided or had expired, this changed nothing.`;
-const NOT_RECORDED = (a: Answer) => `Your ${what(a)} couldn't be recorded. Please reply again with your answer on the first line.`;
+const NOT_RECORDED = (a: Answer) => `Your ${what(a)} may not have been recorded. Please reply again with your answer on the first line.`;
 const NOT_APPLIED = (a: Answer, why: string) => `Your ${what(a)} couldn't be applied: ${why}. Nothing was approved or denied.`;
 /** The first delivery and up to two retries, all under one envelope id. */
 const ATTEMPTS = 3;
@@ -130,7 +131,7 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
     }
   };
 
-  // 2. Headers: postal-mime reads the first Subject and Message-ID, and DKIM signs the last.
+  // 2. Headers: a repeated Subject or Message-ID is ambiguous, so refuse it rather than pick a copy.
   if (counts.subjects !== 1 || counts.messageIds > 1) {
     record("source.ignored", "ambiguous_headers", {}, { ...seen, ...counts });
     return reply(ASK_AGAIN);

@@ -36,8 +36,8 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
       `X-Autorespond` header. Every reply the handler sends is itself marked `Auto-Submitted: auto-replied` and
       carries `In-Reply-To`, which is left out when the incoming Message-ID is absent, repeated, or unsafe to repeat
       in a header.
-   4. *One Subject, at most one Message-ID.* The parser reads the first of each, but DKIM signs the last, so a
-      header added above a signed one could change the token or the dedupe id. A reply with more isn't understood:
+   4. *One Subject, at most one Message-ID.* A repeated header is ambiguous: this parser and a DKIM
+      verifier could pick different copies, so the code refuses rather than picks. A reply with more isn't understood:
       it approves nothing, is recorded as `source.ignored` (`ambiguous_headers`), and gets the reply asking again.
    5. *Token, then decision.* A missing or edited token gets one generic reply that doesn't tell the two apart; an expired token and an unparsable decision each get a reply saying so.
 5. **Authentication is trusted only from a configured server.** A sender can write their own
@@ -64,7 +64,8 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
     - **`handled` or `duplicate`:** `Received: <approve|deny> for <effect> (<effectKey>). If it had already been
       decided or had expired, this changed nothing.` The reply says what arrived, not what it did: whether
       `applyDecision` changed anything stays inside the actor. Reporting the true outcome is deferred to an issue.
-    - **Every try failed:** the answer couldn't be recorded; reply again. Recorded as `source.failed`
+    - **Every try failed:** the answer may not have been recorded (a try can land and lose its receipt); reply
+      again, which is harmless if it was. Recorded as `source.failed`
       (`delivery_failed` or `handler_failed`) with `attempts: 3`.
     - **`rejected`** (permanent, so not retried): the answer couldn't be applied, with the reason. Recorded as
       `source.invalid`.
@@ -96,5 +97,6 @@ A real Gmail reply through Cloudflare Email Routing approved a parked effect.
 
 ## Known edges
 - An auto-responder that marks its mail in none of the ways in rule 4.3 isn't detected. Its text is read like a
-  person's: unless its first line is `approve` or `deny`, it gets the reply asking again.
+  person's: unless its first line is `approve` or `deny`, it gets the reply asking again. Because every answer
+  now gets a `Received: …` reply, such a responder can loop with the handler until the token expires.
 - Strict envelope equality refuses an owner whose provider rewrites MAIL FROM (VERP or SRS). It fails closed.

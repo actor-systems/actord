@@ -106,7 +106,7 @@ in Node, with a stub delivery target. Two things differ from the real message:
 | unset | not `publishes` | `approve` | delivered, `authenticated: "unknown"` (as in production) |
 | unset | `publishes: true` | `approve` | refused, `source.rejected: publishes_unauthenticated` |
 | `mx.cloudflare.net` | `publishes: true` | `approve` | delivered, **`authenticated: "pass"`** |
-| `MX.CLOUDFLARE.NET` | `publishes: true` | `approve` | refused (`publishes_unauthenticated`): today the authserv-id compare is case-sensitive |
+| `MX.CLOUDFLARE.NET` | `publishes: true` | `approve` | refused (`publishes_unauthenticated`): the authserv-id compare was case-sensitive at the time; the plan 2 fix wave made it case-insensitive |
 
 ## What this settles, and what it doesn't
 

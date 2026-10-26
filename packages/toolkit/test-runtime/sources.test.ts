@@ -695,7 +695,7 @@ it("[email-delivery-retried] a handler that fails is tried again under the same 
       from: "actord@probe.example",
       to: OWNER,
       subject: `Re: ${lost.request.subject}`,
-      text: "Your approve for gateway.approval (em-retry-all) couldn't be recorded. Please reply again with your answer on the first line.",
+      text: "Your approve for gateway.approval (em-retry-all) may not have been recorded. Please reply again with your answer on the first line.",
       headers: { "Auto-Submitted": "auto-replied", "In-Reply-To": answer.headers.get("message-id") },
     },
   ]);
@@ -741,7 +741,7 @@ it("[email-delivery-throws] a delivery that throws is tried again under the same
   expect(tries).toBe(3);
   expect(down.fx.runs).toBe(0);
   expect(await fxStatus("em-throw-all")).toBe("awaiting_approval");
-  expect(told.map((r) => r.text)).toEqual(["Your deny for gateway.approval (em-throw-all) couldn't be recorded. Please reply again with your answer on the first line."]);
+  expect(told.map((r) => r.text)).toEqual(["Your deny for gateway.approval (em-throw-all) may not have been recorded. Please reply again with your answer on the first line."]);
   expect(sourceEvents(events)).toMatchObject([{ kind: "source.failed", reason: "delivery_failed", effectKey: "em-throw-all", detail: { attempts: 3, error: "instance unreachable" } }]);
 });
 
