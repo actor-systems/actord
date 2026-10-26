@@ -20,4 +20,4 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 
 Not guaranteed: exactly-once external effects, global ordering, cross-actor transactions, or a route as a
 security boundary. Effect usage is best effort: usage from an attempt that crashed the Durable Object is lost, and usage
-reported after an attempt has timed out or ended is dropped. Decision 0007 has the details and the platform behavior they rest on.
+reported after an attempt has timed out or ended is dropped. A usage value that isn't a finite number at or above 0 is ignored. Decision 0007 has the details and the platform behavior they rest on.

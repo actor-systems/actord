@@ -193,7 +193,8 @@ export class EffectRejected extends Error {
 }
 
 /**
- * What an attempt consumed. Every field is optional; reports are summed field by field.
+ * What an attempt consumed. Every field is optional; reports are summed field by field. A value that isn't a
+ * finite number at or above 0 (NaN, Infinity, a negative number) is ignored, so it can't spoil the result.
  * Not guaranteed: usage from an attempt that crashed the Durable Object is lost, and usage reported
  * after an attempt has timed out or ended is dropped.
  */
@@ -206,8 +207,14 @@ export interface EffectUsage {
 
 const USAGE_FIELDS = ["inputTokens", "outputTokens", "costUsd", "containerSeconds"] as const;
 const hasUsage = (u: EffectUsage | undefined): u is EffectUsage => u !== undefined && USAGE_FIELDS.some((f) => u[f] !== undefined);
+/** Add a report to a running total. Only finite numbers at or above 0 count: JSON would turn NaN or Infinity into null. */
 function addUsage(into: EffectUsage, u: EffectUsage): void {
-  for (const f of USAGE_FIELDS) if (typeof u[f] === "number") into[f] = (into[f] ?? 0) + u[f];
+  for (const f of USAGE_FIELDS) {
+    const v = u[f];
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) continue;
+    const sum = (into[f] ?? 0) + v;
+    if (Number.isFinite(sum)) into[f] = sum;
+  }
 }
 /** A row body carrying `usage`, or without the field when nothing was reported. */
 function withUsage<T extends { usage?: EffectUsage }>(body: T, usage: EffectUsage | undefined): T {

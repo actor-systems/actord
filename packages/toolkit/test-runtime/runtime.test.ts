@@ -300,6 +300,24 @@ it("[effect-usage-attempts] usage is summed across retried attempts", async () =
   expect((await probe("eua").outcomes())[0]).toMatchObject({ status: "confirmed", usage: { inputTokens: 20 } });
 });
 
+it("[effect-usage-nonfinite] usage values that aren't finite numbers at or above 0 are ignored, and the result still arrives", async () => {
+  overrideEffect("gateway.keyed", {
+    run: async (_i, c) => {
+      c.reportUsage({ inputTokens: 3, costUsd: Number.NaN });
+      c.reportUsage({ outputTokens: Number.POSITIVE_INFINITY, containerSeconds: -1 });
+      c.reportUsage({ inputTokens: 2, costUsd: Number.NEGATIVE_INFINITY });
+      return "ok";
+    },
+  });
+  await send("eunf", "gateway.keyed");
+  await settle(env, system);
+  const [outcome] = await probe("eunf").outcomes();
+  expect(outcome).toMatchObject({ key: "eunf", status: "confirmed" });
+  expect(outcome!.usage).toEqual({ inputTokens: 5 });
+  const dead = await runInDurableObject(probe("eunf"), (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE status = 'dead'").one().n);
+  expect(dead).toBe(0);
+});
+
 it("[effect-usage-absent] no usage field when an adapter reported none", async () => {
   overrideEffect("gateway.keyed", { run: async () => "ok" });
   await send("eun", "gateway.keyed");
