@@ -54,3 +54,28 @@ now installs Codex and covers both distributions; no remote CI run was dispatche
 
 No production credentials, publishing, push, deployment, merge, or tag was performed. All plugin
 installation tests used disposable profiles; existing projects and normal host configuration were unchanged.
+
+## Follow-up — Codex-only template data
+
+Implementation commit: `539c670` on `codex-plugin`, following the initial migration at `8bd0014`.
+The build now writes `plugins/codex/dist/reference-templates.json` directly, and the Codex template
+adapter reads that file without extracting it from a toolkit archive. Existing path-safety checks and
+source filtering/sorting are unchanged. Distribution validation checks freshness against root examples
+and rejects template data inside the toolkit tarball. `g1.dist.fresh` also checks the separate template file.
+
+The template payload is byte-for-byte identical to the initial migration's packaged data: **99,479 bytes**,
+SHA-256 `d8cf65f8f154e4a67e70699ca039039bfb71f7cf432231917ab64dc89b821ddf`.
+
+| Toolkit tarball | Before | After |
+| --- | ---: | ---: |
+| `plugins/claude/dist/actord-toolkit-0.2.0.tgz` | 76,090 bytes | **54,085 bytes** |
+| `plugins/codex/dist/actord-toolkit-0.2.0.tgz` | 76,090 bytes | **54,085 bytes** |
+
+Both archives exclude `package/dist/reference-templates.json` and retain `package/dist/LICENSE` and
+`package/dist/NOTICE`. No other file in `plugins/claude/` changed.
+
+Root `npm run verify` passed again: **61 pass, 0 fail, 0 blocked, 0 skipped; G0–G7 all passed**, including
+byte-for-byte clean-checkout reproduction and the Linux container lane for both plugins. The standalone
+Codex consumer passed all 32 steps, including creation and workerd verification of both reference apps.
+Updated machine and human evidence remains at the links above. No new model-backed evaluations,
+merge, tag, push, deployment or publishing occurred.

@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 9e54f06 Integrate Codex plugin with shared actord toolkit and verification
+== repository at 539c670 Ship reference templates only in the Codex distribution
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -90,6 +90,7 @@ not installed
     "dist/VERSION",
     "dist/actord-toolkit-0.2.0.tgz",
     "dist/actord.mjs",
+    "dist/reference-templates.json",
     "skills/design-actor-system",
     "skills/evolve-actor-system",
     "skills/implement-actor-behavior",
@@ -121,7 +122,6 @@ not installed
     "package/dist/LICENSE",
     "package/dist/NOTICE",
     "package/package.json",
-    "package/dist/reference-templates.json",
     "package/dist/cli.mjs",
     "package/dist/runtime.mjs",
     "package/dist/system.mjs",
