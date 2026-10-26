@@ -824,3 +824,31 @@ it("[effect-key-reuse-same-handler] two requests for one key in one handler run 
   expect(events.filter((e) => e.kind === "effect.requested" && e.effectKey === "twice")).toHaveLength(1);
   expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "twice")).toMatchObject([{ detail: { existingStatus: "pending" } }]);
 });
+
+it("[effect-key-reuse-rollback] a handler that requests a used key and then throws leaves no duplicate event", async () => {
+  const events = captureEvents();
+  overrideEffect("gateway.keyed", { run: async () => 1 });
+  await send("rb", "gateway.keyed");
+  await settle(env, system);
+  const rows = () => runInDurableObject(probe("rb"), (_i, s) => s.storage.sql.exec("SELECT id, status FROM _actors_outbox ORDER BY id").toArray());
+  const before = await rows();
+  const r = await ingress(env, system, "Probe", "probe.effect", { effect: "gateway.keyed", key: "rb", fail: true }, { key: "rb" });
+  expect(r).toMatchObject({ status: "failed" });
+  await settle(env, system);
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "rb")).toHaveLength(0);
+  expect(await rows()).toEqual(before);
+});
+
+it("[effect-key-reuse-job] a job key requested again is a duplicate attributed to the message that started it", async () => {
+  const events = captureEvents();
+  let starts = 0;
+  overrideEffect("gateway.job", { start: async () => ({ runId: `r-${++starts}` }) });
+  await ingress(env, system, "Probe", "probe.job.start", { key: "jdup" }, { key: "jdup", id: "job-first" });
+  await settle(env, system);
+  expect(await jobRow("jdup")).toMatchObject({ status: "awaiting_job" });
+  await ingress(env, system, "Probe", "probe.job.start", { key: "jdup" }, { key: "jdup", id: "job-second" });
+  await settle(env, system);
+  expect(starts).toBe(1);
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effectKey === "jdup")).toHaveLength(1);
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "jdup")).toMatchObject([{ causationId: "job-second", detail: { existingStatus: "awaiting_job", firstCausationId: "job-first" } }]);
+});
