@@ -47,7 +47,10 @@ export function diffManifests(base: Manifest, head: Manifest): DiffResult {
         approval: true,
         irreversible: true,
       }),
-    changed: (b, h) => diffActor(b, h, add),
+    changed: (b, h) => {
+      diffActor(b, h, add);
+      unclassified("actor", b, h, ACTOR_FIELDS, add);
+    },
   });
   diffKeyed(base.messages, head.messages, {
     added: (m) => add("message.added", m.name, "compatible", `New message ${m.name}@${m.version}`),
@@ -63,7 +66,10 @@ export function diffManifests(base: Manifest, head: Manifest): DiffResult {
   diffKeyed(base.effects, head.effects, {
     added: (e) => add("effect.added", e.name, "risky", `New external effect ${e.name} (idempotency: ${e.idempotency}); a person must approve the new capability`, { approval: true }),
     removed: (e) => add("effect.removed", e.name, "compatible", `Effect ${e.name} removed`),
-    changed: (b, h) => diffEffect(b, h, add),
+    changed: (b, h) => {
+      diffEffect(b, h, add);
+      unclassified("effect", b, h, EFFECT_FIELDS, add);
+    },
   });
   if (base.system.name && base.system.name !== head.system.name) add("system.renamed", head.system.name, "risky", `System renamed from ${base.system.name}`);
 
@@ -129,8 +135,36 @@ function diffMessage(b: ManifestMessage, h: ManifestMessage, add: Add) {
   }
 }
 
+/**
+ * The fields the rules below classify. `receives` and `sends` follow from routes, which route.added and
+ * route.removed report.
+ */
+const ACTOR_FIELDS = new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends"]);
+const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes"]);
+
+/** Any other field that changed (one a later manifest adds, say) is reported as risky, never left silent. */
+function unclassified<T extends object>(what: "actor" | "effect", b: T, h: T, classified: Set<string>, add: Add) {
+  const bv = b as Record<string, unknown>;
+  const hv = h as Record<string, unknown>;
+  const fields = [...new Set([...Object.keys(bv), ...Object.keys(hv)])].filter((k) => !classified.has(k) && show(bv[k]) !== show(hv[k])).sort();
+  if (fields.length > 0) add(`${what}.changed`, String(hv.name), "risky", `${fields.join(", ")} changed, and diff has no rule for ${fields.length === 1 ? "it" : "them"}; check how what is already in flight behaves`);
+}
+
 function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
   const s = h.name;
+  // A job and a call settle by different rules, and an effect already in flight changes rules mid-way.
+  if (b.kind !== h.kind)
+    add("effect.kind", s, "risky", `Kind ${b.kind} → ${h.kind}; effects already in flight change how they settle (a job already waiting can't be settled by ctx.settleJob once the effect is a call, and waits out its deadline)`);
+  if ((b.deadline ?? null) !== (h.deadline ?? null)) add("effect.deadline", s, "risky", `Deadline ${b.deadline ?? "none"} → ${h.deadline ?? "none"}; jobs already waiting keep the deadline they started with`);
+  if (show(b.probe ?? null) !== show(h.probe ?? null))
+    add("effect.probe", s, "risky", `Probe ${b.probe ? `every ${b.probe.every}` : "none"} → ${h.probe ? `every ${h.probe.every}` : "none"}; jobs already waiting keep the next look they booked`);
+  if (show(b.completes ?? null) !== show(h.completes ?? null))
+    add("effect.completes", s, "risky", `Completion message ${b.completes?.message ?? "none"} → ${h.completes?.message ?? "none"}; completions already on their way arrive as the old message, whose handler must still settle the job`);
+  if (show(b.budget ?? null) !== show(h.budget ?? null))
+    add("effect.budget", s, "risky", `Budget ${show(b.budget ?? null)} → ${show(h.budget ?? null)}; it applies from the next attempt, including retries of effects already in flight`);
+  if ((b.expires ?? null) !== (h.expires ?? null))
+    add("effect.expires", s, "risky", `Approval expiry ${b.expires ?? "default (3d)"} → ${h.expires ?? "default (3d)"}; requests already waiting keep the expiry time they were given`);
+  if (b.description !== h.description) add("effect.described", s, "compatible", "Description changed");
   if (b.idempotency !== h.idempotency)
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} → ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
   if (b.approval !== h.approval) add("effect.approval", s, "risky", `Approval ${b.approval} → ${h.approval}`, { approval: h.approval === "none" });

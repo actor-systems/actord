@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { comparePayload, diffManifests } from "../src/model/diff.ts";
-import type { Manifest } from "../src/model/manifest.ts";
+import type { Manifest, ManifestActor, ManifestEffect } from "../src/model/manifest.ts";
 
 const obj = (properties: Record<string, unknown>, required: string[] = [], extra: Record<string, unknown> = {}) => ({ type: "object", properties, required, ...extra });
 const strict = (properties: Record<string, unknown>, required: string[] = []) => obj(properties, required, { additionalProperties: false });
@@ -108,5 +108,67 @@ describe("diffManifests: the deploy plan drains whatever may refuse copies in fl
   it("never advises a version bump as a way to keep old copies working", () => {
     const d = diffManifests(manifest(strict({ a: S, b: S }, ["a", "b"])), manifest(strict({ a: S }, ["a"])));
     for (const c of d.changes) expect(c.detail).not.toMatch(/bump the version/);
+  });
+});
+
+describe("diffManifests: job and effect fields", () => {
+  const effect = (over: Partial<ManifestEffect> = {}): ManifestEffect => ({
+    name: "gw",
+    description: "",
+    idempotency: "key",
+    reconcile: false,
+    approval: "none",
+    result: null,
+    kind: "call",
+    deadline: null,
+    probe: null,
+    completes: null,
+    ...over,
+  });
+  const actor = (over: Partial<ManifestActor> = {}): ManifestActor => ({
+    name: "A",
+    binding: "A",
+    kind: "deterministic",
+    purpose: "",
+    justification: ["state"],
+    schedules: [],
+    effects: ["gw"],
+    budget: null,
+    receives: [],
+    sends: [],
+    ...over,
+  });
+  const manifest = (e: ManifestEffect, a: ManifestActor = actor()): Manifest => ({ schemaVersion: 1, $comment: "", system: { name: "s", description: "" }, actors: [a], messages: [], routes: [], effects: [e] });
+  const kinds = (base: Manifest, head: Manifest) => diffManifests(base, head).changes.map((c) => `${c.kind}:${c.compatibility}`);
+  const job = effect({ kind: "job", deadline: "1h", probe: { every: "1m" }, completes: { message: "done" } });
+
+  it.each([
+    ["kind", effect(), job, ["effect.completes:risky", "effect.deadline:risky", "effect.kind:risky", "effect.probe:risky"]],
+    ["deadline", job, { ...job, deadline: "2h" }, ["effect.deadline:risky"]],
+    ["probe", job, { ...job, probe: { every: "5m" } }, ["effect.probe:risky"]],
+    ["probe removed", job, { ...job, probe: null }, ["effect.probe:risky"]],
+    ["completes", job, { ...job, completes: { message: "finished" } }, ["effect.completes:risky"]],
+    ["budget", effect(), effect({ budget: { timeoutMs: 1_000 } }), ["effect.budget:risky"]],
+    ["expires", effect({ approval: "human" }), effect({ approval: "human", expires: "1d" }), ["effect.expires:risky"]],
+    ["description", effect(), effect({ description: "now described" }), ["effect.described:compatible"]],
+  ] as const)("reports a change of %s", (_label, before, after, expected) => {
+    expect(kinds(manifest(before), manifest(after))).toEqual(expected);
+  });
+
+  it("names the old and new values", () => {
+    const [change] = diffManifests(manifest(job), manifest({ ...job, deadline: "2h" })).changes;
+    expect(change?.detail).toMatch(/Deadline 1h → 2h/);
+  });
+
+  it("reports a field no rule classifies as risky, for effects and actors, instead of nothing", () => {
+    const e = diffManifests(manifest(effect()), manifest({ ...effect(), future: 1 } as ManifestEffect)).changes;
+    expect(e).toMatchObject([{ kind: "effect.changed", subject: "gw", compatibility: "risky" }]);
+    expect(e[0]!.detail).toMatch(/^future changed/);
+    const a = diffManifests(manifest(effect()), manifest(effect(), { ...actor(), future: 1 } as ManifestActor)).changes;
+    expect(a).toMatchObject([{ kind: "actor.changed", subject: "A", compatibility: "risky" }]);
+  });
+
+  it("doesn't report receives or sends on their own: the route changes that cause them are reported", () => {
+    expect(kinds(manifest(effect()), manifest(effect(), actor({ receives: ["m"] })))).toEqual([]);
   });
 });
