@@ -13,8 +13,20 @@
   an agent can't see its own failing test; re-run on the host, plugin runs passed 47 of 48 (baseline 45 of 48).
 - **The Desktop app's first `/actord-room`** in a session can be flagged "isn't a command here" and be missing
   from the slash menu; it runs anyway and is listed after that.
-- **Approver identity is whatever the approving sender supplies** until plan 2's verified sources exist. The
-  record shows who the sender said approved, and through which sender; it is not proof.
+- **Approver identity is whatever the approving sender supplies** over RPC. By email it is the verified sender
+  address, but the record is evidence, not proof.
+- **Email authentication may be unknown until spike 6.** Only the topmost `Authentication-Results` header from a
+  configured `authserv` can make a reply `"pass"`; until spike 6 confirms what Cloudflare writes, apps leave
+  `authserv` unset and every reply is `"unknown"`. Then an email can approve mid-run tool calls but never an
+  effect declared `publishes: true`; approve those in GitHub. Strict envelope-sender equality also refuses an
+  owner whose provider rewrites MAIL FROM (VERP, SRS); it fails closed. Old auto-responders that set only
+  `Precedence` or `X-Autoreply` aren't detected and get one re-ask.
+- **GitHub doesn't redeliver failures.** A `4xx`/`5xx` answer is final. `source.invalid` and `source.failed`
+  records (with the delivery id) are how a missed event is found. A captured signed delivery can be replayed
+  under a new `X-GitHub-Delivery` and is then a new event: keep the secret, use HTTPS, make handlers idempotent
+  on business keys.
+- **The default approval email includes the effect's input as JSON.** Supply `describe()` for sensitive inputs.
+  Declare the notify effect with `idempotency: "none"`; with `"key"`, a notify still retrying after the decision can still send.
 - **Guards are conveniences.** The effect guard and the generated `ask` rules match command text; other
   spellings slip past. Token scopes are the enforceable layer.
 - **Mods are an early-access Claude Code API** (2.1.287+); the Room is tested against 2.1.310 in the terminal

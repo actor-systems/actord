@@ -104,7 +104,7 @@ export interface EffectSpec {
 export interface WebhookEventSpec {
   /** The system message this event becomes. */
   readonly message: string;
-  /** A stable id for the event's content, used for deduplication. */
+  /** Picks the receiving actor's instance. It is not a dedupe id: the delivery id (`X-GitHub-Delivery`) is the envelope id that removes duplicates. */
   readonly key: (event: any) => string;
   /** Maps the provider's payload to the message's payload. */
   readonly map: (event: any) => unknown;

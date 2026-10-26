@@ -127,7 +127,7 @@ The project is brand new and has no users, so breaking changes are acceptable.
   - [Blog post](https://blog.cloudflare.com/cloudflare-computer/), [repository](https://github.com/cloudflare/computer)
 - **Email.**
   - The Agents SDK sends mail through Cloudflare Email Service and can HMAC-sign routing headers.
-  - `createSecureReplyEmailResolver` checks the signature and its age on a reply (`agents/docs/agents/email.md`).
+  - `createSecureReplyEmailResolver` checks the signature and its age on a reply (`agents/docs/agents/email.md`). It reads custom headers on the incoming message, which a human reply from a mail client doesn't carry, so it suits agent-to-agent replies only (amended: see §8.2 and decision 0021).
   - Inbound mail reaches the Worker's `email()` handler.
 - **Chat SDK.** `agents/chat-sdk` stores [Chat SDK](https://chat-sdk.dev/) state durably. That makes future Telegram, Slack, Discord and Teams channels a matter of adapters.
 
@@ -399,7 +399,7 @@ A channel is an inbound source plus an outbound effect.
 ### 8.2 Email first (designer's call: reply, never link)
 
 - **Outbound.**
-  - One email per request, sent through Cloudflare Email Service, with HMAC-signed routing headers that carry the effect key and a timestamp.
+  - One email per request, sent through Cloudflare Email Service. *Amended (plan 2, decision 0021):* the subject carries an HMAC-signed token `[actord:<token>]` with the actor, instance, effect key and expiry, because a person's reply keeps the subject but not custom headers. One email per parked effect.
   - The body states:
     - the exact action, such as the comment text or the command;
     - why it is needed;
@@ -407,8 +407,8 @@ A channel is an inbound source plus an outbound effect.
     - what happens on deny;
     - when it expires.
 - **Inbound.** The `@email` source accepts a reply only if all of these hold:
-  1. its routing signature verifies and isn't expired;
-  2. the sender is the owner's address and the message passes email authentication. Which `Authentication-Results` details reach the Worker still needs checking (spike 6).
+  1. its subject token verifies and isn't expired (amended: not a routing header);
+  2. the envelope sender and the header `From` are the owner's address, and there is no `dmarc=fail`. Authentication is `"pass"` only from the topmost `Authentication-Results` header of a configured authserv-id. Which results reach the Worker still needs checking (spike 6).
   3. its first line is exactly `approve`, or starts with `deny`. This is parsed by plain code, never by a model.
 
   Anything else gets a reply asking again.
