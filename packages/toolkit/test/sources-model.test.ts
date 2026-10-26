@@ -123,6 +123,31 @@ describe("approval checks", () => {
     expect(codes(project(withApproval({ routes: [baseRoutes[0]!, baseRoutes[2]!] })))).toContain("error:APPROVAL_ROUTE_MISSING");
   });
 
+  it("APPROVAL_NOTIFY_UNKNOWN: notify names an undeclared effect, and nothing else is reported for it", () => {
+    expect(codes(project(withApproval({ approvals: { notify: "ghost" } })))).toEqual(["error:APPROVAL_NOTIFY_UNKNOWN"]);
+  });
+
+  it("two gated actors and one email source pass check: the email source may route to each", () => {
+    const sys = defineSystem({
+      name: "two-gated",
+      messages: { "approval.decided": Decision, "publish.requested": Publish },
+      actors: {
+        A: { binding: "A", kind: "deterministic", purpose: "a", justification: ["state"], effects: ["notify", "publish"] },
+        B: { binding: "B", kind: "deterministic", purpose: "b", justification: ["state"], effects: ["notify", "publish"] },
+      },
+      effects: { notify, publish: gated },
+      approvals: { notify: "notify" },
+      sources: { email: email() },
+      routes: [
+        { from: "@email", message: "approval.decided", to: "A" },
+        { from: "@email", message: "approval.decided", to: "B" },
+        { from: "@ingress", message: "publish.requested", to: "A" },
+        { from: "@ingress", message: "publish.requested", to: "B" },
+      ],
+    } as never);
+    expect(codes(project(sys as never))).toEqual([]);
+  });
+
   it("PUBLISHES_WITHOUT_APPROVAL: publishes needs approval: human", () => {
     const sys = build({ actorEffects: ["publish"], effects: { publish: { description: "Publish", idempotency: "key", publishes: true } } });
     expect(codes(project(sys))).toEqual(["error:PUBLISHES_WITHOUT_APPROVAL"]);
@@ -178,6 +203,33 @@ describe("diff", () => {
     expect(kinds(ap("a"), ap("b"))).toEqual(["approvals.notify:risky"]);
     const all = [...kinds(eff(false), eff(true)), ...kinds(ap("a"), ap("b"))];
     expect(all.some((k) => k.includes("changed"))).toBe(false);
+  });
+
+  it("source verify, message, kind and event remaps are risky, and a field with no rule is unclassified", () => {
+    const gh = (over: object): Opts => ({ sources: { github: { ...github(), ...over }, email: email() } }) as Opts;
+    expect(kinds(gh({}), gh({ verify: "gitlab" })).filter((k) => k.startsWith("source."))).toEqual(["source.verify:risky"]);
+    const em = (over: object): Opts => ({ sources: { github: github(), email: { ...email(), ...over } } }) as Opts;
+    expect(kinds(em({}), em({ message: "other.decided" })).filter((k) => k.startsWith("source."))).toEqual(["source.message:risky"]);
+    const remap = { "issues.opened": { ...github().events["issues.opened"]!, message: "publish.requested" } };
+    expect(kinds(gh({}), gh({ events: remap })).filter((k) => k.startsWith("source."))).toEqual(["source.event.message:risky"]);
+    const asEmail = { sources: { github: { ...email() }, email: email() } } as Opts;
+    expect(kinds({}, asEmail).filter((k) => k.startsWith("source."))).toContain("source.kind:risky");
+    const base = manifestOf({});
+    const head = JSON.parse(JSON.stringify(base)) as typeof base;
+    (head.sources[1] as unknown as Record<string, unknown>).newField = "x";
+    const d = diffManifests(base, head).changes.filter((c) => c.kind === "source.changed");
+    expect(d.map((c) => c.compatibility)).toEqual(["risky"]);
+  });
+
+  it("approvals added and removed are risky, and publishes on needs a person's approval", () => {
+    const ap = (a?: string): Opts => ({ actorEffects: ["a"], effects: { a: notify }, ...(a ? { approvals: { notify: a } } : {}) });
+    expect(kinds(ap(), ap("a"))).toEqual(["approvals.notify:risky"]);
+    expect(kinds(ap("a"), ap())).toEqual(["approvals.notify:risky"]);
+    const eff = (publishes: boolean): Opts => ({ actorEffects: ["publish"], effects: { publish: { ...gated, ...(publishes ? { publishes } : {}) } } });
+    const c = diffManifests(manifestOf(eff(false)), manifestOf(eff(true))).changes.find((x) => x.kind === "effect.publishes");
+    expect(c?.requiresApproval).toBe(true);
+    const off = diffManifests(manifestOf(eff(true)), manifestOf(eff(false))).changes.find((x) => x.kind === "effect.publishes");
+    expect(off?.requiresApproval).toBe(false);
   });
 
   it("a baseline manifest written before sources reads as none", () => {

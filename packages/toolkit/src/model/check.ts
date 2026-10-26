@@ -140,7 +140,8 @@ function checkSources(project: Project, m: Manifest, add: Add) {
       const found = routesFrom(src.name, msg);
       if (found.length === 0)
         add("error", "SOURCE_ROUTE_MISSING", `@${src.name}`, `@${src.name} delivers ${msg}, but no route carries it from @${src.name}`, `Add { from: "@${src.name}", message: "${msg}", to: "<actor>" }.`);
-      else if (found.length > 1)
+      // An email reply goes to the actor named in its signed token, so one route per gated actor is the intended shape.
+      else if (found.length > 1 && src.kind !== "email")
         add("error", "SOURCE_ROUTE_AMBIGUOUS", `@${src.name}`, `More than one route from @${src.name} carries ${msg} (to ${found.map((r) => r.to).join(" and ")}), so the source can't tell which actor receives it`, "Keep one route per message from a source.");
     }
     if (src.path !== null) paths.set(src.path, [...(paths.get(src.path) ?? []), src.name]);
@@ -156,9 +157,11 @@ function checkSources(project: Project, m: Manifest, add: Add) {
   const notify = m.approvals?.notify;
   const gatedActors = m.actors.filter((a) => a.effects.some((e) => m.effects.find((x) => x.name === e)?.approval === "human"));
   if (notify !== undefined) {
+    const known = m.effects.some((e) => e.name === notify);
+    if (!known) add("error", "APPROVAL_NOTIFY_UNKNOWN", notify, `approvals.notify names ${notify}, which isn't a declared effect`, `Declare ${notify} under effects, or change approvals.notify.`);
     if (m.effects.find((e) => e.name === notify)?.approval === "human")
       add("error", "APPROVAL_NOTIFY_NEEDS_APPROVAL", notify, `${notify} tells a person an approval is waiting, but it needs approval itself, so the request could never be sent`, `Remove approval: "human" from ${notify}.`);
-    for (const a of gatedActors)
+    for (const a of known ? gatedActors : [])
       if (!a.effects.includes(notify)) add("error", "APPROVAL_NOTIFY_UNDECLARED", a.name, `${a.name} requests approvals but doesn't list ${notify}, the effect that tells a person one is waiting`, `Add "${notify}" to ${a.name}'s effects.`);
   }
   const email = sources.find((src) => src.kind === "email");

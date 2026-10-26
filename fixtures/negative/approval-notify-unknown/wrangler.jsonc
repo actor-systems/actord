@@ -1,0 +1,12 @@
+{
+  "name": "fixture-approval-notify-unknown",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "vars": { "GITHUB_WEBHOOK_SECRET": "", "APPROVAL_SECRET": "", "OWNER_ADDRESS": "", "FROM_ADDRESS": "" },
+  "durable_objects": {
+    "bindings": [{ "name": "TRIAGE", "class_name": "Triage" }]
+  },
+  "exports": {
+    "Triage": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

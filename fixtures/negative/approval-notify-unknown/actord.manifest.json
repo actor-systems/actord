@@ -1,0 +1,117 @@
+{
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "approval-notify-unknown",
+    "description": "approvals.notify names an effect that isn't declared"
+  },
+  "actors": [
+    {
+      "binding": "TRIAGE",
+      "budget": null,
+      "effects": [
+        "publish"
+      ],
+      "justification": [
+        "permissions"
+      ],
+      "kind": "deterministic",
+      "name": "Triage",
+      "purpose": "Publishes after a person approves",
+      "receives": [
+        "approval.decided",
+        "publish.requested"
+      ],
+      "schedules": [],
+      "sends": []
+    }
+  ],
+  "messages": [
+    {
+      "description": "A person answered an approval request",
+      "name": "approval.decided",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Someone asked to publish",
+      "name": "publish.requested",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@email",
+      "message": "approval.decided",
+      "to": "Triage"
+    },
+    {
+      "from": "@ingress",
+      "message": "publish.requested",
+      "to": "Triage"
+    }
+  ],
+  "effects": [
+    {
+      "approval": "none",
+      "completes": null,
+      "deadline": null,
+      "description": "Tell a person an approval is waiting",
+      "idempotency": "key",
+      "kind": "call",
+      "name": "notify",
+      "probe": null,
+      "reconcile": false,
+      "result": null
+    },
+    {
+      "approval": "human",
+      "completes": null,
+      "deadline": null,
+      "description": "Publish a release note",
+      "idempotency": "key",
+      "kind": "call",
+      "name": "publish",
+      "probe": null,
+      "publishes": true,
+      "reconcile": false,
+      "result": null
+    }
+  ],
+  "sources": [
+    {
+      "events": [],
+      "kind": "email",
+      "message": "approval.decided",
+      "name": "email",
+      "path": null,
+      "verify": null
+    }
+  ],
+  "approvals": {
+    "notify": "ghost"
+  }
+}
