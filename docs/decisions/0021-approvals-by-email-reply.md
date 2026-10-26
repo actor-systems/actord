@@ -30,15 +30,22 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
       (`env[owner]`), compared case-insensitively. Otherwise there is no reply at all, so a stranger cannot make
       the system email the owner, or learn whether a token is good. Recorded as `source.rejected`.
    2. *DMARC.* `dmarc=fail` in any `Authentication-Results` header refuses the reply.
-   3. *Auto-replies.* Mail with an `Auto-Submitted` header other than `no` is ignored without a reply, so an
-      out-of-office answer and a re-ask cannot loop. Every reply the handler sends is itself marked
-      `Auto-Submitted: auto-replied` and carries `In-Reply-To`, which is left out when the incoming Message-ID is absent or unsafe to repeat in a header.
-   4. *Token, then decision.* A missing or edited token gets one generic reply that doesn't tell the two apart; an expired token and an unparsable decision each get a reply saying so.
+   3. *Auto-replies.* Mail that says it was sent automatically is ignored without a reply, so an out-of-office
+      answer and a reply to it cannot loop. That is an `Auto-Submitted` header other than `no` (RFC 3834), or, for
+      older auto-responders, `Precedence: bulk`, `junk`, `list` or `auto_reply`, or an `X-Autoreply` or
+      `X-Autorespond` header. Every reply the handler sends is itself marked `Auto-Submitted: auto-replied` and
+      carries `In-Reply-To`, which is left out when the incoming Message-ID is absent, repeated, or unsafe to repeat
+      in a header.
+   4. *One Subject, at most one Message-ID.* The parser reads the first of each, but DKIM signs the last, so a
+      header added above a signed one could change the token or the dedupe id. A reply with more isn't understood:
+      it approves nothing, is recorded as `source.ignored` (`ambiguous_headers`), and gets the reply asking again.
+   5. *Token, then decision.* A missing or edited token gets one generic reply that doesn't tell the two apart; an expired token and an unparsable decision each get a reply saying so.
 5. **Authentication is trusted only from a configured server.** A sender can write their own
    `Authentication-Results: …; dmarc=pass` header. So the reply is `authenticated: "pass"` only when the **topmost**
-   `Authentication-Results` header's authserv-id equals the value in `env[authserv]` and its `dmarc` result, read
-   outside comments and quoted strings, is `pass`. Everything else is `"unknown"`, including when the source has no
-   `authserv`. `by` is the verified sender address.
+   `Authentication-Results` header's authserv-id equals the value in `env[authserv]`, compared case-insensitively
+   (RFC 8601), and that header has at least one `dmarc` result, read outside comments and quoted strings, with
+   **every** one `pass` and its `header.from` equal to the owner's domain (case-insensitively). Everything else is
+   `"unknown"`, including when the source has no `authserv`. `by` is the verified sender address.
 6. **The publishes guard.** With `"unknown"`, an email cannot approve an effect declared `publishes: true` (or one the
    system no longer declares); the sender is told to approve it in GitHub. A deny always goes through. Approving
    mid-run tool calls by email is allowed on a valid token from the owner, with that limit written in Limitations.
@@ -50,6 +57,17 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
 9. **Delivery.** The reply becomes `approval.decided` for the actor and instance in the token, from `@<source>`, with
    an id derived from the reply's `Message-ID`; the same email handled twice is delivered once. A second, different
    reply is delivered too, and `ctx.approve`/`ctx.deny` answers `false` because nothing is waiting.
+10. **A delivery that fails is tried again, and the owner always hears back.** A `deliverExternal` that throws, or a
+    `failed` receipt (the handler threw), is tried up to twice more, inline, under the same envelope id, so a try
+    that landed but lost its receipt comes back `duplicate` rather than running twice. Then one reply, marked
+    `Auto-Submitted: auto-replied`, with `In-Reply-To`:
+    - **`handled` or `duplicate`:** `Received: <approve|deny> for <effect> (<effectKey>). If it had already been
+      decided or had expired, this changed nothing.` The reply says what arrived, not what it did: whether
+      `applyDecision` changed anything stays inside the actor. Reporting the true outcome is deferred to an issue.
+    - **Every try failed:** the answer couldn't be recorded; reply again. Recorded as `source.failed`
+      (`delivery_failed` or `handler_failed`) with `attempts: 3`.
+    - **`rejected`** (permanent, so not retried): the answer couldn't be applied, with the reason. Recorded as
+      `source.invalid`.
 
 ## Spike 6 (2026-10-26, `docs/evidence/spike-6-email.md`)
 A real Gmail reply through Cloudflare Email Routing approved a parked effect.
@@ -69,14 +87,14 @@ A real Gmail reply through Cloudflare Email Routing approved a parked effect.
 - **Still unverified:** whether Cloudflare always adds its own header, and whether it strips an inbound one claiming
   `mx.cloudflare.net` (RFC 8601 §5). Only the topmost header is read, and Cloudflare's sat above everything inbound,
   so a forged header could win only on a path where Cloudflare adds none. That rests on one sample.
-- **Hardening first.** Before the factory turns `authserv` on, three checks land:
-  - every `dmarc` result in the trusted header must be `pass`;
+- **The hardening has landed** (plan 2's final fix wave, 2026-10-26), in decision 5:
+  - every `dmarc` result in the trusted header must be `pass`, and there must be at least one;
   - `header.from` must equal the owner's domain;
   - the authserv-id is compared case-insensitively.
 
-  They are deferred to plan 2's final fix wave. Whether the factory turns `authserv` on is the owner's decision at
-  factory design time.
+  So an app may set `authserv` now. Whether the factory turns it on is the owner's decision at factory design time.
 
 ## Known edges
-- Old auto-responders that set only `Precedence` or `X-Autoreply` are not detected; they get one re-ask.
+- An auto-responder that marks its mail in none of the ways in rule 4.3 isn't detected. Its text is read like a
+  person's: unless its first line is `approve` or `deny`, it gets the reply asking again.
 - Strict envelope equality refuses an owner whose provider rewrites MAIL FROM (VERP or SRS). It fails closed.

@@ -16,7 +16,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | An effect interrupted 5 times without settling is parked as in_doubt | A keyed orphan is retried until its 5th interruption (`parkAfterInterruptions`), then marked `in_doubt` with `parked: interrupted N times without settling`, an `effect.parked` event, and never run again. While any attempt runs, actord also keeps a wake 30 s away so a lost instance is noticed |
 | An approval request expires (default 3 days); the actor receives a failed result, and a late approval does nothing | A parked effect's `next_at` is its expiry (`expires` on the effect, default `"3d"`) and holds the alarm. When it passes, the row becomes `denied` with `approval expired`, an `effect.denied` event is emitted, and the result message says `failed`, even for a job whose completion arrived early. `ctx.approve` and `ctx.deny` then return false. Approvals and denials record `{ messageId, from, by }`, with `via` the sender (`@rpc` for `decide()`). Approval requests parked by toolkit 0.2.x have no expiry time and are treated as expired on the first wake after upgrading |
 | A webhook delivery is verified and delivered once | The HMAC of the raw body is checked first, in constant time. The provider's delivery id is the envelope id, so a redelivery is `duplicate`. Bad signature `401`, unmapped event `204`, invalid `400`, failed `500`; each refusal is a `source.*` event. Decision 0017 |
-| An email reply approves only for the owner, by plain code | In order: envelope sender and header `From` are the owner's (else no reply); no `dmarc=fail`; not an auto-reply; then a valid, unexpired subject token and a first line of `approve` or `deny`. With authentication `unknown`, an effect declared `publishes: true` can't be approved by email. Decision 0021 |
+| An email reply approves only for the owner, by plain code | In order: envelope sender and header `From` are the owner's (else no reply); no `dmarc=fail`; not an auto-reply; one `Subject` and at most one `Message-ID`; then a valid, unexpired subject token and a first line of `approve` or `deny`. With authentication `unknown`, an effect declared `publishes: true` can't be approved by email. Every answer that gets this far is acknowledged by reply. Decision 0021 |
 | One notification per parked approval | The `approvals.notify` effect is queued with the row id `fx:<notify>:approval:<effect>:<effectKey>`, so parking again sends nothing new. If it fails, the effect stays parked and still expires |
 
 **Effect keys.** An effect key identifies one effect for the actor's lifetime. Requesting it again records `effect.duplicate` and runs nothing. A new attempt at the same logical work needs a new key, for example one that includes an attempt or generation number.
@@ -41,7 +41,13 @@ a route sender (`@github`), and routes deliver its messages like any other. Acto
   effect that publishes must be approved in GitHub.
 - **Approval emails.** Declare `approvals: { notify: "<effect>" }` and give that effect the `approvalEmail`
   adapter, with `idempotency: "none"`. The default email includes the effect's input as JSON; supply `describe()`
-  if inputs are sensitive.
+  if inputs are sensitive. `approvalEmail`'s `to` and `secret` must be the same values as the email source's
+  `env[owner]` and `env[secret]`, byte for byte (don't trim one side): the token is signed with one and verified
+  with the other, and replies are accepted only from the owner.
+- **The owner always hears back.** After a delivered answer (or a duplicate of one), `handleEmail` replies
+  `Received: <approve|deny> for <effect> (<effectKey>). …`. A delivery that throws or whose handler fails is tried
+  twice more under the same envelope id; if all three fail, the reply asks the owner to answer again. An answer the
+  actor rejects gets a reply saying it couldn't be applied, and why.
 - **Finding a missed event.** GitHub doesn't redeliver failed deliveries automatically (a timeout, `4xx` or `5xx` is a failure); they can be redelivered by hand for a limited period. `source.invalid` and
   `source.failed` events carry the delivery id; `actord events` shows them.
 

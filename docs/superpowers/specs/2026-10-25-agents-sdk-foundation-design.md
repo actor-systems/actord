@@ -413,11 +413,11 @@ A channel is an inbound source plus an outbound effect.
     - when it expires.
 - **Inbound.** The `@email` source accepts a reply only if all of these hold:
   1. its subject token verifies and isn't expired (amended: not a routing header);
-  2. the envelope sender and the header `From` are the owner's address, and there is no `dmarc=fail`. Authentication is `"pass"` only from the topmost `Authentication-Results` header of a configured authserv-id. Which results reach the Worker still needs checking (spike 6).
+  2. the envelope sender and the header `From` are the owner's address, and there is no `dmarc=fail`. Authentication is `"pass"` only from the topmost `Authentication-Results` header of a configured authserv-id. *Amended (2026-10-26, spike 6, `docs/evidence/spike-6-email.md`):* Cloudflare Email Routing writes that header, with authserv-id `mx.cloudflare.net`, above every header the message arrived with, and a real Gmail reply carried `dmarc=pass` in it. The handler also requires at least one `dmarc` result there, every one `pass` with `header.from` the owner's domain, and compares the authserv-id case-insensitively (decision 0021).
   3. its first line is exactly `approve`, or starts with `deny`. This is parsed by plain code, never by a model.
 
-  Anything else gets a reply asking again.
-- **If authentication results turn out to be invisible to the Worker** (spike 6): a reply with a valid signed token from the owner's address may still approve mid-run tool calls. The limit is written down in `docs/wiki/Limitations.md`. Any effect classed `publishes: true` then needs approval in GitHub, never by email, until authentication can be verified (the owner's decision).
+  Anything else gets a reply asking again. *Amended (plan 2, decision 0021):* an answer that reaches the actor is acknowledged by reply too, and one that can't be recorded or applied gets a reply saying so.
+- **Authentication results are visible to the Worker** (*amended 2026-10-26:* spike 6 settled this; it was pending). Now that the hardening above has landed, an app may set `authserv` to an env entry holding `mx.cloudflare.net`, and a reply that passes can approve an effect classed `publishes: true`. Whether the factory enables it is the owner's call. Without `authserv`, every reply is `"unknown"`: a reply with a valid signed token from the owner's address may still approve mid-run tool calls, and any effect classed `publishes: true` needs approval in GitHub, never by email. The limit is written down in `docs/wiki/Limitations.md`.
 - **No approve links.** Mail scanners open links to check them, so a link could approve on its own.
 - The verified sender address becomes the approver identity (`by`).
 

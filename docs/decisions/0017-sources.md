@@ -16,7 +16,10 @@ visible to `actord check` and the graph, and handled by code the toolkit owns.
    is an ordinary message, validated and deduplicated by the receiver's inbox.
 2. **Actors never subscribe to a source.** Subscribing would make delivery depend on actors that are running and on
    state outside the declaration. A route is declared, checked, and the only way in. `actord check` requires exactly
-   one route from a webhook source for each message it maps, and that the secret and message are declared.
+   one route from a webhook source for each message it maps, so that message must be declared too, and refuses a
+   source named after a sender the runtime uses itself (`clock`, `ingress`, `timer`, `rpc`: `SOURCE_NAME_RESERVED`).
+   The secret is only advised: when neither wrangler `vars` nor `.dev.vars.example` names it, the check warns
+   (`SOURCE_SECRET_UNDECLARED`) and still passes.
 3. **The handler is generated, not hand-written.** `handleWebhook(request, env, system)` returns a `Response`, or
    `null` when the path isn't a source's, so the app's own routes run. `handleEmail(message, env, system)` serves the
    `email()` handler. Both read the declaration and deliver with `deliverExternal`, the same path `ingress` uses, so

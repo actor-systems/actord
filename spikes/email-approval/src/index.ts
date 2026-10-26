@@ -101,7 +101,8 @@ export class Desk extends DurableObject<SpikeEnv> {
         send: recording(this.env.EMAIL, async (r) => this.recordOutbound(r), "notify"),
         from: this.env.SPIKE_FROM,
         to: this.env.SPIKE_OWNER,
-        secret: (this.env.SPIKE_APPROVAL_SECRET ?? "").trim(),
+        // Exactly what handleEmail reads from env[secret], untrimmed, so the token verifies with the key it was signed with.
+        secret: this.env.SPIKE_APPROVAL_SECRET ?? "",
       }),
     },
   });

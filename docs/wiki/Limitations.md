@@ -18,21 +18,22 @@
 - **Email authentication is `"unknown"` unless the app sets `authserv`.**
   - **What spike 6 showed:** Cloudflare Email Routing writes one `Authentication-Results` header, the topmost one, with
     authserv-id `mx.cloudflare.net`. A Gmail reply carried `dmarc=pass` there.
-  - **Setting it:** an app may set `authserv` to an env entry holding `mx.cloudflare.net`. Then an authenticated reply
-    can approve an effect declared `publishes: true`.
+  - **Setting it:** an app may set `authserv` to an env entry holding `mx.cloudflare.net`. Then a reply is `"pass"`
+    only when that topmost header has at least one `dmarc` result, every one `pass` with `header.from` the owner's
+    domain, and such a reply can approve an effect declared `publishes: true`.
   - **Leaving it unset:** every reply is `"unknown"`. An email can then approve mid-run tool calls but never a
     `publishes: true` effect; approve those in GitHub.
   - **Not verified:** whether Cloudflare always adds its header, or strips an inbound one claiming `mx.cloudflare.net`.
     One sample showed Cloudflare's header above everything inbound.
-  - **Before the factory turns it on,** three checks are due:
-    - every `dmarc` result must be `pass`;
-    - `header.from` must be the owner's domain;
-    - the authserv-id must compare case-insensitively.
-
-    Whether the factory turns it on is the owner's call at factory design time.
-
+  - **The hardening has landed:** every `dmarc` result must be `pass`, `header.from` must be the owner's domain, and
+    the authserv-id compares case-insensitively. Whether the factory turns `authserv` on is the owner's call at
+    factory design time.
+  - **The owner's acknowledgement says what arrived, not what it did.** After a delivered answer the reply reads
+    `Received: approve for <effect> (<key>). If it had already been decided or had expired, this changed nothing.`
+    Whether `ctx.approve` or `ctx.deny` changed anything isn't reported back by email.
   - **Other edges:** strict envelope-sender equality refuses an owner whose provider rewrites MAIL FROM (VERP, SRS); it
-    fails closed. Old auto-responders that set only `Precedence` or `X-Autoreply` aren't detected and get one re-ask.
+    fails closed. An auto-responder that sets none of `Auto-Submitted`, `Precedence: bulk|junk|list|auto_reply`,
+    `X-Autoreply` or `X-Autorespond` isn't detected, and its text is read like a person's.
 - **GitHub doesn't redeliver failures automatically.** Failed deliveries can be redelivered manually (UI or API) for a limited period; a timeout counts as a failure, as do a `4xx` and `5xx`. `source.invalid` and `source.failed`
   records (with the delivery id) are how a missed event is found. A captured signed delivery can be replayed
   under a new `X-GitHub-Delivery` and is then a new event: keep the secret, use HTTPS, make handlers idempotent
