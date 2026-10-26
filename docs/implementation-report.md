@@ -6,7 +6,7 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-26T00:28:39.477Z): **55 pass · 0 fail · 0 blocked.** G0 through G7 passed.
+`npm run verify` (2026-10-26T00:40:26.202Z): **55 pass · 0 fail · 0 blocked.** G0 through G7 passed.
 
 Since the 51-check release candidate: a review from the Codex implementation of the same charter found
 unsafe payload classifications, now corrected (decision 0011); Codex consolidated its adapter onto this
@@ -202,7 +202,7 @@ Per-component (rounded)
 
 ## Failing and blocked checks
 
-None: every check passes (`npm run verify`, 2026-10-26T00:28:39.477Z).
+None: every check passes (`npm run verify`, 2026-10-26T00:40:26.202Z).
 
 ## Limitations and unverified claims
 
