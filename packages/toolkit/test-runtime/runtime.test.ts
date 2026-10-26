@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import { deriveId, ingress } from "../src/runtime/index.ts";
-import { nextDue } from "../src/runtime/schedules.ts";
+import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
 import { fireTimers, overrideEffect, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
@@ -194,6 +194,7 @@ it("[schedule-late-wake] an object that wakes long after its due time ticks once
   });
   await settle(env, system);
   expect(await probe("late").ticks()).toEqual(["probe.tick.hourly"]);
+  expect(await probe("late").tickAts()).toEqual([due]); // the missed due time, not "now"
   const next = await runInDurableObject(probe("late"), (_i, s) => Number(s.storage.sql.exec("SELECT v FROM _actors_meta WHERE k = 'schedule.next:probe.tick.hourly'").one().v));
   expect(next).toBeGreaterThan(Date.now() + 3_500_000);
 });
@@ -212,4 +213,12 @@ it("[schedule-stale-meta] a removed schedule's due time and the legacy key are n
   const time = await runInDurableObject(probe("stale"), (_i, s) =>
     s.storage.sql.exec<{ time: number }>("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").toArray()[0]?.time);
   expect(time).toBeGreaterThan(Date.now());
+});
+
+it("[schedule-legacy-migrated] a single schedule inherits the old schedule.next value, and the legacy key goes", () => {
+  const store = new Map<string, string>([["schedule.next", "12345"]]);
+  const spec = { every: "1h", message: "m" } as const;
+  migrateLegacy((k) => store.get(k) ?? null, (k, v) => void store.set(k, v), [spec], (k) => void store.delete(k));
+  expect(store.get(scheduleKey("m"))).toBe("12345");
+  expect(store.has("schedule.next")).toBe(false);
 });

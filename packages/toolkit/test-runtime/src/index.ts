@@ -72,7 +72,7 @@ export class Probe extends DurableObject<Env> {
     this.lifecycle.use(this.pinger);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS outcomes (key TEXT PRIMARY KEY, status TEXT NOT NULL, error TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL, at INTEGER)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
   }
 
@@ -97,8 +97,8 @@ export class Probe extends DurableObject<Env> {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
     },
-    "probe.tick.hourly": (_m, ctx) => {
-      ctx.sql.exec("INSERT INTO ticks (message) VALUES ('probe.tick.hourly')");
+    "probe.tick.hourly": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO ticks (message, at) VALUES ('probe.tick.hourly', ?)", payload.at);
     },
     "probe.tick.daily": (_m, ctx) => {
       ctx.sql.exec("INSERT INTO ticks (message) VALUES ('probe.tick.daily')");
@@ -119,6 +119,9 @@ export class Probe extends DurableObject<Env> {
   }
   ticks(): string[] {
     return this.ctx.storage.sql.exec<{ message: string }>("SELECT message FROM ticks ORDER BY message").toArray().map((r) => r.message);
+  }
+  tickAts(): Array<number | null> {
+    return this.ctx.storage.sql.exec<{ at: number | null }>("SELECT at FROM ticks WHERE message = 'probe.tick.hourly' ORDER BY rowid").toArray().map((r) => r.at);
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);
