@@ -499,7 +499,7 @@ Every decision is recorded with:
 - **As the last step:** the Claude and Codex plugin skills, the `actord init` templates, the Codex reference templates and the eval scaffolds, all updated to the new foundation.
   - The release checks (`scripts/codex/distribution.mjs`, `tests/release.test.mjs`) must pass.
   - No npm release and no paid eval run without the owner's separate approval.
-- **The factory** is in a separate private repo, using the toolkit through a local package or git dependency. It is planned only after its own design doc is written.
+- **The factory** is in a separate private repo, using the toolkit through a local package or git dependency. It is planned only after its own design doc is written. Whoever designs its actord system, the owner's agent or a delegated subagent, loads the `actord:design` skill first (the owner's decision).
 - **The pilot** is the actord repo, starting with issue #1.
 
 **The factory's minimum, as the toolkit sees it** (the factory's own document will refine this):
