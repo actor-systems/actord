@@ -77,6 +77,23 @@ it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a 
   expect(keyedRuns).toBe(1);
 });
 
+it("[heartbeat-armed] while an effect runs, actord keeps a wake at most 30 s away", async () => {
+  overrideEffect("gateway.keyed", { run: () => new Promise(() => {}) });
+  await send("hb", "gateway.keyed");
+  const due = await runInDurableObject(probe("hb"), (_i, s) => Number(s.storage.sql.exec("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").one().time));
+  expect(due).toBeLessThanOrEqual(Date.now() + 30_000);
+});
+
+it("[crash-loop-parked] a keyed effect interrupted 5 times is parked in doubt and not run again", async () => {
+  let runs = 0;
+  // Count only this key: an earlier test's hung instance shares the override and is recovered by the aborts too.
+  overrideEffect("gateway.keyed", { run: (_input, c) => { if (c.key === "park") runs++; return new Promise(() => {}); } });
+  await send("park", "gateway.keyed");
+  for (let i = 0; i < 5; i++) { await abortAllDurableObjects(); await settle(env, system, { rounds: 2 }); }
+  expect(await probe("park").outcomes()).toMatchObject([{ key: "park", status: "in_doubt", error: "parked: interrupted 5 times without settling" }]);
+  expect(runs).toBe(5);
+});
+
 it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the object's one alarm", async () => {
   let runs = 0;
   overrideEffect("gateway.keyed", { run: async () => { if (++runs === 1) throw new Error("transient"); return "ok"; } });

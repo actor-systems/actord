@@ -138,6 +138,7 @@ export type EventKind =
   | "effect.confirmed"
   | "effect.failed"
   | "effect.in_doubt"
+  | "effect.parked"
   | "effect.denied"
   | "effect.awaiting_approval"
   | "scheduled"
@@ -170,7 +171,7 @@ export interface ActorEvent {
 }
 
 /** Kinds that the monitor and `actord events --notable` surface. */
-export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"];
+export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.parked", "effect.denied", "effect.failed"];
 
 // ---- Effects ----
 
@@ -292,6 +293,8 @@ export interface RuntimeOptions<S extends AnySystem> {
   maxAttempts?: number;
   /** Backoff before attempt n+1 (default 1s doubling, capped at 5 minutes). */
   backoffMs?: (attempt: number) => number;
+  /** Interruptions a keyed effect survives before it is parked as in_doubt instead of retried (default 5). */
+  parkAfterInterruptions?: number;
   /** How long inbox rows are kept for dedupe (default 7 days). Older duplicates aren't detected. */
   inboxRetentionMs?: number;
   /** Default instance key for receivers when send() names none (default "main"). */
@@ -338,6 +341,9 @@ function maybeFault(actor: string, type: string | undefined, at: FaultPoint): vo
 
 // ---- Implementation ----
 
+/** How far away the wake may be while an effect runs: the longest a lost attempt goes unnoticed. */
+const HEARTBEAT_MS = 30_000;
+
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS _actors_inbox (id TEXT PRIMARY KEY, type TEXT NOT NULL, sender TEXT NOT NULL, handled_at INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS _actors_outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL, next_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, seq INTEGER NOT NULL)",
@@ -381,11 +387,16 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   if (!spec) throw new Error(`actord: ${actorName} is not declared in system ${system.name}`);
   const now = options.now ?? (() => Date.now());
   const maxAttempts = options.maxAttempts ?? 6;
+  const parkAfterInterruptions = options.parkAfterInterruptions ?? 5;
   const backoff = options.backoffMs ?? ((n: number) => Math.min(300_000, 1_000 * 2 ** (n - 1)));
   const retention = options.inboxRetentionMs ?? 7 * 86_400_000;
   const defaultKey = options.defaultKey ?? "main";
   const effectsDeclared = new Set<string>(spec.effects ?? []);
   for (const q of [...SCHEMA, ...TIMERS_SCHEMA]) ctx.storage.sql.exec(q);
+  // Rows written before interruptions were counted lack the column.
+  if (!ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(_actors_outbox)").toArray().some((c) => c.name === "interruptions")) {
+    ctx.storage.sql.exec("ALTER TABLE _actors_outbox ADD COLUMN interruptions INTEGER NOT NULL DEFAULT 0");
+  }
   // Lifecycle runs start() once per instance, before its first fetch or alarm; receive() and drive()
   // start it themselves, since native RPC and the test helpers bypass that.
   const cap = new ActordCapability({ start, drive });
@@ -666,7 +677,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   async function recoverOrphans(): Promise<void> {
     if (recovered) return;
     recovered = true;
-    const orphans = sql.exec<{ id: string; target: string; body: string; attempts: number }>("SELECT id, target, body, attempts FROM _actors_outbox WHERE status = 'running'").toArray();
+    const orphans = sql.exec<{ id: string; target: string; body: string; attempts: number; interruptions: number }>("SELECT id, target, body, attempts, interruptions FROM _actors_outbox WHERE status = 'running'").toArray();
     for (const row of orphans) {
       if (inflight.has(row.id)) continue;
       const req = JSON.parse(row.body) as { name: string; key: string; causationId: string; correlationId: string };
@@ -676,8 +687,15 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       if (kept && fx?.idempotency !== "key") {
         // The start's own outcome is unknown, but the job's completion already arrived: that settles it.
         settleByMessage({ id: row.id, attempts: row.attempts + 1 }, JSON.parse(row.body) as JobBody, kept);
+      } else if (fx?.idempotency === "key" && row.interruptions + 1 >= parkAfterInterruptions) {
+        // Interrupted again and again without ever settling: stop retrying, and say so honestly.
+        const parked = `parked: interrupted ${row.interruptions + 1} times without settling`;
+        sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', attempts = ?, interruptions = ?, last_error = ? WHERE id = ?", row.attempts + 1, row.interruptions + 1, parked, row.id);
+        emit({ kind: "effect.parked", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, reason: parked });
+        emit({ kind: "effect.in_doubt", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, reason: parked });
+        if (fx.result) enqueueResult(fx.result, row.id, req, { key: req.key, status: "in_doubt", error: parked });
       } else if (fx?.idempotency === "key") {
-        sql.exec("UPDATE _actors_outbox SET status = 'pending', attempts = ?, next_at = ?, last_error = ? WHERE id = ?", row.attempts + 1, now(), reason, row.id);
+        sql.exec("UPDATE _actors_outbox SET status = 'pending', attempts = ?, interruptions = ?, next_at = ?, last_error = ? WHERE id = ?", row.attempts + 1, row.interruptions + 1, now(), reason, row.id);
         emit({ kind: "retry.scheduled", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, attempt: row.attempts + 2, reason });
       } else {
         sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', attempts = ?, last_error = ? WHERE id = ?", row.attempts + 1, reason, row.id);
@@ -1022,6 +1040,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     }
     const timer = earliestTimer(sql);
     if (timer !== null) candidates.push(timer);
+    // While an attempt runs (or a cancel is in flight) keep a wake near, so a lost instance is noticed.
+    if (sql.exec("SELECT 1 FROM _actors_outbox WHERE status IN ('running', 'cancelling') LIMIT 1").toArray().length > 0) candidates.push(now() + HEARTBEAT_MS);
     // A waiting job's next look: its next probe, or its deadline.
     const job = earliestJob(sql);
     if (job !== null) candidates.push(job);
