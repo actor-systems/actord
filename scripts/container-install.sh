@@ -7,11 +7,12 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 image="${ACTORD_CONTAINER_IMAGE:-node:24-bookworm}"
 claude_version="$(claude --version | awk '{print $1}')"
+codex_version="$(codex --version | awk '{print $2}')"
 out="${1:-$root/docs/evidence/container-install.txt}"
 
 docker image inspect "$image" >/dev/null 2>&1 || { echo "blocked: image $image isn't available locally (pulling it needs owner approval)"; exit 4; }
 
-docker run --rm -v "$root:/src:ro" -e CLAUDE_VERSION="$claude_version" -e DISABLE_TELEMETRY=1 -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+docker run --rm -v "$root:/src:ro" -e CLAUDE_VERSION="$claude_version" -e CODEX_VERSION="$codex_version" -e DISABLE_TELEMETRY=1 -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
   "$image" bash -euo pipefail -c '
 step() { printf "%s\n" "== $*"; }
 step "container: $(uname -sm), node $(node --version), npm $(npm --version)"
@@ -43,5 +44,12 @@ step "uninstall"
 claude plugin uninstall actord@actord
 claude plugin marketplace remove actord
 claude plugin list --json | node -e "const l=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\")); if(l.some(x=>x.id===\"actord@actord\")) process.exit(1); console.log(\"not installed\")"
-echo "container-install: ok"
+step "Codex install and standalone consumer verification (no credentials)"
+npm install -g --silent "@openai/codex@$CODEX_VERSION" >/dev/null
+cd /work
+npm ci --silent --no-audit --no-fund
+node scripts/codex/distribution.mjs
+node scripts/codex/install-test.mjs
+node scripts/codex/clean-install.mjs --online
+echo "container-install: ok (both plugins)"
 ' 2>&1 | tee "$out"

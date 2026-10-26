@@ -63,12 +63,16 @@ export const gates = [
       "g1.budget",
       "g1.trust",
       "g1.start-session",
+      "g1.codex.validate",
+      "g1.codex.distribution",
+      "g1.codex.install",
+      "g1.codex.format",
     ],
   },
   {
     id: "G2",
     title: "Model and CLI",
-    requires: ["g2.contract.types", "g2.fixtures.typecheck", "g2.cli.model", "g2.negative.unchanged"],
+    requires: ["g2.contract.types", "g2.fixtures.typecheck", "g2.cli.model", "g2.negative.unchanged", "g2.codex.adapter"],
   },
   {
     id: "G3",
@@ -103,7 +107,7 @@ export const gates = [
   {
     id: "G7",
     title: "Release candidate",
-    requires: ["g7.docs", "g7.release-evidence", "g7.tag", "g7.clean-checkout", "g7.container"],
+    requires: ["g7.docs", "g7.release-evidence", "g7.tag", "g7.clean-checkout", "g7.container", "g7.codex.consumer"],
   },
 ];
 
@@ -194,19 +198,26 @@ export const checks = [
   {
     id: "g1.dist.fresh",
     gate: "G1",
-    title: "Shipped plugins/claude/dist matches a fresh build of packages/toolkit",
+    title: "Both shipped plugin distributions match a fresh build of packages/toolkit",
     command: "npm run --silent build -w @actord/toolkit",
     async run({ sh, root }) {
-      const files = ["plugins/claude/dist/actord.mjs", "plugins/claude/dist/VERSION", "plugins/claude/hooks/effect-patterns.ts"].map((f) => join(root, f));
+      const version = JSON.parse(readFileSync(join(root, "packages/toolkit/package.json"))).version;
+      const files = [...["claude", "codex"].flatMap(host => [`plugins/${host}/dist/actord.mjs`, `plugins/${host}/dist/VERSION`, `plugins/${host}/dist/actord-toolkit-${version}.tgz`]), "plugins/claude/hooks/effect-patterns.ts"].map((f) => join(root, f));
       const before = files.map(hash);
       const r = sh("npm run --silent build -w @actord/toolkit");
       if (r.code !== 0) return { ...r, status: "fail", reason: "build failed" };
       const after = files.map(hash);
       return before.every((h, i) => h === after[i])
         ? { ...r, status: "pass" }
-        : { ...r, status: "fail", reason: "plugins/claude/dist was stale; it has been rebuilt, commit it" };
+        : { ...r, status: "fail", reason: "A shipped plugin distribution was stale; both have been rebuilt, commit them" };
     },
   },
+  command("g1.codex.validate", "G1", "Codex portable manifest, six skills, paths and onboarding validate", "node scripts/codex/validate-plugin.mjs"),
+  command("g1.codex.distribution", "G1", "Direct Codex marketplace source and packaged root example templates", "node scripts/codex/distribution.mjs"),
+  command("g1.codex.install", "G1", "Codex marketplace install, installed launcher and uninstall in disposable config", "node scripts/codex/install-test.mjs"),
+  command("g1.codex.format", "G1", "Codex shipping source, tests and scripts are formatted", "npx --no-install prettier --check plugins/codex/bin plugins/codex/src plugins/codex/skills plugins/codex/plugin.json scripts/codex tests/codex-*.mjs"),
+  command("g2.codex.adapter", "G2", "Codex launcher, host boundaries, graph, trace, contracts and reference scaffolds", "node --test tests/codex-*.test.mjs"),
+  command("g7.codex.consumer", "G7", "Standalone Codex shipping directory scaffolds and verifies all three apps without credentials", "node scripts/codex/clean-install.mjs --online"),
   command("g1.launcher", "G1", "bin/actord prefers the project pin, else the bundle", "node --test tests/launcher.test.mjs"),
   command("g1.validate.plugin", "G1", "claude plugin validate --strict plugins/claude", "claude plugin validate --strict plugins/claude"),
   command("g1.validate.marketplace", "G1", "claude plugin validate --strict (marketplace)", "claude plugin validate --strict ."),
@@ -391,7 +402,7 @@ export const checks = [
   {
     id: "g7.clean-checkout",
     gate: "G7",
-    title: "A clean clone installs from the lockfile, rebuilds plugins/claude/dist byte-for-byte, and passes npm run verify",
+    title: "A clean clone installs from the lockfile, rebuilds both plugin distributions byte-for-byte, and passes npm run verify",
     command: "scripts/clean-checkout.sh",
     async run({ sh }) {
       if (process.env.ACTORD_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };

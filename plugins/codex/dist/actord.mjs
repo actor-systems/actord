@@ -1,0 +1,2533 @@
+#!/usr/bin/env node
+
+// src/cli/main.ts
+import { parseArgs } from "node:util";
+
+// src/version.ts
+var VERSION = true ? "0.2.0" : "0.0.0-dev";
+var SCHEMA_VERSION = 1;
+
+// src/cli/commands/doctor.ts
+import { spawnSync } from "node:child_process";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { join as join3 } from "node:path";
+
+// src/patterns.ts
+var W = String.raw`(?:^|[\s;&|(])(?:\S*/)?wrangler`;
+var EFFECT_PATTERNS = [
+  {
+    id: "wrangler-deploy",
+    kind: "deploy",
+    description: "Deploy or publish a Worker",
+    rules: ["Bash(*wrangler deploy*)", "Bash(*wrangler publish*)"],
+    regex: new RegExp(`${W}\\s+(?:.*\\s)?(?:deploy|publish)\\b`),
+    examples: ["wrangler deploy", "npx wrangler deploy --env production", "cd app && pnpm exec wrangler publish"]
+  },
+  {
+    id: "wrangler-versions",
+    kind: "deploy",
+    description: "Upload or deploy a Worker version",
+    rules: ["Bash(*wrangler versions upload*)", "Bash(*wrangler versions deploy*)"],
+    regex: new RegExp(`${W}\\s+versions\\s+(?:upload|deploy)\\b`),
+    examples: ["wrangler versions upload", "npx wrangler versions deploy 1234@100%"]
+  },
+  {
+    id: "wrangler-rollback",
+    kind: "deploy",
+    description: "Roll back, delete, or change triggers of a deployed Worker",
+    rules: ["Bash(*wrangler rollback*)", "Bash(*wrangler delete*)", "Bash(*wrangler triggers deploy*)"],
+    regex: new RegExp(`${W}\\s+(?:rollback|delete|triggers\\s+deploy)\\b`),
+    examples: ["wrangler rollback", "npx wrangler delete", "wrangler triggers deploy"]
+  },
+  {
+    id: "wrangler-secret",
+    kind: "secret",
+    description: "Create, change, or delete Worker secrets",
+    rules: ["Bash(*wrangler secret*)", "Bash(*wrangler versions secret*)"],
+    regex: new RegExp(`${W}\\s+(?:versions\\s+)?secrets?(?:-store)?\\b`),
+    examples: ["wrangler secret put API_KEY", "npx wrangler versions secret put X", "wrangler secrets-store secret create"]
+  },
+  {
+    id: "wrangler-remote",
+    kind: "remote-write",
+    description: "Run a storage or dev command against the remote account",
+    rules: ["Bash(*wrangler * --remote*)"],
+    regex: new RegExp(`${W}\\s+.*\\s--remote\\b`),
+    examples: ["wrangler d1 execute DB --remote --command 'DELETE FROM t'", "npx wrangler kv key put k v --remote"]
+  },
+  {
+    id: "wrangler-resource-write",
+    kind: "remote-write",
+    description: "Create or delete account resources (KV, R2, D1, Queues, and similar)",
+    rules: ["Bash(*wrangler * create*)", "Bash(*wrangler * delete*)"],
+    regex: new RegExp(`${W}\\s+\\S+(?:\\s+\\S+)?\\s+(?:create|delete)\\b`),
+    examples: ["wrangler kv namespace create CACHE", "npx wrangler r2 bucket delete archive", "wrangler queues create q"]
+  },
+  {
+    id: "wrangler-login",
+    kind: "credential",
+    description: "Sign in to Cloudflare",
+    rules: ["Bash(*wrangler login*)"],
+    regex: new RegExp(`${W}\\s+login\\b`),
+    examples: ["wrangler login", "npx wrangler login --browser=false"]
+  },
+  {
+    id: "script-deploy",
+    kind: "deploy",
+    description: "A package script named deploy",
+    rules: ["Bash(* run deploy*)", "Bash(yarn deploy*)"],
+    regex: /(?:^|[\s;&|(])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?deploy\b/,
+    examples: ["npm run deploy", "pnpm run deploy -- --env prod", "yarn deploy"]
+  },
+  {
+    id: "cf-deploy",
+    kind: "deploy",
+    description: "Deploy with Cloudflare's cf CLI or Void",
+    rules: ["Bash(cf deploy*)", "Bash(cf * deploy*)", "Bash(*void deploy*)"],
+    regex: /(?:^|[\s;&|(])(?:cf(?:\s+\S+)?\s+deploy|(?:\S*\/)?void\s+deploy)\b/,
+    examples: ["cf deploy", "cf previews deploy", "npx void deploy"]
+  }
+];
+function matchEffect(command) {
+  return EFFECT_PATTERNS.filter((p) => p.regex.test(command));
+}
+function askRules() {
+  return [...new Set(EFFECT_PATTERNS.flatMap((p) => p.rules))];
+}
+
+// src/templates/host.ts
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// src/templates/claude.ts
+function verifySkill() {
+  return `---
+name: verify
+description: Run this actor project's evidence workflow (typecheck, actord check, workerd tests, reliability claims) before committing or before reporting work as done.
+allowed-tools: Bash(npm run verify) Bash(npx actord verify *)
+---
+
+# Verify
+
+1. Run \`npm run verify\`. It runs \`actord verify\`, which writes \`.actord/evidence.json\`.
+2. Report the verdict exactly: \`pass\`, \`fail\`, or \`blocked\`, with each failing step and claim.
+   \`blocked\` means a check couldn't run (for example, the sandbox denies the local port workerd needs).
+   It is not a pass.
+3. Don't commit or call the work done while the verdict is \`fail\`. Fix the cause, or say plainly what
+   is still failing.
+
+Evidence comes from the commands above, not from reading the code. Deploying is never part of
+verification; it needs a person's approval.
+`;
+}
+function settingsJson() {
+  return `${JSON.stringify(
+    {
+      $comment: "Generated by actord init from the same table as the toolkit's effect guard. Deploys, secrets, and remote writes need a person's approval.",
+      permissions: { ask: askRules() }
+    },
+    null,
+    2
+  )}
+`;
+}
+function claudeMd(name) {
+  return `# ${name}
+
+An actor system on Cloudflare Durable Objects, built with @actord/toolkit.
+- The declaration is \`system.ts\` (actors, messages, routes, effects). Actors live in \`src/actors/\`, contracts in \`src/messages/\`.
+- \`npx actord check\` validates what the compiler can't; \`npx actord graph\` prints the topology.
+- \`npm test\` runs workerd tests and records events in \`.actord/events.ndjson\`; \`npx actord trace <id>\` explains one.
+- \`npm run verify\` runs everything and writes \`.actord/evidence.json\`. Run it before committing.
+- When adding behavior, keep public read methods (names and return shapes) and existing tests as they are; prove the change with a new test.
+- Deploys need a person's approval. Asked to deploy, give the plan from \`npx actord diff\`; never run \`wrangler deploy\` unasked.
+- Write and change files with the Write and Edit tools, not shell redirection or heredocs.
+`;
+}
+
+// src/templates/host.ts
+function agentHost(value) {
+  const host = value ?? "claude";
+  if (host !== "claude" && host !== "codex" && host !== "none")
+    throw new Error(
+      `Unknown actor host: ${host}. Choose claude, codex, or none.`
+    );
+  return host;
+}
+function hostFiles(host, name) {
+  if (host === "none") return {};
+  if (host === "claude")
+    return {
+      ".claude/skills/verify/SKILL.md": verifySkill(),
+      ".claude/settings.json": settingsJson(),
+      "CLAUDE.md": claudeMd(name)
+    };
+  return {
+    ".agents/skills/verify/SKILL.md": `---
+name: verify
+description: Run this actor project's typecheck, declaration checks, workerd tests and reliability claims before reporting completion.
+---
+
+Run \`npm run verify\` and read \`.actord/evidence.json\`. Report each claim as proved locally, stub only, not guaranteed, blocked, failing or untested, and report the real verdict. Fix failures. A blocked check is not a pass. Before evolving contracts capture \`actord diff\`, preserve existing APIs and tests, and add tests for the requested behavior. Deployment and real external writes require the user's authorization.
+`,
+    "AGENTS.md": `# ${name}
+
+This project uses the shared @actord/toolkit core on native Cloudflare Durable Objects.
+
+- Read \`system.ts\` for actors, messages, routes, effects and budgets; implementations live in \`src/actors/\`.
+- Run \`npx actord check\`, \`npx actord graph --write\`, and \`npm run verify\` after changes. Read the verdict in \`.actord/evidence.json\`.
+- Use \`npx actord trace <message-id>\` for local causal evidence. Say unknown beyond recorded coverage.
+- Preserve public read methods and existing tests while adding behavior. Add a test proving the requested change.
+- Review \`npx actord diff\` before resource or contract changes. Keep old message shapes accepted until queued messages drain.
+- The user's instructions take precedence. Obtain authorization for deployment or real external writes; verification itself is local.
+`
+  };
+}
+function projectHost(root) {
+  try {
+    const host = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).actord?.host;
+    if (host === "codex" || host === "claude" || host === "none") return host;
+  } catch {
+  }
+  if (existsSync(join(root, ".agents/skills/verify/SKILL.md"))) return "codex";
+  return "claude";
+}
+
+// src/cli/project.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
+import { dirname, join as join2, resolve } from "node:path";
+var DECLARATION_FILE = "system.ts";
+function findProjectRoot(from) {
+  let dir = resolve(from);
+  for (; ; ) {
+    if (existsSync2(join2(dir, DECLARATION_FILE)) && existsSync2(join2(dir, "package.json"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync2(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function readJsonc(path) {
+  let text;
+  try {
+    text = readFileSync2(path, "utf8");
+  } catch {
+    return null;
+  }
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\") out += text[++i] ?? "";
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i++;
+    } else out += c;
+  }
+  try {
+    return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
+  } catch {
+    return null;
+  }
+}
+
+// src/cli/commands/doctor.ts
+var NODE_FLOOR = [22, 18, 0];
+var MODS_FLOOR = "2.1.287";
+var EVAL_FLOOR = "2.1.269";
+function doctor(cwd, env = process.env) {
+  const findings = [];
+  const add = (f) => findings.push(f);
+  const node = process.versions.node.split(".").map(Number);
+  add(
+    compare(node, NODE_FLOOR) >= 0 ? { id: "node", status: "ok", message: `Node.js ${process.versions.node}` } : {
+      id: "node",
+      status: "error",
+      message: `Node.js ${process.versions.node} is older than 22.18, which loads system.ts natively`,
+      fix: "Install Node.js 22.18 or later (24 LTS recommended)."
+    }
+  );
+  const source = env.ACTORD_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORD_LAUNCHER === "project-pin" ? "project pin" : "direct";
+  add({ id: "cli", status: "ok", message: `@actord/toolkit ${VERSION} (${source})` });
+  if (env.ACTORD_PLUGIN_VERSION && env.ACTORD_PLUGIN_VERSION !== VERSION) {
+    add({
+      id: "cli.pin-mismatch",
+      status: "warn",
+      message: `The plugin bundles @actord/toolkit ${env.ACTORD_PLUGIN_VERSION}; this project pins ${VERSION}, which is the one running`,
+      fix: `Align them: update the plugin, or run \`npm install -D @actord/toolkit@${env.ACTORD_PLUGIN_VERSION}\` in the project.`
+    });
+  }
+  const host = env.ACTORD_HOST ?? projectHost(findProjectRoot(cwd) ?? cwd);
+  if (host === "codex") {
+    const codex = run("codex", ["--version"]);
+    add({ id: "codex", status: "info", message: codex?.trim() ?? "Codex not found on PATH; the CLI works without it" });
+  }
+  if (host === "claude") {
+    const claude = run("claude", ["--version"]);
+    const claudeVersion = claude?.match(/\d+\.\d+\.\d+/)?.[0];
+    if (!claudeVersion) {
+      add({ id: "claude", status: "info", message: "Claude Code not found on PATH; the CLI works without it" });
+    } else if (compare(parse(claudeVersion), parse(MODS_FLOOR)) >= 0) {
+      add({ id: "claude", status: "ok", message: `Claude Code ${claudeVersion} (the Room and plugin evals are available)` });
+    } else {
+      add({
+        id: "claude",
+        status: "warn",
+        message: `Claude Code ${claudeVersion}: the Room needs ${MODS_FLOOR}+${compare(parse(claudeVersion), parse(EVAL_FLOOR)) < 0 ? `, plugin evals need ${EVAL_FLOOR}+` : ""}`,
+        fix: "Run `claude update`. Everything else works through CLI text output."
+      });
+    }
+  }
+  add({
+    id: "credentials",
+    status: "info",
+    message: "Cloudflare credentials not checked: actord never reads them; wrangler owns authentication and deploys"
+  });
+  const root = findProjectRoot(cwd);
+  if (!root) {
+    add({
+      id: "project",
+      status: "info",
+      message: "No actor project here (no system.ts with a package.json in this directory or above)",
+      fix: "Create one with `actord init <dir>`, or study examples/release-radar and examples/briefing-desk."
+    });
+  } else {
+    projectFindings(root, add, host);
+  }
+  const summary = { ok: 0, warn: 0, error: 0, info: 0 };
+  for (const f of findings) summary[f.status]++;
+  const text = [
+    ...findings.map((f) => `${icon(f.status)} ${f.message}${f.fix ? `
+    fix: ${f.fix}` : ""}`),
+    "",
+    `${summary.ok} ok \xB7 ${summary.warn} warn \xB7 ${summary.error} error`
+  ].join("\n");
+  return { data: { projectRoot: root, findings, summary }, text, exitCode: summary.error > 0 ? 1 : 0 };
+}
+function projectFindings(root, add, host) {
+  add({ id: "project", status: "ok", message: `Actor project at ${root}` });
+  const pkg = readJson(join3(root, "package.json"));
+  const pin = pkg?.devDependencies?.["@actord/toolkit"] ?? pkg?.dependencies?.["@actord/toolkit"];
+  if (!pin) {
+    add({
+      id: "project.pin",
+      status: "warn",
+      message: "package.json doesn't pin @actord/toolkit, so CI and the coding agent may run different versions",
+      fix: `Run \`npm install -D -E @actord/toolkit@${VERSION}\`.`
+    });
+  } else if (/^[\^~>=<*]|^latest$/.test(pin)) {
+    add({ id: "project.pin", status: "warn", message: `@actord/toolkit is a range (${pin}), not a pin`, fix: "Use an exact version." });
+  } else {
+    add({ id: "project.pin", status: "ok", message: `@actord/toolkit pinned at ${pin}` });
+  }
+  const installed = existsSync3(join3(root, "node_modules"));
+  add(
+    installed ? { id: "project.install", status: "ok", message: "Dependencies installed" } : { id: "project.install", status: "warn", message: "node_modules is missing", fix: "Run `npm install`." }
+  );
+  const wranglerPkg = readJson(join3(root, "node_modules", "wrangler", "package.json"));
+  add(
+    wranglerPkg ? { id: "project.wrangler", status: "ok", message: `wrangler ${wranglerPkg.version}` } : { id: "project.wrangler", status: "warn", message: "wrangler is not installed in this project", fix: "Run `npm install -D wrangler`." }
+  );
+  const config = ["wrangler.jsonc", "wrangler.json", "wrangler.toml"].find((f) => existsSync3(join3(root, f)));
+  add(
+    config ? { id: "project.config", status: "ok", message: `Worker config ${config}` } : { id: "project.config", status: "error", message: "No wrangler.jsonc", fix: "Run `actord init --adopt` or add one." }
+  );
+  if (host === "codex") {
+    for (const rel of ["AGENTS.md", ".agents/skills/verify/SKILL.md"]) {
+      add(existsSync3(join3(root, rel)) ? { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "ok", message: `${rel} present` } : { id: `project.${rel === "AGENTS.md" ? "guidance" : "verify-skill"}`, status: "warn", message: `${rel} missing`, fix: "Run `actord init --adopt --host codex` (existing files are preserved)." });
+    }
+  }
+  if (host === "claude") {
+    add(
+      existsSync3(join3(root, ".claude", "skills", "verify", "SKILL.md")) ? { id: "project.verify-skill", status: "ok", message: "Project verify skill present" } : {
+        id: "project.verify-skill",
+        status: "warn",
+        message: "No .claude/skills/verify/SKILL.md, so sessions without the plugin won't run `npm run verify` before commits",
+        fix: "Run `actord init --adopt` to add it (existing .claude/ files are never overwritten)."
+      }
+    );
+    const settingsPath = join3(root, ".claude", "settings.json");
+    const ask = readJson(settingsPath)?.permissions?.ask ?? [];
+    const missing = askRules().filter((r) => !ask.includes(r));
+    if (!existsSync3(settingsPath)) {
+      add({
+        id: "project.permissions",
+        status: "warn",
+        message: "No .claude/settings.json: deploy and remote-write commands won't prompt",
+        fix: "Run `actord init --adopt` to create it."
+      });
+    } else if (missing.length > 0) {
+      add({
+        id: "project.permissions",
+        status: "warn",
+        message: `.claude/settings.json lacks ${missing.length} ask rule(s): ${missing.join(", ")}`,
+        fix: "Add them to permissions.ask; `actord init --adopt` prints the full list."
+      });
+    } else {
+      add({ id: "project.permissions", status: "ok", message: "Deploy and remote-write commands require approval" });
+    }
+  }
+  if (existsSync3(join3(root, "system.ts")) && readFileSync3(join3(root, "system.ts"), "utf8").trim() === "") {
+    add({ id: "project.declaration", status: "error", message: "system.ts is empty" });
+  }
+}
+function run(cmd, args) {
+  const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 5e3 });
+  return r.status === 0 ? r.stdout : null;
+}
+function parse(v) {
+  return v.split(".").map(Number);
+}
+function compare(a, b) {
+  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) - (b[i] ?? 0);
+  return 0;
+}
+function icon(s) {
+  return { ok: "\u2713", warn: "!", error: "\u2717", info: "\xB7" }[s];
+}
+
+// src/cli/commands/events.ts
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { closeSync, existsSync as existsSync8, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync8, readSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname3, join as join7, relative as relative3, resolve as resolve4 } from "node:path";
+
+// src/model/events.ts
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
+var EVENTS_FILE = ".actord/events.ndjson";
+var NOTABLE = /* @__PURE__ */ new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"]);
+function readEvents(file) {
+  if (!existsSync4(file)) return null;
+  return parseEvents(readFileSync4(file, "utf8"));
+}
+function parseEvents(text) {
+  const events2 = [];
+  let unparseable = 0;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const e = JSON.parse(line);
+      if (e.$actord === 1 && typeof e.kind === "string") events2.push(e);
+      else unparseable++;
+    } catch {
+      unparseable++;
+    }
+  }
+  return { events: events2, unparseable };
+}
+function formatEvent(e) {
+  const route = e.from && e.to ? `${e.from} \u2192 ${e.to}` : e.actor;
+  const what = e.effect ? `effect ${e.effect}${e.effectKey ? ` [${e.effectKey}]` : ""}` : `${e.type ?? ""}${e.version ? `@${e.version}` : ""}`;
+  const attempt = e.attempt && e.attempt > 1 ? ` attempt ${e.attempt}` : "";
+  return `${e.kind.padEnd(16)} ${what.padEnd(28)} ${route}${e.messageId ? ` (${e.messageId})` : ""}${attempt}${e.reason ? `: ${e.reason}` : ""}`;
+}
+function outcomeOf(evs) {
+  const kinds = new Set(evs.map((e) => e.kind));
+  if (kinds.has("handled")) return "handled";
+  if (kinds.has("rejected")) return "rejected";
+  if (kinds.has("undeliverable")) return "undeliverable";
+  if (kinds.has("retry.exhausted")) return "retry.exhausted";
+  if (kinds.has("duplicate")) return "duplicate";
+  if (kinds.has("failed")) return "failed";
+  if (kinds.has("sent") || kinds.has("retry.scheduled")) return "in-flight";
+  return "unknown";
+}
+var OUTCOME_MARK = { handled: "\u2713", duplicate: "\u2261", rejected: "\u2717", failed: "\u2717", undeliverable: "\u2717", "retry.exhausted": "\u2717", "in-flight": "\u2026", unknown: "?" };
+function buildTrace(log, id2) {
+  const byMessage = /* @__PURE__ */ new Map();
+  const children = /* @__PURE__ */ new Map();
+  const effectsBy = /* @__PURE__ */ new Map();
+  for (const e of log.events) {
+    if (e.messageId && e.kind !== "scheduled" && !(e.kind.startsWith("effect.") && !e.messageId)) {
+      byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
+      if (e.causationId) children.set(e.causationId, (children.get(e.causationId) ?? /* @__PURE__ */ new Set()).add(e.messageId));
+    }
+    if (e.effect && e.effectKey && e.kind.startsWith("effect.")) {
+      const k = `${e.effect}:${e.effectKey}`;
+      effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
+    }
+    if (e.kind === "retry.scheduled" && e.effect && e.effectKey) {
+      const k = `${e.effect}:${e.effectKey}`;
+      effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
+    }
+  }
+  if (!byMessage.has(id2)) return { found: false, target: id2, correlationId: null, rootCauseUnknown: false, root: null };
+  let rootId = id2;
+  let rootCauseUnknown = false;
+  const seen = /* @__PURE__ */ new Set();
+  for (; ; ) {
+    seen.add(rootId);
+    const cause = byMessage.get(rootId)?.find((e) => e.causationId)?.causationId ?? null;
+    if (!cause) break;
+    if (!byMessage.has(cause) || seen.has(cause)) {
+      rootCauseUnknown = !byMessage.has(cause);
+      break;
+    }
+    rootId = cause;
+  }
+  const resultOf = /* @__PURE__ */ new Map();
+  for (const [mid, evs] of byMessage) {
+    const sent = evs.find((e) => e.kind === "sent" && e.effect && e.effectKey);
+    if (sent) resultOf.set(`${sent.effect}:${sent.effectKey}`, mid);
+  }
+  const resultIds = new Set(resultOf.values());
+  const visited = /* @__PURE__ */ new Set();
+  const node = (mid) => {
+    visited.add(mid);
+    const evs = byMessage.get(mid) ?? [];
+    const first = evs.find((e) => e.type) ?? evs[0];
+    const outcome = outcomeOf(evs);
+    const effects = [];
+    const effectKeys = /* @__PURE__ */ new Set();
+    for (const e of log.events) if (e.kind === "effect.requested" && e.causationId === mid && e.effect && e.effectKey) effectKeys.add(`${e.effect}:${e.effectKey}`);
+    for (const k of effectKeys) {
+      const evs2 = effectsBy.get(k) ?? [];
+      const last = [...evs2].reverse().find((e) => e.kind !== "effect.requested" && e.kind !== "retry.scheduled");
+      const [effect, ...rest] = k.split(":");
+      const rid = resultOf.get(k);
+      effects.push({
+        effect,
+        key: rest.join(":"),
+        outcome: last ? last.kind.replace("effect.", "") : "pending",
+        attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
+        reason: last?.reason ?? null,
+        result: rid && !visited.has(rid) ? node(rid) : null
+      });
+    }
+    const kids = [...children.get(mid) ?? []].filter((c) => !visited.has(c) && !resultIds.has(c));
+    return {
+      messageId: mid,
+      type: first?.type ?? null,
+      from: first?.from ?? null,
+      to: first?.to ?? null,
+      outcome,
+      attempts: Math.max(1, ...evs.map((e) => e.attempt ?? 1)),
+      failures: [...new Set(evs.filter((e) => e.kind === "failed" || e.kind === "retry.scheduled").map((e) => e.reason ?? e.kind))],
+      rejectedReason: evs.find((e) => e.kind === "rejected" || e.kind === "undeliverable")?.reason ?? null,
+      notes: evs.filter((e) => e.kind === "note").map((e) => e.reason ?? ""),
+      effects,
+      children: kids.sort().map((c) => node(c))
+    };
+  };
+  const root = node(rootId);
+  return {
+    found: true,
+    target: id2,
+    correlationId: byMessage.get(id2)?.find((e) => e.correlationId)?.correlationId ?? null,
+    rootCauseUnknown,
+    root
+  };
+}
+function renderTrace(t, source) {
+  if (!t.found || !t.root) {
+    return `unknown: no recorded event has id ${t.target}.
+coverage: ${source} (local test and dev runs only; production history isn't available here).`;
+  }
+  const lines = [`trace ${t.target} \xB7 correlation ${t.correlationId ?? "?"} \xB7 coverage: ${source} (local only)`];
+  if (t.rootCauseUnknown) lines.push("  ? earlier cause unknown: outside recorded coverage");
+  const walk = (n, prefix, last, top) => {
+    const branch = top ? "" : last ? "\u2514\u2500 " : "\u251C\u2500 ";
+    const target = n.messageId === t.target ? "  \u25C0 target" : "";
+    const retry = n.attempts > 1 ? ` after ${n.attempts - 1} retr${n.attempts === 2 ? "y" : "ies"}` : "";
+    const why = n.rejectedReason ? `: ${n.rejectedReason}` : "";
+    lines.push(`${prefix}${branch}${n.from ?? "?"} \u2192 ${n.to ?? "?"}  ${n.type ?? "?"}  ${OUTCOME_MARK[n.outcome]} ${n.outcome}${why}${retry} (${n.messageId})${target}`);
+    const inner = prefix + (top ? "" : last ? "   " : "\u2502  ");
+    for (const f of n.failures) lines.push(`${inner}  ! ${f}`);
+    for (const note of n.notes) lines.push(`${inner}  \xB7 ${note}`);
+    const items = [
+      ...n.effects.map((e) => ({ kind: "effect", e })),
+      ...n.children.map((c) => ({ kind: "node", n: c }))
+    ];
+    items.forEach((it, i) => {
+      const isLast = i === items.length - 1;
+      if (it.kind === "node") walk(it.n, inner, isLast, false);
+      else {
+        const e = it.e;
+        const mark = e.outcome === "confirmed" ? "\u2713" : e.outcome === "pending" || e.outcome === "awaiting_approval" ? "\u2026" : "\u2717";
+        lines.push(`${inner}${isLast ? "\u2514\u2500 " : "\u251C\u2500 "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
+        if (e.result) walk(e.result, inner + (isLast ? "   " : "\u2502  "), true, false);
+      }
+    });
+  };
+  walk(t.root, "  ", true, true);
+  return lines.join("\n");
+}
+
+// src/cli/commands/model.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { existsSync as existsSync7, mkdirSync, readFileSync as readFileSync7, writeFileSync } from "node:fs";
+import { join as join6, relative as relative2, resolve as resolve3 } from "node:path";
+
+// src/cli/output.ts
+var VOLATILE = {
+  doctor: ["projectRoot", "findings[].message"],
+  default: ["projectRoot"]
+};
+function toJson(command, data) {
+  const volatile = VOLATILE[command] ?? VOLATILE.default;
+  return `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command, toolkitVersion: VERSION, volatile, ...data }, null, 2)}
+`;
+}
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((k) => [k, sortKeys(value[k])])
+    );
+  }
+  return value;
+}
+var UsageError = class extends Error {
+};
+
+// src/system.ts
+var SYSTEM_BRAND = "@actord/toolkit/system@1";
+function isSystem(value) {
+  return typeof value === "object" && value !== null && value.kind === SYSTEM_BRAND;
+}
+function durationMs(d) {
+  const m = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(d);
+  if (!m) return null;
+  const unit = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2]];
+  return Math.round(Number(m[1]) * unit);
+}
+
+// src/model/manifest.ts
+var MANIFEST_FILE = "actord.manifest.json";
+var MANIFEST_SCHEMA_VERSION = 1;
+var byName = (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+var routeKey = (r) => `${r.from}\0${r.message}\0${r.to}`;
+function normalize(system) {
+  const routes = (system.routes ?? []).map((r) => ({ from: String(r.from), message: String(r.message), to: String(r.to) })).sort((a, b) => routeKey(a) < routeKey(b) ? -1 : routeKey(a) > routeKey(b) ? 1 : 0);
+  const actors = Object.entries(system.actors ?? {}).map(([name, a]) => ({
+    name,
+    binding: a.binding,
+    kind: a.kind,
+    purpose: a.purpose ?? "",
+    justification: [...a.justification ?? []].sort(),
+    schedule: a.schedule ? { every: a.schedule.every, everyMs: durationMs(a.schedule.every), message: a.schedule.message } : null,
+    effects: [...a.effects ?? []].sort(),
+    budget: a.budget ? { maxAttempts: a.budget.maxAttempts, timeoutMs: a.budget.timeoutMs, maxTokens: a.budget.maxTokens ?? null } : null,
+    receives: [...new Set(routes.filter((r) => r.to === name).map((r) => r.message))].sort(),
+    sends: [...new Set(routes.filter((r) => r.from === name).map((r) => r.message))].sort()
+  })).sort(byName);
+  const messages = Object.entries(system.messages ?? {}).map(([name, m]) => ({ name, version: m.version, description: m.description ?? "", payload: jsonSchemaOf(m.payload) })).sort(byName);
+  const effects = Object.entries(system.effects ?? {}).map(([name, e]) => ({
+    name,
+    description: e.description ?? "",
+    idempotency: e.idempotency,
+    reconcile: e.reconcile ?? false,
+    approval: e.approval ?? "none",
+    result: e.result ?? null
+  })).sort(byName);
+  return {
+    schemaVersion: MANIFEST_SCHEMA_VERSION,
+    $comment: "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
+    system: { name: system.name, description: system.description ?? "" },
+    actors: sortKeys(actors),
+    messages: sortKeys(messages),
+    routes,
+    effects: sortKeys(effects)
+  };
+}
+function jsonSchemaOf(schema) {
+  const std = schema?.["~standard"];
+  if (!std?.jsonSchema) return null;
+  try {
+    return sortKeys(std.jsonSchema.input({ target: "draft-2020-12" }));
+  } catch {
+    return null;
+  }
+}
+function serializeManifest(m) {
+  const { $comment, schemaVersion, system, actors, messages, routes, effects } = m;
+  return `${JSON.stringify({ $comment, schemaVersion, system, actors, messages, routes, effects }, null, 2)}
+`;
+}
+
+// src/model/check.ts
+var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
+var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
+var EXTERNAL = /* @__PURE__ */ new Set(["@clock", "@ingress"]);
+function checkProject(project) {
+  const out = [];
+  const add = (severity, code, subject, message, fix = null) => out.push({ code, severity, subject, message, fix });
+  if (project.loadError || !project.system || !project.manifest) {
+    add("error", "DECLARATION_LOAD_FAILED", "system.ts", project.loadError ?? "system.ts did not load");
+    return sortDiagnostics(out);
+  }
+  const m = project.manifest;
+  const system = project.system;
+  const actors = new Map(m.actors.map((a) => [a.name, a]));
+  const messages = new Map(m.messages.map((x) => [x.name, x]));
+  const effects = new Map(m.effects.map((e) => [e.name, e]));
+  for (const a of m.actors) {
+    if (!ACTOR_NAME.test(a.name)) add("error", "NAME_INVALID", a.name, `Actor name "${a.name}" must be a PascalCase class name`);
+    if (a.justification.length === 0)
+      add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
+    if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
+      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+    if (a.schedule) {
+      if (a.schedule.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${a.schedule.every}" isn't a duration like 15m`);
+      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === a.schedule.message))
+        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${a.schedule.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${a.schedule.message}", to: "${a.name}" }.`);
+    }
+    for (const e of a.effects)
+      if (!effects.has(e)) add("error", "EFFECT_UNDECLARED", a.name, `${a.name} requests effect "${e}", which the system doesn't declare`, "Declare it under effects, with its idempotency, or remove it.");
+    if (a.receives.length === 0)
+      add("warning", "ACTOR_UNREACHABLE", a.name, `No route delivers anything to ${a.name}, so nothing can ever activate it`);
+  }
+  const bindings = /* @__PURE__ */ new Map();
+  for (const a of m.actors) bindings.set(a.binding, [...bindings.get(a.binding) ?? [], a.name]);
+  for (const [b, names] of bindings) if (names.length > 1) add("error", "BINDING_DUPLICATE", b, `Binding ${b} is used by ${names.join(" and ")}`);
+  for (const msg of m.messages) {
+    if (!MESSAGE_NAME.test(msg.name)) add("error", "NAME_INVALID", msg.name, `Message name "${msg.name}" must be lowercase and dotted, like release.observed`);
+    if (!Number.isInteger(msg.version) || msg.version < 1) add("error", "MESSAGE_VERSION_INVALID", msg.name, `${msg.name} version must be a positive integer`);
+    const schema = system.messages[msg.name]?.payload;
+    if (!schema?.["~standard"]) add("error", "MESSAGE_SCHEMA_INVALID", msg.name, `${msg.name} payload isn't a Standard Schema (zod 4, valibot, arktype, ...)`);
+    else if (!msg.payload) add("warning", "PAYLOAD_SCHEMA_OPAQUE", msg.name, `${msg.name} payload can't be exported as JSON Schema, so diffs can't classify its changes`);
+    if (!m.routes.some((r) => r.message === msg.name)) add("warning", "MESSAGE_UNUSED", msg.name, `${msg.name} is declared but no route carries it`);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  for (const r of m.routes) {
+    const label2 = `${r.from} \u2192 ${r.message} \u2192 ${r.to}`;
+    if (seen.has(label2)) add("error", "ROUTE_DUPLICATE", label2, `Route ${label2} is declared twice`);
+    seen.add(label2);
+    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label2, `${r.from} isn't a sender; use @clock, @ingress, or an actor`);
+    else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route sender ${r.from} isn't a declared actor`);
+    if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route receiver ${r.to} isn't a declared actor`);
+    if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label2, `Route message ${r.message} isn't declared`);
+    if (r.from === "@clock" && actors.get(r.to)?.schedule?.message !== r.message)
+      add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label2, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
+  }
+  for (const e of m.effects) {
+    if (e.result) {
+      if (!messages.has(e.result)) add("error", "EFFECT_RESULT_UNKNOWN_MESSAGE", e.name, `${e.name} delivers its outcome as ${e.result}, which isn't a declared message`);
+      for (const a of m.actors.filter((a2) => a2.effects.includes(e.name)))
+        if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
+          add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
+    }
+    if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
+    if (e.idempotency === "none" && !e.reconcile)
+      add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
+  }
+  for (const cycle of findCycles(m)) add("warning", "ROUTE_CYCLE", cycle.join(" \u2192 "), `Messages can loop: ${cycle.join(" \u2192 ")}. Make sure handlers terminate and dedupe redeliveries.`);
+  checkConfig(project, m, add);
+  checkManifest(project, m, add);
+  return sortDiagnostics(out);
+}
+function checkConfig(project, m, add) {
+  if (!project.config) {
+    add("error", "CONFIG_MISSING", "wrangler.jsonc", project.configFile ? `${project.configFile} doesn't parse` : "No wrangler.jsonc next to system.ts", "Add one; `actord init --adopt` writes the Durable Object bindings and exports the declaration needs.");
+    return;
+  }
+  const cfg = project.config;
+  const bindings = cfg.durable_objects?.bindings ?? [];
+  const legacy = Array.isArray(cfg.migrations) && cfg.migrations.length > 0;
+  if (legacy) add("warning", "CONFIG_LEGACY_MIGRATIONS", project.configFile, "wrangler config uses the legacy migrations array; Cloudflare's declarative exports map is the current flow", "Move Durable Object classes to exports (see docs/decisions/0006).");
+  const legacyClasses = new Set(
+    (cfg.migrations ?? []).flatMap((x) => [...x.new_sqlite_classes ?? [], ...x.new_classes ?? []])
+  );
+  for (const a of m.actors) {
+    const b = bindings.find((x) => x.name === a.binding);
+    if (!b) add("error", "CONFIG_BINDING_MISSING", a.name, `wrangler config has no Durable Object binding ${a.binding} for ${a.name}`, `Add { "name": "${a.binding}", "class_name": "${a.name}" } to durable_objects.bindings.`);
+    else if (b.class_name !== a.name) add("error", "CONFIG_BINDING_CLASS_MISMATCH", a.name, `Binding ${a.binding} points at class ${b.class_name}, not ${a.name}`);
+    const exp = cfg.exports?.[a.name];
+    const live = exp && exp.type === "durable-object" && (exp.state ?? "created") === "created";
+    if (!live && !legacyClasses.has(a.name))
+      add("error", "CONFIG_EXPORT_MISSING", a.name, `wrangler config doesn't declare ${a.name} as a live Durable Object export`, `Add "exports": { "${a.name}": { "type": "durable-object", "storage": "sqlite" } }.`);
+    if (project.entryExports && !project.entryExports.has(a.name))
+      add("error", "ENTRY_EXPORT_MISSING", a.name, `The Worker entry (${project.entryFile}) doesn't export class ${a.name}`, `Export it, for example: export { ${a.name} } from "./actors/...";`);
+  }
+  if (!project.entryExports) add("error", "ENTRY_MISSING", project.configFile, "wrangler config has no main entry file, or it doesn't exist");
+  const declared = new Set(m.actors.map((a) => a.binding));
+  for (const b of bindings)
+    if (!declared.has(b.name)) add("warning", "CONFIG_UNDECLARED_DO", b.name, `Durable Object binding ${b.name} (${b.class_name}) isn't in system.ts; it's an escape hatch the checks can't see`);
+}
+function checkManifest(project, m, add) {
+  if (project.committedManifestRaw === null) {
+    add("warning", "MANIFEST_MISSING", MANIFEST_FILE, `No ${MANIFEST_FILE}; \`actord diff\` uses the committed copy as its base`, "Run `actord graph --write` and commit it.");
+  } else if (project.committedManifestRaw !== serializeManifest(m)) {
+    add("error", "MANIFEST_STALE", MANIFEST_FILE, `${MANIFEST_FILE} doesn't match system.ts`, "Run `actord graph --write` and commit the result.");
+  }
+}
+function findCycles(m) {
+  const results = new Set(m.effects.map((e) => e.result).filter(Boolean));
+  const edges = /* @__PURE__ */ new Map();
+  for (const r of m.routes) {
+    if (r.from.startsWith("@") || r.from === r.to && results.has(r.message)) continue;
+    edges.set(r.from, (edges.get(r.from) ?? /* @__PURE__ */ new Set()).add(r.to));
+  }
+  const cycles = [];
+  const names = [...edges.keys()].sort();
+  for (const start of names) {
+    const stack = [start];
+    const walk = (node) => {
+      for (const next of [...edges.get(node) ?? []].sort()) {
+        if (next === start) cycles.push([...stack, start]);
+        else if (next > start && !stack.includes(next)) {
+          stack.push(next);
+          walk(next);
+          stack.pop();
+        }
+      }
+    };
+    walk(start);
+  }
+  return cycles;
+}
+function sortDiagnostics(d) {
+  const rank = (x) => x.severity === "error" ? 0 : 1;
+  const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+  return d.sort((a, b) => rank(a) - rank(b) || cmp(a.code, b.code) || cmp(a.subject ?? "", b.subject ?? "") || cmp(a.message, b.message));
+}
+
+// src/model/diff.ts
+var EMPTY_MANIFEST = {
+  schemaVersion: 1,
+  $comment: "",
+  system: { name: "", description: "" },
+  actors: [],
+  messages: [],
+  routes: [],
+  effects: []
+};
+function diffManifests(base, head) {
+  const changes = [];
+  const add = (kind, subject, compatibility, detail, opts = {}) => changes.push({ kind, subject, compatibility, requiresApproval: opts.approval ?? false, irreversible: opts.irreversible ?? false, detail });
+  diffKeyed(base.actors, head.actors, {
+    added: (a) => add("actor.added", a.name, "compatible", `New actor ${a.name} (${a.kind}); its namespace is provisioned on the next deploy`),
+    removed: (a) => add("actor.removed", a.name, "breaking", `Removing ${a.name} retires its Durable Object class: a deleted export destroys all its stored data permanently`, {
+      approval: true,
+      irreversible: true
+    }),
+    changed: (b, h) => diffActor(b, h, add)
+  });
+  diffKeyed(base.messages, head.messages, {
+    added: (m) => add("message.added", m.name, "compatible", `New message ${m.name}@${m.version}`),
+    removed: (m) => add("message.removed", m.name, "breaking", `${m.name} is gone; copies already in flight will be rejected after the deploy`),
+    changed: (b, h) => diffMessage(b, h, add)
+  });
+  const key = (r) => `${r.from} \u2192 ${r.message} \u2192 ${r.to}`;
+  const baseRoutes = new Set(base.routes.map(key));
+  const headRoutes = new Set(head.routes.map(key));
+  for (const r of head.routes) if (!baseRoutes.has(key(r))) add("route.added", key(r), "compatible", `New route ${key(r)}`);
+  for (const r of base.routes)
+    if (!headRoutes.has(key(r))) add("route.removed", key(r), "breaking", `Route removed; in-flight ${r.message} from ${r.from} to ${r.to} will be refused as unauthorized after the deploy`);
+  diffKeyed(base.effects, head.effects, {
+    added: (e) => add("effect.added", e.name, "risky", `New external effect ${e.name} (idempotency: ${e.idempotency}); a person must approve the new capability`, { approval: true }),
+    removed: (e) => add("effect.removed", e.name, "compatible", `Effect ${e.name} removed`),
+    changed: (b, h) => diffEffect(b, h, add)
+  });
+  if (base.system.name && base.system.name !== head.system.name) add("system.renamed", head.system.name, "risky", `System renamed from ${base.system.name}`);
+  const order = (c) => `${c.kind}\0${c.subject}\0${c.detail}`;
+  changes.sort((a, b) => order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0);
+  return {
+    changes,
+    summary: {
+      total: changes.length,
+      breaking: changes.filter((c) => c.compatibility === "breaking").length,
+      risky: changes.filter((c) => c.compatibility === "risky").length,
+      requiresApproval: changes.some((c) => c.requiresApproval || c.irreversible),
+      irreversible: changes.some((c) => c.irreversible)
+    },
+    plan: plan(changes, head)
+  };
+}
+function diffKeyed(base, head, on) {
+  const b = new Map(base.map((x) => [x.name, x]));
+  const h = new Map(head.map((x) => [x.name, x]));
+  for (const [name, x] of h) {
+    const old = b.get(name);
+    if (!old) on.added(x);
+    else if (JSON.stringify(old) !== JSON.stringify(x)) on.changed(old, x);
+  }
+  for (const [name, x] of b) if (!h.has(name)) on.removed(x);
+}
+function diffActor(b, h, add) {
+  const s = h.name;
+  if (b.binding !== h.binding) add("actor.binding", s, "breaking", `Binding renamed ${b.binding} \u2192 ${h.binding}; wrangler.jsonc and every env reference must change together`);
+  if (b.kind !== h.kind) add("actor.kind", s, "risky", `Kind ${b.kind} \u2192 ${h.kind}${h.kind !== "deterministic" ? ": its output is no longer deterministic" : ""}`);
+  if (JSON.stringify(b.schedule) !== JSON.stringify(h.schedule))
+    add("actor.schedule", s, "risky", `Schedule ${b.schedule ? `${b.schedule.message} every ${b.schedule.every}` : "none"} \u2192 ${h.schedule ? `${h.schedule.message} every ${h.schedule.every}` : "none"}`);
+  for (const e of h.effects.filter((e2) => !b.effects.includes(e2))) add("actor.effect.added", `${s} \u2192 ${e}`, "risky", `${s} may now request external effect ${e}`, { approval: true });
+  for (const e of b.effects.filter((e2) => !h.effects.includes(e2))) add("actor.effect.removed", `${s} \u2192 ${e}`, "compatible", `${s} no longer requests ${e}`);
+  if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) add("actor.budget", s, "risky", `Model budget ${JSON.stringify(b.budget)} \u2192 ${JSON.stringify(h.budget)}`);
+  if (b.purpose !== h.purpose || JSON.stringify(b.justification) !== JSON.stringify(h.justification))
+    add("actor.described", s, "compatible", "Purpose or justification changed");
+}
+function diffMessage(b, h, add) {
+  const s = h.name;
+  if (b.version !== h.version) {
+    add("message.version", s, "risky", `${s} version ${b.version} \u2192 ${h.version}: copies of v${b.version} in flight will be refused unless outboxes drain before the deploy`);
+    return;
+  }
+  if (b.description !== h.description && JSON.stringify(b.payload) === JSON.stringify(h.payload)) {
+    add("message.described", s, "compatible", "Description changed");
+    return;
+  }
+  const findings = comparePayload(b.payload, h.payload);
+  if (findings.length === 0) add("message.described", s, "compatible", "Descriptions or defaults changed; validation is unchanged");
+  for (const finding of findings) {
+    add("message.payload", s, finding.compatibility, finding.compatibility === "breaking" ? `${finding.detail}; keep accepting the old shape, or drain before deploying` : finding.detail);
+  }
+}
+function diffEffect(b, h, add) {
+  const s = h.name;
+  if (b.idempotency !== h.idempotency)
+    add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} \u2192 ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
+  if (b.approval !== h.approval) add("effect.approval", s, "risky", `Approval ${b.approval} \u2192 ${h.approval}`, { approval: h.approval === "none" });
+  if (b.reconcile !== h.reconcile) add("effect.reconcile", s, "risky", `Reconciliation ${b.reconcile} \u2192 ${h.reconcile}`);
+  if ((b.result ?? null) !== (h.result ?? null)) add("effect.result", s, "risky", `Outcome message ${b.result ?? "none"} \u2192 ${h.result ?? "none"}; in-flight outcomes use the old message`);
+}
+var compatible = (detail) => ({ compatibility: "compatible", detail });
+var breaking = (detail) => ({ compatibility: "breaking", detail });
+var risky = (detail) => ({ compatibility: "risky", detail });
+var ANNOTATIONS = /* @__PURE__ */ new Set(["$schema", "$id", "$comment", "title", "description", "default", "examples", "deprecated", "readOnly", "writeOnly"]);
+var LOWER_BOUNDS = /* @__PURE__ */ new Set(["minimum", "exclusiveMinimum", "minLength", "minItems", "minProperties", "minContains"]);
+var UPPER_BOUNDS = /* @__PURE__ */ new Set(["maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties", "maxContains"]);
+var RESTRICTIONS = /* @__PURE__ */ new Set(["pattern", "format", "multipleOf", "uniqueItems"]);
+var STRUCTURAL = /* @__PURE__ */ new Set(["type", "enum", "const", "properties", "required", "additionalProperties", "items"]);
+var show = (v) => JSON.stringify(v);
+var list = (vs) => vs.map(show).join(", ");
+function comparePayload(oldS, newS, path = "payload") {
+  if (show(oldS) === show(newS)) return [];
+  if (!oldS || !newS) return [risky(`${path} schema changed, and one side can't be exported as JSON Schema`)];
+  if (constraintKeys(newS).length === 0) return constraintKeys(oldS).length === 0 ? [] : [compatible(`${path} now accepts any value`)];
+  const ot = typesOf(oldS);
+  const nt = typesOf(newS);
+  if (!ot || !nt) {
+    const same = show(withoutAnnotations(oldS)) === show(withoutAnnotations(newS));
+    return same ? [] : [risky(`${path} changed in a way this can't decide (no single type, such as a union); check that old copies still pass`)];
+  }
+  const widens = (from) => (to) => to === from || from === "integer" && to === "number";
+  const lost = ot.filter((t) => !nt.some(widens(t)));
+  if (lost.length) return [breaking(`${path} no longer accepts ${lost.join(" or ")} (type ${show(oldS.type)} \u2192 ${show(newS.type)})`)];
+  const out = [];
+  const gained = nt.filter((t) => !ot.includes(t));
+  if (gained.length) out.push(compatible(`${path} also accepts ${gained.join(" or ")}`));
+  const ov = fixedValues(oldS);
+  const nv = fixedValues(newS);
+  if (nv && !ov) out.push(breaking(`${path} is now limited to ${list(nv)}; old copies with any other value are refused`));
+  else if (nv && ov) {
+    const dropped = ov.filter((v) => !nv.some((w) => show(w) === show(v)));
+    const added = nv.filter((v) => !ov.some((w) => show(w) === show(v)));
+    if (dropped.length) out.push(breaking(`${path} no longer accepts ${list(dropped)}`));
+    else if (added.length) out.push(compatible(`${path} also accepts ${list(added)}`));
+  } else if (ov && !nv) out.push(compatible(`${path} is no longer limited to ${list(ov)}`));
+  if (ot.includes("object") && nt.includes("object")) out.push(...compareObject(oldS, newS, path));
+  if (ot.includes("array") && nt.includes("array")) out.push(...comparePayload(oldS.items ?? {}, newS.items ?? {}, `${path}[]`));
+  for (const k of [.../* @__PURE__ */ new Set([...Object.keys(oldS), ...Object.keys(newS)])].sort()) {
+    if (ANNOTATIONS.has(k) || STRUCTURAL.has(k)) continue;
+    const o = present(oldS, k) ? oldS[k] : void 0;
+    const n = present(newS, k) ? newS[k] : void 0;
+    if (show(o) === show(n)) continue;
+    if ((LOWER_BOUNDS.has(k) || UPPER_BOUNDS.has(k)) && (o === void 0 || typeof o === "number") && (n === void 0 || typeof n === "number")) {
+      if (n === void 0) out.push(compatible(`${path} drops ${k} ${o}`));
+      else if (o === void 0) out.push(breaking(`${path} now has ${k} ${n}`));
+      else if (LOWER_BOUNDS.has(k) ? n > o : n < o) out.push(breaking(`${path} ${k} ${o} \u2192 ${n}`));
+      else out.push(compatible(`${path} ${k} ${o} \u2192 ${n}`));
+    } else if (RESTRICTIONS.has(k)) {
+      if (n === void 0) out.push(compatible(`${path} drops ${k} ${show(o)}`));
+      else if (o === void 0) out.push(breaking(`${path} now requires ${k} ${show(n)}`));
+      else out.push(risky(`${path} ${k} ${show(o)} \u2192 ${show(n)}; check that old values still match`));
+    } else out.push(risky(`${path} ${k} changed; check that old copies still pass`));
+  }
+  return out;
+}
+function extrasOf(ap) {
+  if (ap === void 0) return "unstated";
+  if (ap === false) return "closed";
+  if (ap === true || typeof ap === "object" && ap !== null && constraintKeys(ap).length === 0) return "any";
+  return "schema";
+}
+function compareObject(oldS, newS, path) {
+  const out = [];
+  const op = oldS.properties ?? {};
+  const np = newS.properties ?? {};
+  const oreq = new Set(oldS.required ?? []);
+  const nreq = new Set(newS.required ?? []);
+  const oAP = oldS.additionalProperties;
+  const nAP = newS.additionalProperties;
+  const oExtras = extrasOf(oAP);
+  const nExtras = extrasOf(nAP);
+  for (const k of Object.keys(np).sort()) {
+    const at = `${path}.${k}`;
+    if (k in op) {
+      if (!oreq.has(k) && nreq.has(k)) out.push(breaking(`${at} became required`));
+      if (oreq.has(k) && !nreq.has(k)) out.push(compatible(`${at} became optional`));
+      out.push(...comparePayload(op[k] ?? null, np[k] ?? null, at));
+    } else if (nreq.has(k)) out.push(breaking(`${at} is a new required property`));
+    else if (oExtras === "unstated" || oExtras === "closed") out.push(compatible(`${at} is a new optional property`));
+    else if (oExtras === "any") out.push(risky(`${at} is a new optional property, but ${path} accepted undeclared properties, so old copies may already carry ${k} in another shape`));
+    else {
+      const f = comparePayload(oAP, np[k] ?? null, at);
+      out.push(...f.length ? f : [compatible(`${at} is a new optional property`)]);
+    }
+  }
+  for (const k of Object.keys(op).sort()) {
+    if (k in np) continue;
+    const at = `${path}.${k}`;
+    if (nExtras === "closed") {
+      out.push(breaking(`${at} was removed and ${path} rejects undeclared properties: ${oreq.has(k) ? "every old copy carries it" : "old copies that set it are refused"}`));
+    } else if (nExtras === "schema") {
+      const f = comparePayload(op[k] ?? null, nAP, at);
+      out.push(...f.length ? f.map((x) => ({ ...x, detail: `${at} was removed and now falls under ${path}'s additionalProperties: ${x.detail}` })) : [compatible(`${at} was removed; old values still match additionalProperties`)]);
+    } else out.push(compatible(`${at} was removed (old copies still pass; the field is ignored)`));
+  }
+  if (oExtras !== nExtras || oExtras === "schema" && show(oAP) !== show(nAP)) {
+    if (nExtras === "closed") {
+      out.push(
+        oExtras === "unstated" ? risky(`${path} now rejects undeclared properties; old copies that carried extra fields (ignored until now) are refused`) : breaking(`${path} now rejects undeclared properties, which the old schema accepted`)
+      );
+    } else if (nExtras === "schema") {
+      if (oExtras === "closed") out.push(compatible(`${path} now accepts undeclared properties that match a schema`));
+      else if (oExtras === "unstated") out.push(risky(`${path} now constrains undeclared properties; old copies that carried extra fields (ignored until now) must match`));
+      else if (oExtras === "any") out.push(breaking(`${path} now constrains undeclared properties, which the old schema accepted in any shape`));
+      else out.push(...comparePayload(oAP, nAP, `${path}.*`));
+    } else out.push(compatible(`${path} now accepts undeclared properties`));
+  }
+  return out;
+}
+function typesOf(s) {
+  if (typeof s.type === "string") return [s.type];
+  if (Array.isArray(s.type) && s.type.every((t) => typeof t === "string")) return s.type;
+  return null;
+}
+function fixedValues(s) {
+  if (Array.isArray(s.enum)) return s.enum;
+  if ("const" in s) return [s.const];
+  return null;
+}
+function present(s, k) {
+  return s[k] !== void 0 && !(k === "uniqueItems" && s[k] === false);
+}
+function withoutAnnotations(s) {
+  return Object.fromEntries(Object.entries(s).filter(([k]) => !ANNOTATIONS.has(k)));
+}
+function constraintKeys(s) {
+  return Object.keys(s).filter((k) => !ANNOTATIONS.has(k) && present(s, k));
+}
+function plan(changes, head) {
+  const steps = [{ kind: "verify", text: "Run `actord check` and `npm run verify`; deploy nothing unless both pass." }];
+  for (const c of changes.filter((c2) => c2.kind === "actor.added")) {
+    const a = head.actors.find((x) => x.name === c.subject);
+    steps.push({
+      kind: "config",
+      text: `Declare ${c.subject} in wrangler.jsonc: binding { "name": "${a?.binding}", "class_name": "${c.subject}" } and exports.${c.subject} = { "type": "durable-object", "storage": "sqlite" } (\`actord check\` confirms both).`
+    });
+  }
+  for (const c of changes.filter((c2) => c2.kind === "actor.removed")) {
+    steps.push({
+      kind: "irreversible",
+      text: `IRREVERSIBLE: retiring ${c.subject} means exports.${c.subject}.state = "deleted", which destroys all its stored data with no trash. Export anything worth keeping first. If this is a rename, use state "renamed" with renamed_to instead, which keeps the data. Needs explicit approval.`
+    });
+  }
+  const drains = [...new Set(changes.filter((c) => c.compatibility !== "compatible" && (c.kind.startsWith("message") || c.kind === "route.removed")).map((c) => c.subject))];
+  if (drains.length)
+    steps.push({
+      kind: "drain",
+      text: `Drain first: ${drains.join(", ")} may refuse copies already in flight. Deploy when outboxes are empty, or avoid the drain: make the new schema accept the old shape too, or add a new message beside the old one and retire the old one in a later deploy. A risky change needs no drain once a test shows old copies still pass.`
+    });
+  const approvals = changes.filter((c) => c.requiresApproval && !c.irreversible);
+  if (approvals.length) steps.push({ kind: "approval", text: `A person must approve: ${approvals.map((c) => c.detail).join("; ")}.` });
+  if (changes.some((c) => c.kind === "actor.schedule")) steps.push({ kind: "schedule", text: "An alarm that is already set keeps its old time until it fires once under the new code." });
+  if (changes.some((c) => c.kind === "actor.added" || c.kind === "actor.removed"))
+    steps.push({
+      kind: "lifecycle",
+      text: "Durable Object lifecycle changes apply only through `wrangler deploy` (not `wrangler versions upload`); a later rollback can't cross them, and gradual deployment isn't available for them."
+    });
+  steps.push({ kind: "deploy", text: "Deploying is a person's decision. After approval, they run `npx wrangler deploy`; the toolkit never deploys." });
+  return steps;
+}
+
+// src/model/fingerprint.ts
+import { createHash } from "node:crypto";
+import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync5, statSync } from "node:fs";
+import { join as join4, relative } from "node:path";
+var ROOTS = ["system.ts", "wrangler.jsonc", "wrangler.json", "src/index.ts", "src/actors", "src/messages"];
+function actorFiles(root) {
+  const out = [];
+  const walk = (p) => {
+    if (!existsSync5(p)) return;
+    if (statSync(p).isDirectory()) for (const e of readdirSync(p).sort()) walk(join4(p, e));
+    else if (/\.(ts|jsonc?|mts)$/.test(p)) out.push(relative(root, p));
+  };
+  for (const r of ROOTS) walk(join4(root, r));
+  return out.sort();
+}
+function fingerprint(root) {
+  const h = createHash("sha256");
+  for (const f of actorFiles(root)) h.update(f).update("\0").update(readFileSync5(join4(root, f))).update("\0");
+  return h.digest("hex").slice(0, 16);
+}
+
+// src/model/load.ts
+import { existsSync as existsSync6, readFileSync as readFileSync6, statSync as statSync2 } from "node:fs";
+import { dirname as dirname2, join as join5, resolve as resolve2 } from "node:path";
+import { pathToFileURL } from "node:url";
+async function loadProject(root) {
+  const project = {
+    root,
+    system: null,
+    manifest: null,
+    loadError: null,
+    config: null,
+    configFile: null,
+    entryFile: null,
+    entryExports: null,
+    committedManifest: null,
+    committedManifestRaw: null
+  };
+  try {
+    const mod = await import(pathToFileURL(join5(root, DECLARATION_FILE)).href);
+    const candidate = mod.default ?? mod.system;
+    if (!isSystem(candidate)) {
+      project.loadError = "system.ts must `export default defineSystem({...})` from @actord/toolkit/system";
+    } else {
+      project.system = candidate;
+      project.manifest = normalize(candidate);
+    }
+  } catch (err) {
+    project.loadError = explainLoadError(err);
+  }
+  for (const file of ["wrangler.jsonc", "wrangler.json"]) {
+    if (existsSync6(join5(root, file))) {
+      project.configFile = file;
+      project.config = readJsonc(join5(root, file));
+      break;
+    }
+  }
+  if (project.config?.main) {
+    project.entryFile = project.config.main;
+    project.entryExports = collectExports(resolve2(root, project.config.main), /* @__PURE__ */ new Set());
+  }
+  const manifestPath = join5(root, MANIFEST_FILE);
+  if (existsSync6(manifestPath)) {
+    project.committedManifestRaw = readFileSync6(manifestPath, "utf8");
+    project.committedManifest = readJson(manifestPath);
+  }
+  return project;
+}
+function explainLoadError(err) {
+  const e = err;
+  const msg = (e.message ?? String(err)).split("\n")[0] ?? "";
+  if (e.code === "ERR_MODULE_NOT_FOUND") return `system.ts imports a module that isn't installed or doesn't exist: ${msg}. Run \`npm install\`, and use explicit .ts extensions for relative imports.`;
+  if (e.code === "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX") return `system.ts uses TypeScript syntax Node can't strip (enums, namespaces, parameter properties): ${msg}`;
+  if (/Cannot use import statement outside a module/.test(msg)) return `${msg}. Set "type": "module" in package.json.`;
+  return `system.ts failed to load: ${msg}`;
+}
+var EXPORT_RE = /export\s+(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]*)\}(?:\s*from\s*["']([^"']+)["'])?|export\s*\*\s*from\s*["']([^"']+)["']/g;
+function collectExports(file, seen) {
+  const names = /* @__PURE__ */ new Set();
+  if (seen.has(file) || !existsSync6(file) || !statSync2(file).isFile()) return names;
+  seen.add(file);
+  const source = readFileSync6(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  for (const m of source.matchAll(EXPORT_RE)) {
+    if (m[1]) names.add(m[1]);
+    if (m[2] !== void 0) {
+      for (const part of m[2].split(",")) {
+        const spec = part.trim().replace(/^type\s+/, "");
+        if (!spec || part.trim().startsWith("type ")) continue;
+        const alias = spec.split(/\s+as\s+/).at(-1).trim();
+        if (alias) names.add(alias);
+      }
+    }
+    if (m[4]) {
+      const target = resolveRelative(dirname2(file), m[4]);
+      if (target) for (const n of collectExports(target, seen)) names.add(n);
+    }
+  }
+  return names;
+}
+function resolveRelative(dir, spec) {
+  if (!spec.startsWith(".")) return null;
+  const base = resolve2(dir, spec);
+  for (const candidate of [base, base.replace(/\.js$/, ".ts"), `${base}.ts`, join5(base, "index.ts")]) {
+    if (existsSync6(candidate) && statSync2(candidate).isFile()) return candidate;
+  }
+  return null;
+}
+
+// src/model/mermaid.ts
+var id = (name) => (name.startsWith("@") ? `x_${name.slice(1)}` : `a_${name}`).replace(/[^A-Za-z0-9_]/g, "_");
+var label = (s) => s.replace(/&/g, "#amp;").replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
+function renderMermaid(m) {
+  const version = new Map(m.messages.map((x) => [x.name, x.version]));
+  const external = [...new Set(m.routes.map((r) => r.from).filter((f) => f.startsWith("@")))].sort();
+  const arrows = /* @__PURE__ */ new Map();
+  for (const r of m.routes) {
+    const key = `${r.from}\0${r.to}`;
+    const arrow = arrows.get(key) ?? { from: r.from, to: r.to, messages: [] };
+    arrow.messages.push(label(`${r.message}@${version.get(r.message) ?? "?"}`));
+    arrows.set(key, arrow);
+  }
+  const lines = [
+    "flowchart LR",
+    `  %% ${m.system.name}: ${m.actors.length} actor(s), ${m.routes.length} route(s). Generated by actord graph --format mermaid.`,
+    ...external.map((e) => `  ${id(e)}(["${label(e)}"])`),
+    ...m.actors.map((a) => `  ${id(a.name)}["${label(a.name)}<br/>${label([a.kind, a.schedule ? `every ${a.schedule.every}` : null].filter(Boolean).join(" \xB7 "))}"]`),
+    ...[...arrows.values()].map((a) => `  ${id(a.from)} -->|"${a.messages.join("<br/>")}"| ${id(a.to)}`)
+  ];
+  return lines.join("\n");
+}
+
+// src/cli/commands/model.ts
+var EXIT_NO_PROJECT = 3;
+function noProject(cwd, data) {
+  return {
+    data: { ...data, projectRoot: null },
+    text: `No actor project at ${cwd} (no system.ts with a package.json here or above).`,
+    exitCode: EXIT_NO_PROJECT
+  };
+}
+var RELEVANT = [/(^|\/)system\.ts$/, /(^|\/)src\/actors\//, /(^|\/)src\/messages\//, /(^|\/)wrangler\.jsonc?$/, /(^|\/)src\/index\.ts$/, new RegExp(`(^|/)${MANIFEST_FILE.replace(".", "\\.")}$`)];
+async function check(cwd, opts) {
+  const root = findProjectRoot(cwd);
+  if (!root) return noProject(cwd, { skipped: true, ok: true, errors: 0, warnings: 0, diagnostics: [] });
+  if (opts.changed && opts.changed.length > 0) {
+    const touched = opts.changed.map((f) => relative2(root, resolve3(cwd, f))).filter((f) => !f.startsWith(".."));
+    if (!touched.some((f) => RELEVANT.some((re) => re.test(f)))) {
+      return { data: { projectRoot: root, skipped: true, ok: true, errors: 0, warnings: 0, diagnostics: [] }, text: opts.format === "brief" ? "" : "No actor files changed; nothing to check.", exitCode: 0 };
+    }
+  }
+  const project = await loadProject(root);
+  const diagnostics = checkProject(project);
+  const errors = diagnostics.filter((d) => d.severity === "error").length;
+  const warnings = diagnostics.length - errors;
+  const data = { projectRoot: root, skipped: false, ok: errors === 0, errors, warnings, diagnostics };
+  recordCheck(root, data);
+  let text;
+  if (opts.format === "brief") {
+    text = diagnostics.filter((d) => d.severity === "error").map((d) => `actord check: ${d.code} ${d.subject ?? ""}: ${d.message}${d.fix ? ` (fix: ${d.fix})` : ""}`).join("\n");
+  } else {
+    const lines = diagnostics.map((d) => `${d.severity === "error" ? "\u2717" : "!"} ${d.code}${d.subject ? ` ${d.subject}` : ""}: ${d.message}${d.fix ? `
+    fix: ${d.fix}` : ""}`);
+    lines.push(`${errors === 0 ? "\u2713" : "\u2717"} ${project.manifest?.system.name ?? "system"}: ${errors} error(s), ${warnings} warning(s)`);
+    text = lines.join("\n");
+  }
+  return { data, text, exitCode: errors === 0 ? 0 : 1 };
+}
+var LAST_CHECK_FILE = ".actord/last-check.json";
+function recordCheck(root, data) {
+  try {
+    mkdirSync(join6(root, ".actord"), { recursive: true });
+    const record = {
+      schemaVersion: 1,
+      ok: data.ok,
+      errors: data.errors,
+      warnings: data.warnings,
+      codes: data.diagnostics.map((d) => `${d.severity}:${d.code}`),
+      fingerprint: fingerprint(root),
+      checkedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    writeFileSync(join6(root, LAST_CHECK_FILE), `${JSON.stringify(record, null, 2)}
+`);
+  } catch {
+  }
+}
+async function graph(cwd, opts) {
+  if (opts.format !== void 0 && opts.format !== "text" && opts.format !== "mermaid") {
+    return { data: { projectRoot: null, manifest: null, written: null }, text: `\u2717 unknown --format "${opts.format}" (text or mermaid)`, exitCode: 2 };
+  }
+  const root = findProjectRoot(cwd);
+  if (!root) return noProject(cwd, { manifest: null, written: null });
+  const project = await loadProject(root);
+  if (!project.manifest) return { data: { projectRoot: root, manifest: null, written: null }, text: `\u2717 ${project.loadError}`, exitCode: 1 };
+  let written = null;
+  if (opts.write) {
+    writeFileSync(join6(root, MANIFEST_FILE), serializeManifest(project.manifest));
+    written = MANIFEST_FILE;
+  }
+  if (opts.format === "mermaid") {
+    const mermaid = renderMermaid(project.manifest);
+    return { data: { projectRoot: root, manifest: project.manifest, written, mermaid }, text: mermaid, exitCode: 0 };
+  }
+  const text = renderGraph(project.manifest) + (written ? `
+
+wrote ${written}` : "");
+  return { data: { projectRoot: root, manifest: project.manifest, written }, text, exitCode: 0 };
+}
+var count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+function renderGraph(m) {
+  const ver = new Map(m.messages.map((x) => [x.name, x.version]));
+  const width = Math.max(0, ...m.routes.map((r) => r.from.length));
+  const lines = [
+    `${m.system.name} \xB7 ${count(m.actors.length, "actor")} \xB7 ${count(m.routes.length, "route")} \xB7 ${count(m.messages.length, "message")} \xB7 ${count(m.effects.length, "effect")}`,
+    "",
+    "Routes",
+    ...m.routes.map((r) => `  ${r.from.padEnd(width)}  \u2500\u2500${r.message}@${ver.get(r.message) ?? "?"}\u2500\u2500\u25B6  ${r.to}`),
+    "",
+    "Actors"
+  ];
+  for (const a of m.actors) {
+    const facts = [a.kind, a.schedule ? `every ${a.schedule.every}` : null, a.effects.length ? `effects ${a.effects.join(", ")}` : null, `justified by ${a.justification.join(", ") || "nothing"}`].filter(Boolean);
+    lines.push(`  ${a.name} (${a.binding}): ${facts.join(" \xB7 ")}`, `    ${a.purpose}`);
+  }
+  if (m.effects.length) {
+    lines.push("", "Effects");
+    for (const e of m.effects) lines.push(`  ${e.name}: idempotency ${e.idempotency}${e.reconcile ? ", reconcilable" : ""}, approval ${e.approval}. ${e.description}`);
+  }
+  return lines.join("\n");
+}
+async function diff(cwd, opts) {
+  const root = findProjectRoot(cwd);
+  if (!root) return noProject(cwd, { ...diffManifests(EMPTY_MANIFEST, EMPTY_MANIFEST), base: { source: "none", system: "" }, head: { system: "" }, notes: [] });
+  const project = await loadProject(root);
+  if (!project.manifest) return { data: { projectRoot: root, ...diffManifests(EMPTY_MANIFEST, EMPTY_MANIFEST), base: { source: "none", system: "" }, head: { system: "" }, notes: [project.loadError ?? ""] }, text: `\u2717 ${project.loadError}`, exitCode: 1 };
+  const notes = [];
+  let base = EMPTY_MANIFEST;
+  let source = "none";
+  if (opts.baseFile) {
+    base = JSON.parse(readFileSync7(resolve3(cwd, opts.baseFile), "utf8"));
+    source = `file:${opts.baseFile}`;
+  } else {
+    const ref = opts.base ?? "HEAD";
+    const fromGit = gitShow(root, ref, MANIFEST_FILE);
+    const onDisk = join6(root, MANIFEST_FILE);
+    if (fromGit.text) {
+      base = JSON.parse(fromGit.text);
+      source = `git:${ref}`;
+    } else if (!fromGit.usable && existsSync7(onDisk)) {
+      base = JSON.parse(readFileSync7(onDisk, "utf8"));
+      source = `file:${MANIFEST_FILE}`;
+      notes.push(`git isn't usable here (${fromGit.why}), so this compares against ${MANIFEST_FILE} on disk, the architecture last recorded by \`actord graph --write\`. Run \`actord diff\` before regenerating it, or pass --base-file.`);
+    } else {
+      notes.push(`No ${MANIFEST_FILE} at ${ref}; the whole system is shown as added. Commit the manifest (\`actord graph --write\`) to diff against it.`);
+    }
+  }
+  const result2 = diffManifests(base, project.manifest);
+  const data = { projectRoot: root, base: { source, system: base.system.name }, head: { system: project.manifest.system.name }, notes, ...result2 };
+  return { data, text: renderDiff(data), exitCode: 0 };
+}
+function gitShow(root, ref, file) {
+  const top = spawnSync2("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  if (top.status !== 0) {
+    const why = top.error?.message ?? (top.stderr ?? "").trim().split("\n").pop() ?? `exit ${top.status}`;
+    return { text: null, usable: false, why: why || `exit ${top.status}` };
+  }
+  const rel = relative2(top.stdout.trim(), join6(root, file));
+  const r = spawnSync2("git", ["-C", root, "show", `${ref}:${rel}`], { encoding: "utf8" });
+  return { text: r.status === 0 ? r.stdout : null, usable: true, why: "" };
+}
+function renderDiff(d) {
+  const sign = (k) => k.endsWith(".added") ? "+" : k.endsWith(".removed") ? "-" : "~";
+  const lines = [`actord diff: ${d.head.system} against ${d.base.source}`, ...d.notes.map((n) => `  note: ${n}`), ""];
+  if (d.changes.length === 0) lines.push("  No architectural changes.");
+  for (const c of d.changes) {
+    const flags = [c.compatibility, c.requiresApproval ? "needs approval" : null, c.irreversible ? "IRREVERSIBLE" : null].filter(Boolean).join(", ");
+    lines.push(`  ${sign(c.kind)} ${c.kind.padEnd(20)} ${c.subject}  [${flags}]`, `      ${c.detail}`);
+  }
+  lines.push("", "Deploy plan (a plan, not a deploy):", ...d.plan.map((s, i) => `  ${i + 1}. ${s.text}`));
+  return lines.join("\n");
+}
+
+// src/cli/commands/events.ts
+function eventsPath(cwd, file) {
+  if (file) return { path: resolve4(cwd, file), root: findProjectRoot(cwd) };
+  const root = findProjectRoot(cwd);
+  return { path: root ? join7(root, EVENTS_FILE) : null, root };
+}
+function keep(e, f) {
+  if (f.notable && !NOTABLE.has(e.kind)) return false;
+  if (f.actor && !e.actor.startsWith(f.actor) && !(e.to ?? "").startsWith(f.actor)) return false;
+  if (f.kind && e.kind !== f.kind) return false;
+  if (f.correlation && e.correlationId !== f.correlation) return false;
+  return true;
+}
+var NO_EVENTS = "No local events yet. Run the tests (they record through @actord/toolkit/vitest) to produce .actord/events.ndjson. Production history isn't available to this command.";
+function events(cwd, opts) {
+  const { path, root } = eventsPath(cwd, opts.file);
+  if (!path) return { data: { projectRoot: null, file: null, count: 0, unparseable: 0, events: [] }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  const log = readEvents(path);
+  const file = root ? relative3(root, path) : path;
+  if (!log) return { data: { projectRoot: root, file, count: 0, unparseable: 0, events: [] }, text: NO_EVENTS, exitCode: 0 };
+  const selected = log.events.filter((e) => keep(e, opts));
+  return {
+    data: { projectRoot: root, file, count: selected.length, unparseable: log.unparseable, events: selected },
+    text: selected.length ? selected.map(formatEvent).join("\n") : "No matching events.",
+    exitCode: 0
+  };
+}
+async function followEvents(cwd, opts, out) {
+  const { path } = eventsPath(cwd, opts.file);
+  if (!path) {
+    out.write(`No actor project at ${cwd}; pass --file <events.ndjson>.
+`);
+    return EXIT_NO_PROJECT;
+  }
+  let offset = 0;
+  let partial = "";
+  const print = (e) => out.write(opts.json ? `${JSON.stringify(e)}
+` : `${formatEvent(e)}
+`);
+  for (; ; ) {
+    if (existsSync8(path)) {
+      const size = statSync3(path).size;
+      if (size < offset) {
+        offset = 0;
+        partial = "";
+        if (!opts.notable) out.write(opts.json ? `${JSON.stringify({ $actord: 1, kind: "log.reset", at: Date.now(), actor: "actord-cli" })}
+` : "\u2500\u2500 new run \u2500\u2500\n");
+      }
+      if (size > offset) {
+        const fd = openSync(path, "r");
+        const buf = Buffer.alloc(size - offset);
+        readSync(fd, buf, 0, buf.length, offset);
+        closeSync(fd);
+        offset = size;
+        const text = partial + buf.toString("utf8");
+        const cut = text.lastIndexOf("\n");
+        partial = text.slice(cut + 1);
+        for (const e of parseEvents(text.slice(0, cut + 1)).events) if (keep(e, opts)) print(e);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+function claimMonitor(cwd) {
+  const root = findProjectRoot(cwd);
+  if (!root) return true;
+  const lock = join7(root, ".actord", `monitor-${sessionPid()}.pid`);
+  if (!acquireLock(lock, process.pid)) return false;
+  process.on("exit", () => releaseLock(lock, process.pid));
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => process.exit(0));
+  return true;
+}
+function acquireLock(lock, pid) {
+  mkdirSync2(dirname3(lock), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync2(lock, String(pid), { flag: "wx" });
+      return true;
+    } catch {
+      const holder = Number(readFileSync8(lock, "utf8"));
+      if (holder && isAlive(holder)) return false;
+      rmSync(lock, { force: true });
+    }
+  }
+  return false;
+}
+function releaseLock(lock, pid) {
+  try {
+    if (Number(readFileSync8(lock, "utf8")) === pid) rmSync(lock);
+  } catch {
+  }
+}
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function sessionPid() {
+  let pid = process.ppid;
+  for (let depth = 0; depth < 6 && pid > 1; depth++) {
+    const r = spawnSync3("ps", ["-o", "ppid=,comm=", "-p", String(pid)], { encoding: "utf8" });
+    const m = r.status === 0 ? /^\s*(\d+)\s+(.*)$/.exec(r.stdout.trim()) : null;
+    if (!m) break;
+    if (/claude/i.test(m[2])) return pid;
+    pid = Number(m[1]);
+  }
+  return process.ppid;
+}
+function trace(cwd, id2, opts) {
+  const { path, root } = eventsPath(cwd, opts.file);
+  const note = "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record.";
+  const empty = (file2, events2) => ({ projectRoot: root, found: false, target: id2 ?? "", correlationId: null, rootCauseUnknown: false, root: null, coverage: { file: file2, events: events2, note } });
+  if (!id2) return { data: empty(null, 0), text: "usage: actord trace <message-id> [--json] [--file <events.ndjson>]", exitCode: 2 };
+  if (!path) return { data: empty(null, 0), text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  const file = root ? relative3(root, path) : path;
+  const log = readEvents(path);
+  if (!log) return { data: empty(file, 0), text: `unknown: ${id2}. ${NO_EVENTS}`, exitCode: 1 };
+  const t = buildTrace(log, id2);
+  return { data: { projectRoot: root, ...t, coverage: { file, events: log.events.length, note } }, text: renderTrace(t, file), exitCode: t.found ? 0 : 1 };
+}
+
+// src/cli/commands/hook.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { existsSync as existsSync9, readFileSync as readFileSync9 } from "node:fs";
+import { dirname as dirname4, join as join8, relative as relative4 } from "node:path";
+var RELEVANT2 = /(^|\/)(system\.ts|wrangler\.jsonc?|actord\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
+var BUDGET_MS = 2e3;
+async function hook(name, stdin, env, out, err) {
+  let input = {};
+  try {
+    input = stdin.trim() ? JSON.parse(stdin) : {};
+  } catch {
+    return 0;
+  }
+  if (name === "check-on-edit") return checkOnEdit(input, env, out, err);
+  if (name === "evidence-gate") return evidenceGate(input, env, out);
+  if (name === "heredoc-note") return heredocNote(input, out);
+  err.write(`actord hook: unknown hook "${name ?? ""}"
+`);
+  return 0;
+}
+var HEREDOC_NOTE = "actord: this session runs in don't-ask mode, which refuses shell heredocs. If this command is refused, only this command is: Bash is still available for tests, `actord`, and git. Write or change files with the Write and Edit tools.";
+function hasHeredoc(command) {
+  for (const m of command.matchAll(/(?<!<)<<(?!<)-?\s*(['"]?)([A-Za-z_][\w.-]*)\1/g)) {
+    const rest = command.slice(m.index + m[0].length).split("\n").slice(1);
+    if (rest.some((line) => line.replace(/^\t+/, "").trimEnd() === m[2])) return true;
+  }
+  return false;
+}
+function heredocNote(input, out) {
+  if (input.permission_mode !== "dontAsk") return 0;
+  const command = input.tool_input?.command;
+  if (!command || !hasHeredoc(command)) return 0;
+  if (!findProjectRoot(input.cwd ?? process.cwd())) return 0;
+  out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: HEREDOC_NOTE } })}
+`);
+  return 0;
+}
+async function checkOnEdit(input, env, out, err) {
+  if (env.CLAUDE_PLUGIN_OPTION_CHECK_ON_EDIT === "false") return 0;
+  const file = input.tool_input?.file_path;
+  if (!file || !RELEVANT2.test(file.replaceAll("\\", "/"))) return 0;
+  const root = findProjectRoot(dirname4(file));
+  if (!root) return 0;
+  const timer = new Promise((r) => setTimeout(() => r("timeout"), BUDGET_MS).unref());
+  const result2 = await Promise.race([check(root, { changed: [file], format: "brief" }), timer]);
+  if (result2 === "timeout") {
+    err.write(`actord: check-on-edit skipped (over its ${BUDGET_MS / 1e3}s budget); run \`actord check\`
+`);
+    return 0;
+  }
+  if (result2.data.errors === 0) return 0;
+  const context = `${result2.text}
+These are hard errors from \`actord check\` after editing ${relative4(root, file)}. Fix them, or explain why the declaration should change.`;
+  out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: context } })}
+`);
+  return 0;
+}
+function evidenceGate(input, env, out) {
+  if (env.CLAUDE_PLUGIN_OPTION_STRICT_EVIDENCE !== "true") return 0;
+  if (input.stop_hook_active) return 0;
+  const root = findProjectRoot(input.cwd ?? process.cwd());
+  if (!root) return 0;
+  let last = null;
+  try {
+    last = JSON.parse(readFileSync9(join8(root, LAST_CHECK_FILE), "utf8"));
+  } catch {
+    last = null;
+  }
+  if (last?.ok && last.fingerprint === fingerprint(root)) return 0;
+  if (!last && !actorFilesModified(root)) return 0;
+  out.write(
+    `${JSON.stringify({ decision: "block", reason: "Actor files changed since the last passing check: run `actord check` and the affected tests before reporting." })}
+`
+  );
+  return 0;
+}
+function actorFilesModified(root) {
+  if (!existsSync9(join8(root, ".git")) && spawnSync4("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
+  const r = spawnSync4("git", ["-C", root, "status", "--porcelain", "--", "system.ts", "src/actors", "src/messages", "src/index.ts", "wrangler.jsonc"], {
+    encoding: "utf8"
+  });
+  return r.status === 0 && r.stdout.trim().length > 0;
+}
+
+// src/cli/commands/init.ts
+import { copyFileSync, existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname5, join as join9, resolve as resolve5 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// src/templates/project.ts
+var PINNED = {
+  "@cloudflare/vitest-plugin": "1.4.7",
+  typescript: "7.0.2",
+  vitest: "5.0.5",
+  wrangler: "4.152.0",
+  zod: "4.6.5"
+};
+function starterFiles(name, toolkitSpec, host = "claude") {
+  return {
+    "package.json": `${JSON.stringify(
+      {
+        name,
+        private: true,
+        actord: { host },
+        type: "module",
+        scripts: {
+          types: "wrangler types",
+          typecheck: "wrangler types >/dev/null && tsc --noEmit",
+          test: "vitest run",
+          check: "actord check",
+          verify: "actord verify",
+          dev: "wrangler dev"
+        },
+        devDependencies: { "@actord/toolkit": toolkitSpec, ...PINNED }
+      },
+      null,
+      2
+    )}
+`,
+    ".gitignore": "node_modules/\n.wrangler/\n.actord/\nworker-configuration.d.ts\n.dev.vars\n.env\n",
+    "system.ts": `import { defineSystem } from "@actord/toolkit/system";
+import { GreetingRecorded, GreetingRequested } from "./src/messages/index.ts";
+
+export default defineSystem({
+  name: "${name}",
+  description: "A starter: a greeter that accepts greetings and a guestbook that keeps them",
+  messages: {
+    "greeting.requested": GreetingRequested,
+    "greeting.recorded": GreetingRecorded,
+  },
+  actors: {
+    Greeter: {
+      binding: "GREETER",
+      kind: "deterministic",
+      purpose: "Accepts greeting requests from the outside world and forwards valid ones",
+      justification: ["permissions"],
+    },
+    Guestbook: {
+      binding: "GUESTBOOK",
+      kind: "deterministic",
+      purpose: "Owns the list of greetings and records each one once",
+      justification: ["state"],
+    },
+  },
+  routes: [
+    { from: "@ingress", message: "greeting.requested", to: "Greeter" },
+    { from: "Greeter", message: "greeting.recorded", to: "Guestbook" },
+  ],
+});
+`,
+    "src/messages/index.ts": `import { message } from "@actord/toolkit/system";
+import { z } from "zod";
+
+export const GreetingRequested = message({
+  version: 1,
+  description: "Someone asked to sign the guestbook",
+  payload: z.object({ name: z.string().min(1).max(100) }),
+});
+
+export const GreetingRecorded = message({
+  version: 1,
+  description: "A greeting to keep",
+  payload: z.object({ name: z.string(), text: z.string() }),
+});
+`,
+    "src/actors/greeter.ts": `import { DurableObject } from "cloudflare:workers";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
+import system from "../../system.ts";
+
+export class Greeter extends DurableObject<Env> {
+  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Greeter", {
+    "greeting.requested": ({ payload }, ctx) => {
+      ctx.send("greeting.recorded", { name: payload.name, text: \`Hello, \${payload.name}!\` });
+    },
+  });
+
+  receive(envelope: Envelope) {
+    return this.actor.receive(envelope);
+  }
+
+  alarm() {
+    return this.actor.alarm();
+  }
+}
+`,
+    "src/actors/guestbook.ts": `import { DurableObject } from "cloudflare:workers";
+import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
+import system from "../../system.ts";
+
+export class Guestbook extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (message_id TEXT PRIMARY KEY, name TEXT NOT NULL, text TEXT NOT NULL)");
+  }
+
+  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Guestbook", {
+    "greeting.recorded": ({ id, payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO entries (message_id, name, text) VALUES (?, ?, ?)", id, payload.name, payload.text);
+    },
+  });
+
+  receive(envelope: Envelope) {
+    return this.actor.receive(envelope);
+  }
+
+  alarm() {
+    return this.actor.alarm();
+  }
+
+  entries(): Array<{ name: string; text: string }> {
+    return this.ctx.storage.sql.exec<{ name: string; text: string }>("SELECT name, text FROM entries ORDER BY name").toArray();
+  }
+}
+`,
+    "src/index.ts": `import { ingress } from "@actord/toolkit/runtime";
+import system from "../system.ts";
+
+export { Greeter } from "./actors/greeter.ts";
+export { Guestbook } from "./actors/guestbook.ts";
+
+export default {
+  async fetch(request, env): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/greet") {
+      const { name } = (await request.json()) as { name: string };
+      return Response.json(await ingress(env, system, "Greeter", "greeting.requested", { name }));
+    }
+    if (request.method === "GET" && url.pathname === "/guestbook") {
+      return Response.json(await env.GUESTBOOK.getByName("main").entries());
+    }
+    return new Response("POST /greet {name} \xB7 GET /guestbook\\n", { status: 404 });
+  },
+} satisfies ExportedHandler<Env>;
+`,
+    "wrangler.jsonc": `{
+  "name": "${name}",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "GREETER", "class_name": "Greeter" },
+      { "name": "GUESTBOOK", "class_name": "Guestbook" }
+    ]
+  },
+  "exports": {
+    "Greeter": { "type": "durable-object", "storage": "sqlite" },
+    "Guestbook": { "type": "durable-object", "storage": "sqlite" }
+  }
+}
+`,
+    "tsconfig.json": `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: "es2024",
+          module: "es2022",
+          moduleResolution: "bundler",
+          lib: ["es2024"],
+          strict: true,
+          noEmit: true,
+          skipLibCheck: true,
+          allowImportingTsExtensions: true,
+          erasableSyntaxOnly: true,
+          verbatimModuleSyntax: true,
+          types: ["@cloudflare/vitest-plugin/types"]
+        },
+        include: ["system.ts", "src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts"]
+      },
+      null,
+      2
+    )}
+`,
+    "vitest.config.ts": `import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { actorEvents } from "@actord/toolkit/vitest";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } }), actorEvents()],
+});
+`,
+    "tests/greeting.test.ts": `import { env } from "cloudflare:workers";
+import { type Envelope, ingress } from "@actord/toolkit/runtime";
+import { settle } from "@actord/toolkit/testing";
+import { expect, it } from "vitest";
+import system from "../system.ts";
+
+// Durable Object storage persists across the tests in one file (each file starts empty), and effects
+// dedupe by key per instance: give each test its own instance keys and ids. An instance every test
+// shares, such as one at \`main\`, keeps what earlier tests left: assert only on what this test added.
+
+it("[end-to-end] a greeting reaches the guestbook", async () => {
+  expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "Ada" })).toMatchObject({ status: "handled" });
+  await settle(env, system);
+  expect(await env.GUESTBOOK.getByName("main").entries()).toContainEqual({ name: "Ada", text: "Hello, Ada!" });
+});
+
+it("[duplicate-delivery] a redelivered message is recorded once", async () => {
+  const envelope: Envelope = {
+    v: 1, id: "dup-1", type: "greeting.recorded", version: 1, from: "Greeter:main", to: "Guestbook:main",
+    correlationId: "dup-1", causationId: null, attempt: 1, sentAt: 0, payload: { name: "Grace", text: "Hello, Grace!" },
+  };
+  const guestbook = env.GUESTBOOK.getByName("main");
+  expect(await guestbook.receive(envelope)).toMatchObject({ status: "handled" });
+  expect(await guestbook.receive({ ...envelope, attempt: 2 })).toMatchObject({ status: "duplicate" });
+  expect((await guestbook.entries()).filter((e) => e.name === "Grace")).toHaveLength(1);
+});
+
+it("[refuse-invalid] an empty name is refused before any handler runs", async () => {
+  expect(await ingress(env, system, "Greeter", "greeting.requested", { name: "" })).toMatchObject({ status: "rejected", reason: "invalid_payload" });
+});
+`,
+    "actord.claims.json": `${JSON.stringify(
+      {
+        $comment: "Reliability claims and the tagged tests that establish them. `actord verify` classifies each from the latest run.",
+        claims: [
+          { id: "end-to-end", basis: "workerd", tests: ["end-to-end"], statement: "A greeting request reaches the guestbook." },
+          { id: "dedupe-delivery", basis: "workerd", tests: ["duplicate-delivery"], statement: "A redelivered message is recorded once." },
+          { id: "refuse-invalid", basis: "workerd", tests: ["refuse-invalid"], statement: "Invalid payloads are refused before any handler runs." },
+          { id: "exactly-once-external", basis: "not-guaranteed", statement: "Exactly-once external effects.", why: "The starter has no external effects; when you add one, say what its destination guarantees." }
+        ]
+      },
+      null,
+      2
+    )}
+`,
+    ...hostFiles(host, name)
+  };
+}
+
+// src/cli/commands/init.ts
+function bundledTarball() {
+  const dirs = [process.env.ACTORD_PLUGIN_DIST];
+  try {
+    dirs.push(dirname5(fileURLToPath(import.meta.url)));
+  } catch {
+  }
+  for (const dir of dirs) {
+    const tgz = dir ? join9(dir, `actord-toolkit-${VERSION}.tgz`) : null;
+    if (tgz && existsSync10(tgz)) return tgz;
+  }
+  return null;
+}
+function init(cwd, target, opts) {
+  const root = resolve5(cwd, target ?? ".");
+  let host;
+  try {
+    host = agentHost(opts.host ?? process.env.ACTORD_HOST ?? projectHost(root));
+  } catch (error) {
+    throw new UsageError(error.message);
+  }
+  const created = [];
+  const skipped = [];
+  const suggestions = [];
+  const write = (rel, content) => {
+    const path = join9(root, rel);
+    if (existsSync10(path)) {
+      skipped.push(rel);
+      return;
+    }
+    mkdirSync3(dirname5(path), { recursive: true });
+    writeFileSync3(path, content);
+    created.push(rel);
+  };
+  if (opts.adopt) {
+    if (!existsSync10(join9(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
+    const name2 = opts.name ?? readJson(join9(root, "package.json"))?.name ?? basename(root);
+    for (const [rel, content] of Object.entries(hostFiles(host, name2))) write(rel, content);
+    if (host === "claude" && skipped.includes(".claude/settings.json")) {
+      const ask = readJson(join9(root, ".claude/settings.json"))?.permissions?.ask ?? [];
+      const missing = askRules().filter((r) => !ask.includes(r));
+      if (missing.length) suggestions.push(`.claude/settings.json exists, so it wasn't changed. Add these to permissions.ask:
+${missing.map((r) => `    "${r}"`).join(",\n")}`);
+    }
+    const pkg = readJson(join9(root, "package.json"));
+    if (!pkg?.scripts?.verify) suggestions.push(`Add a script to package.json: "verify": "actord verify"`);
+    if (!pkg?.devDependencies?.["@actord/toolkit"]) suggestions.push(`Pin the CLI so CI and the coding agent run the same version: npm install -D -E @actord/toolkit@${VERSION}`);
+    if (!existsSync10(join9(root, "actord.manifest.json"))) suggestions.push("Run `npx actord graph --write` and commit actord.manifest.json.");
+    return result(root, "adopt", created, skipped, suggestions, "unchanged");
+  }
+  if (existsSync10(root) && readdirSync2(root).filter((e) => !ignorable(root, e)).length > 0) {
+    throw new UsageError(`${root} isn't empty; init only creates projects in empty directories. To add the toolkit's files to an existing project, run \`actord init --adopt\`.`);
+  }
+  const name = (opts.name ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "actor-system";
+  let toolkit = opts.toolkit ?? VERSION;
+  const tgz = opts.toolkit ? null : bundledTarball();
+  if (tgz) {
+    mkdirSync3(join9(root, "vendor"), { recursive: true });
+    copyFileSync(tgz, join9(root, "vendor", basename(tgz)));
+    created.push(`vendor/${basename(tgz)}`);
+    toolkit = `file:vendor/${basename(tgz)}`;
+  }
+  for (const [rel, content] of Object.entries(starterFiles(name, toolkit, host))) write(rel, content);
+  suggestions.push("cd into the project, then: npm install && npx actord graph --write && npm run verify");
+  return result(root, "create", created, skipped, suggestions, toolkit);
+}
+function result(root, mode, created, skipped, suggestions, toolkit) {
+  const text = [
+    `actord init (${mode}) at ${root}`,
+    ...created.map((f) => `  + ${f}`),
+    ...skipped.map((f) => `  = ${f} (exists; left unchanged)`),
+    ...suggestions.length ? ["", "Next:", ...suggestions.map((s) => `  ${s}`)] : []
+  ].join("\n");
+  return { data: { projectRoot: root, mode, created, skipped, suggestions, toolkit }, text, exitCode: 0 };
+}
+var CLAUDE_STATE = /* @__PURE__ */ new Set([".cc-writes", ".DS_Store"]);
+function ignorable(root, entry) {
+  if (entry === ".git" || entry === "node_modules" || entry === ".DS_Store") return true;
+  if (entry === ".claude") {
+    try {
+      return readdirSync2(join9(root, entry)).every((e) => CLAUDE_STATE.has(e));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+// src/cli/commands/room.ts
+import { spawnSync as spawnSync5 } from "node:child_process";
+import { existsSync as existsSync11, statSync as statSync4 } from "node:fs";
+import { join as join10, resolve as resolve6 } from "node:path";
+
+// src/model/svg.ts
+function topologyWithChanges(base, head) {
+  const key = (r) => `${r.from} ${r.message} ${r.to}`;
+  const baseActors = new Set(base?.actors.map((a) => a.name) ?? []);
+  const headActors = new Set(head.actors.map((a) => a.name));
+  const baseRoutes = new Set(base?.routes.map(key) ?? []);
+  const headRoutes = new Set(head.routes.map(key));
+  const actors = [
+    ...head.actors.map((a) => ({ name: a.name, kind: a.kind, change: base && !baseActors.has(a.name) ? "added" : null })),
+    ...base?.actors.filter((a) => !headActors.has(a.name)).map((a) => ({ name: a.name, kind: a.kind, change: "removed" })) ?? []
+  ].sort((a, b) => a.name < b.name ? -1 : 1);
+  const routes = [
+    ...head.routes.map((r) => ({ ...r, change: base && !baseRoutes.has(key(r)) ? "added" : null })),
+    ...base?.routes.filter((r) => !headRoutes.has(key(r))).map((r) => ({ ...r, change: "removed" })) ?? []
+  ].sort((a, b) => key(a) < key(b) ? -1 : 1);
+  return { actors, routes };
+}
+var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+var COLOR = { added: "#2da44e", removed: "#e5534b" };
+var QUIET = 0.65;
+var EXTERNAL2 = 0.75;
+var CHAR = 7;
+function topologySvg(t) {
+  const external = [...new Set(t.routes.map((r) => r.from).filter((f) => f.startsWith("@")))].sort();
+  const depth = new Map(external.map((e) => [e, 0]));
+  for (let pass = 0; pass < t.actors.length + 1; pass++) {
+    for (const r of t.routes) {
+      if (r.from === r.to) continue;
+      const d = (depth.get(r.from) ?? 0) + 1;
+      if (d <= t.actors.length && d > (depth.get(r.to) ?? 0)) depth.set(r.to, d);
+    }
+  }
+  for (const a of t.actors) if (!depth.has(a.name)) depth.set(a.name, 1);
+  const columns = /* @__PURE__ */ new Map();
+  for (const name of [...external, ...t.actors.map((a) => a.name)]) {
+    const d = depth.get(name) ?? 0;
+    columns.set(d, [...columns.get(d) ?? [], name]);
+  }
+  const W2 = 170;
+  const H = 46;
+  const GX = Math.max(90, ...t.routes.filter((r) => r.from !== r.to).map((r) => r.message.length * CHAR + 30));
+  const GY = 34;
+  const TOP = t.routes.some((r) => r.from === r.to) ? 50 : 20;
+  const pos = /* @__PURE__ */ new Map();
+  for (const [d, names] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+    names.forEach((n, i) => pos.set(n, { x: 20 + d * (W2 + GX), y: TOP + i * (H + GY) }));
+  }
+  const width = Math.max(...[...pos.values()].map((p) => p.x + W2)) + 20;
+  const height = Math.max(...[...pos.values()].map((p) => p.y + H)) + 30;
+  const kind = new Map(t.actors.map((a) => [a.name, a]));
+  const paint = (attr, change, opacity = 1) => change ? `${attr}="${COLOR[change]}"` : `${attr}="currentColor"${opacity < 1 ? ` ${attr}-opacity="${opacity}"` : ""}`;
+  const marker = (id2, change) => `<marker id="${id2}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" ${paint("fill", change, QUIET)}/></marker>`;
+  const arrow = (change) => `url(#actord-arrow${change ? `-${change}` : ""})`;
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="ui-sans-serif, system-ui" font-size="12">`,
+    `<defs>${marker("actord-arrow", null)}${marker("actord-arrow-added", "added")}${marker("actord-arrow-removed", "removed")}</defs>`
+  ];
+  for (const r of t.routes) {
+    const a = pos.get(r.from);
+    const b = pos.get(r.to);
+    if (!a || !b) continue;
+    const dash = r.change === "removed" ? ` stroke-dasharray="5 4"` : "";
+    if (r.from === r.to) {
+      const cx = a.x + W2 / 2;
+      parts.push(
+        `<path d="M${cx - 20},${a.y} C${cx - 20},${a.y - 30} ${cx + 20},${a.y - 30} ${cx + 20},${a.y}" fill="none" ${paint("stroke", r.change, QUIET)}${dash} marker-end="${arrow(r.change)}"/>`,
+        `<text x="${cx}" y="${a.y - 28}" text-anchor="middle" ${paint("fill", r.change, QUIET)}>${esc(r.message)}</text>`
+      );
+      continue;
+    }
+    const x1 = a.x + W2;
+    const y1 = a.y + H / 2;
+    const x2 = b.x;
+    const y2 = b.y + H / 2;
+    const slope = (y2 - y1) / (x2 - x1);
+    const rise = Math.round(Math.abs(slope) * r.message.length * CHAR / 2);
+    const ly = slope > 0 ? (y1 + y2) / 2 + rise + 12 : (y1 + y2) / 2 - 5 - rise;
+    parts.push(
+      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ${paint("stroke", r.change, QUIET)}${dash} marker-end="${arrow(r.change)}"/>`,
+      `<text x="${(x1 + x2) / 2}" y="${ly}" text-anchor="middle" ${paint("fill", r.change, QUIET)}>${esc(r.message)}</text>`
+    );
+  }
+  for (const [name, p] of pos) {
+    const node = kind.get(name);
+    const change = node?.change ?? null;
+    const strength = name.startsWith("@") ? EXTERNAL2 : 1;
+    const dash = change === "removed" ? ` stroke-dasharray="5 4"` : "";
+    parts.push(
+      `<rect x="${p.x}" y="${p.y}" width="${W2}" height="${H}" rx="${name.startsWith("@") ? 23 : 8}" fill="none" ${paint("stroke", change, strength)} stroke-width="1.5"${dash}/>`,
+      `<text x="${p.x + W2 / 2}" y="${p.y + (node ? 20 : 28)}" text-anchor="middle" font-weight="600" ${paint("fill", change, strength)}>${esc(name)}</text>`
+    );
+    if (node) parts.push(`<text x="${p.x + W2 / 2}" y="${p.y + 36}" text-anchor="middle" ${paint("fill", null, QUIET)}>${esc(node.kind)}${node.change ? ` \xB7 ${node.change}` : ""}</text>`);
+  }
+  parts.push("</svg>");
+  return parts.join("\n");
+}
+
+// src/cli/commands/room.ts
+var EVIDENCE_FILE = ".actord/evidence.json";
+var MAILBOX_DEPTH = 12;
+var plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+async function room(cwd, opts = {}) {
+  const root = findProjectRoot(cwd);
+  const empty = {
+    projectRoot: null,
+    system: null,
+    status: null,
+    error: null,
+    topology: null,
+    contracts: null,
+    mailboxes: { file: EVENTS_FILE, events: 0, actors: [], notable: [] },
+    evidence: { state: "none", generatedAt: null, profile: null, groups: [] }
+  };
+  if (!root) return { data: empty, text: `No actor project at ${cwd} (no system.ts with a package.json here or above).`, exitCode: EXIT_NO_PROJECT };
+  const print = fingerprint(root);
+  const check2 = readCheck(root, print);
+  const mailboxes = readMailboxes(root);
+  const evidence = readEvidence(root, print);
+  const project = await loadProject(root);
+  const d = await diff(cwd, { baseFile: opts.baseFile });
+  if (!project.manifest || d.exitCode !== 0) {
+    const error = project.loadError ?? d.data.notes[0] ?? "the declaration doesn't load";
+    const data2 = { ...empty, projectRoot: root, error, status: "declaration doesn't load", mailboxes, evidence };
+    return { data: data2, text: `\u2717 ${error}`, exitCode: 1 };
+  }
+  const head = project.manifest;
+  const base = d.data.base.source === "none" ? null : baseManifest(root, d.data.base.source, cwd);
+  const t = topologyWithChanges(base, head);
+  const changes = d.data.changes.length;
+  const sign = (c) => c === "added" ? "+ " : c === "removed" ? "- " : "  ";
+  const lines = [
+    ...t.routes.map((r) => `${sign(r.change)}${r.from} \u2500\u2500${r.message}\u2500\u2500\u25B6 ${r.to}`),
+    "",
+    ...t.actors.map((a) => `${sign(a.change)}${a.name} (${a.kind})${a.change ? ` \xB7 ${a.change}` : ""}`)
+  ];
+  const checkMark = { pass: "check \u2713", fail: `check \u2717 ${check2.errors}`, stale: "check stale", none: "check \u2013" }[check2.state];
+  const status = [plural(head.actors.length, "actor"), plural(head.routes.length, "route"), checkMark, changes ? `${plural(changes, "change")} vs ${d.data.base.source.replace(/^git:/, "")}` : null].filter(Boolean).join(" \xB7 ");
+  const data = {
+    projectRoot: root,
+    system: head.system.name,
+    status,
+    error: null,
+    topology: {
+      ...t,
+      base: d.data.base.source,
+      lines,
+      svg: topologySvg(t),
+      alt: `${head.system.name}: ${plural(t.actors.length, "actor")}, ${plural(t.routes.length, "route")}${changes ? `, ${plural(changes, "change")} against ${d.data.base.source}` : ""}`,
+      changes
+    },
+    contracts: {
+      messages: head.messages.map((m) => ({
+        name: m.name,
+        version: m.version,
+        description: m.description,
+        routes: head.routes.filter((r) => r.message === m.name).map((r) => `${r.from} \u2192 ${r.to}`)
+      })),
+      check: check2
+    },
+    mailboxes,
+    evidence
+  };
+  const text = [
+    `${head.system.name} \xB7 ${status}`,
+    "",
+    "Topology",
+    ...lines.map((l) => `  ${l}`),
+    "",
+    "Mailboxes",
+    ...mailboxes.actors.length ? mailboxes.actors.flatMap((a) => [`  ${a.name} (${a.received})`, ...a.messages.map((m) => `    ${m.mark} ${m.type ?? "?"} ${m.from ?? "?"} \u2192 ${m.to} (${m.messageId})`)]) : ["  no local events yet"],
+    "",
+    `Evidence: ${evidence.state}${evidence.generatedAt ? ` (${evidence.generatedAt})` : ""}`,
+    ...evidence.groups.flatMap((g) => g.claims.map((c) => `  ${g.label}: ${c.id}`))
+  ].join("\n");
+  return { data, text, exitCode: 0 };
+}
+function baseManifest(root, source, cwd) {
+  if (source.startsWith("file:")) {
+    const path = resolve6(cwd, source.slice(5));
+    return readJson(existsSync11(path) ? path : join10(root, source.slice(5)));
+  }
+  if (!source.startsWith("git:")) return null;
+  const top = spawnSync5("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  if (top.status !== 0) return null;
+  const rel = join10(root, "actord.manifest.json").slice(top.stdout.trim().length + 1);
+  const r = spawnSync5("git", ["-C", root, "show", `${source.slice(4)}:${rel}`], { encoding: "utf8" });
+  try {
+    return r.status === 0 ? JSON.parse(r.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+function readCheck(root, print) {
+  const last = readJson(join10(root, LAST_CHECK_FILE));
+  if (!last) return { state: "none", errors: 0, warnings: 0, codes: [], checkedAt: null };
+  const state = last.fingerprint !== print ? "stale" : last.ok ? "pass" : "fail";
+  return { state, errors: last.errors ?? 0, warnings: last.warnings ?? 0, codes: last.codes ?? [], checkedAt: last.checkedAt ?? null };
+}
+function readMailboxes(root) {
+  const log = readEvents(join10(root, EVENTS_FILE));
+  if (!log) return { file: EVENTS_FILE, events: 0, actors: [], notable: [] };
+  const byMessage = /* @__PURE__ */ new Map();
+  for (const e of log.events) if (e.messageId && e.to) byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
+  const boxes = /* @__PURE__ */ new Map();
+  for (const [id2, evs] of byMessage) {
+    const first = evs.find((e) => e.type) ?? evs[0];
+    const outcome = outcomeOf(evs);
+    const to = first.to;
+    const entry = {
+      messageId: id2,
+      type: first.type ?? null,
+      from: first.from ?? null,
+      to,
+      outcome,
+      mark: OUTCOME_MARK[outcome],
+      attempts: Math.max(1, ...evs.map((e) => e.attempt ?? 1)),
+      reason: evs.find((e) => e.reason && (NOTABLE.has(e.kind) || e.kind === "retry.scheduled"))?.reason ?? null
+    };
+    const actor = to.split(":")[0];
+    boxes.set(actor, [...boxes.get(actor) ?? [], entry]);
+  }
+  const actors = [...boxes.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1).map(([name, messages]) => ({ name, received: messages.length, messages: messages.slice(-MAILBOX_DEPTH) }));
+  const notable = log.events.filter((e) => NOTABLE.has(e.kind)).map((e) => `${e.kind} ${e.type ?? e.effect ?? ""} at ${e.to ?? e.actor}${e.reason ? `: ${e.reason}` : ""}`);
+  return { file: EVENTS_FILE, events: log.events.length, actors, notable: notable.slice(-MAILBOX_DEPTH) };
+}
+var GROUPS = [
+  ["proved-locally", "Proved locally"],
+  ["stub-only", "Stub only"],
+  ["not-guaranteed", "Not guaranteed"],
+  ["blocked", "Blocked"],
+  ["failing", "Failing"],
+  ["untested", "Untested"]
+];
+function readEvidence(root, print) {
+  const ev = readJson(
+    join10(root, EVIDENCE_FILE)
+  );
+  if (!ev) return { state: "none", generatedAt: null, profile: null, groups: [] };
+  const stale = ev.fingerprint !== void 0 && ev.fingerprint !== null && ev.fingerprint !== print;
+  const state = stale ? "stale" : ev.verdict === "pass" ? "pass" : ev.verdict === "blocked" ? "blocked" : "fail";
+  const groups = GROUPS.map(([status, label2]) => ({
+    status,
+    label: label2,
+    claims: (ev.claims ?? []).filter((c) => c.status === status).map((c) => ({ id: c.id, statement: c.statement, why: c.why ?? null }))
+  })).filter((g) => g.claims.length > 0);
+  return { state, generatedAt: ev.generatedAt ?? null, profile: ev.profile ?? null, groups };
+}
+function roomSignature(root) {
+  const stamp = (f) => {
+    const p = join10(root, f);
+    return existsSync11(p) ? `${statSync4(p).size}:${statSync4(p).mtimeMs}` : "-";
+  };
+  return [fingerprint(root), stamp(EVENTS_FILE), stamp(LAST_CHECK_FILE), stamp(EVIDENCE_FILE), stamp("actord.manifest.json")].join("|");
+}
+async function followRoom(cwd, out, entry) {
+  const root = findProjectRoot(cwd);
+  if (!root) {
+    out.write(`${JSON.stringify({ projectRoot: null })}
+`);
+    return EXIT_NO_PROJECT;
+  }
+  let last = "";
+  for (; ; ) {
+    const sig = roomSignature(root);
+    if (sig !== last) {
+      last = sig;
+      const r = spawnSync5(process.execPath, [entry, "room", "--json"], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+      try {
+        out.write(`${JSON.stringify(JSON.parse(r.stdout))}
+`);
+      } catch {
+        out.write(`${JSON.stringify({ projectRoot: root, error: (r.stderr || "actord room failed").trim().slice(0, 500) })}
+`);
+      }
+    }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+}
+async function guard(cwd, command) {
+  const matches = matchEffect(command).map((p) => ({ id: p.id, kind: p.kind, description: p.description }));
+  const root = findProjectRoot(cwd);
+  const none = { projectRoot: root, command, matches, hold: false, question: null, refusal: null };
+  if (matches.length === 0) return { data: none, text: "No deployment or remote-write pattern matches.", exitCode: 0 };
+  if (!root) return { data: none, text: `Matches ${matches.map((m) => m.id).join(", ")}, but ${cwd} isn't an actor project; the Room doesn't hold it.`, exitCode: 0 };
+  const d = await diff(root, {});
+  const what = [...new Set(matches.map((m) => m.description.charAt(0).toLowerCase() + m.description.slice(1)))].join("; ");
+  const summary = d.exitCode !== 0 ? `The declaration doesn't load, so there is no plan: ${d.data.notes[0] ?? "unknown error"}.` : d.data.changes.length === 0 ? `${d.data.head.system}: no architectural changes against ${d.data.base.source}.` : `${d.data.head.system}: ${plural(d.data.changes.length, "change")} against ${d.data.base.source} (${d.data.summary.breaking} breaking, ${d.data.summary.risky} risky${d.data.summary.irreversible ? ", IRREVERSIBLE steps" : ""}${d.data.summary.requiresApproval ? ", needs approval" : ""}).`;
+  const changes = (d.data.changes ?? []).slice(0, 6).map((c) => `  ${c.kind} ${c.subject} [${c.compatibility}]`);
+  const plan2 = (d.data.plan ?? []).slice(0, 6).map((s, i) => `  ${i + 1}. ${s.text}`);
+  const question = [
+    `This command would ${what}: ${command.length > 160 ? `${command.slice(0, 157)}...` : command}`,
+    summary,
+    ...changes.length ? ["Changes:", ...changes] : [],
+    ...plan2.length ? ["Deploy plan:", ...plan2] : [],
+    "Claude Code's own permission check still runs after this. Run it?"
+  ].join("\n");
+  const refusal = `The actord Room held \`${command}\` (${what}) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (\`actord diff\`) and let them run it or approve it themselves.`;
+  return { data: { ...none, hold: true, question, refusal }, text: question, exitCode: 0 };
+}
+
+// src/cli/commands/verify.ts
+import { spawnSync as spawnSync6 } from "node:child_process";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync11, writeFileSync as writeFileSync4 } from "node:fs";
+import { delimiter, dirname as dirname6, join as join12, relative as relative5, resolve as resolve7 } from "node:path";
+
+// src/model/claims.ts
+import { existsSync as existsSync12, readFileSync as readFileSync10 } from "node:fs";
+import { join as join11 } from "node:path";
+var CLAIMS_FILE = "actord.claims.json";
+function readClaims(root) {
+  const path = join11(root, CLAIMS_FILE);
+  if (!existsSync12(path)) return { claims: [], error: null };
+  try {
+    const doc = JSON.parse(readFileSync10(path, "utf8"));
+    return { claims: doc.claims ?? [], error: null };
+  } catch (e) {
+    return { claims: [], error: `${CLAIMS_FILE} doesn't parse: ${e.message}` };
+  }
+}
+function classifyClaims(claims, tests, blocked) {
+  return claims.map((c) => {
+    if (c.basis === "not-guaranteed") return { ...c, status: "not-guaranteed", evidence: [] };
+    if (blocked || !tests) return { ...c, status: "blocked", evidence: [] };
+    const evidence = [];
+    let status = c.basis === "workerd" ? "proved-locally" : "stub-only";
+    for (const tag of c.tests ?? []) {
+      const tagged = tests.filter((t) => t.name.includes(`[${tag}]`));
+      const failed = tagged.filter((t) => t.status === "failed");
+      const passed = tagged.filter((t) => t.status === "passed");
+      if (failed.length > 0) {
+        status = "failing";
+        evidence.push(...failed.map((t) => `failed: ${t.name}`));
+      } else if (passed.length === 0) {
+        if (status !== "failing") status = "untested";
+        evidence.push(tagged.length ? `[${tag}] has only skipped tests` : `[${tag}] has no test`);
+      } else evidence.push(...passed.map((t) => `passed: ${t.name}`));
+    }
+    if ((c.tests ?? []).length === 0) {
+      status = "untested";
+      evidence.push("names no tests");
+    }
+    return { ...c, status, evidence };
+  });
+}
+
+// src/cli/commands/verify.ts
+var SANDBOX_BLOCK = /listen EPERM|operation not permitted.*(listen|bind)|EPERM.*127\.0\.0\.1/i;
+var TEST_RESULTS = ".actord/vitest-results.json";
+function run2(cmd, args, cwd, extraEnv = {}) {
+  const started = Date.now();
+  const r = spawnSync6(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1", CI: "1", ...extraEnv }, maxBuffer: 64 * 1024 * 1024 });
+  const why = r.error ? `actord verify couldn't run \`${cmd} ${args.join(" ")}\`: ${r.error.message}
+` : r.signal ? `\`${cmd}\` was killed by ${r.signal}
+` : "";
+  const spawnBlocked = r.error?.code === "EPERM";
+  return { code: r.status ?? 1, output: `${why}${r.stdout ?? ""}${r.stderr ?? ""}`, ms: Date.now() - started, spawnBlocked };
+}
+function binPath(root, pkg, bin) {
+  for (let dir = root; ; dir = dirname6(dir)) {
+    const manifest = readJson(join12(dir, "node_modules", pkg, "package.json"));
+    const rel = typeof manifest?.bin === "string" ? manifest.bin : manifest?.bin?.[bin];
+    if (rel) return join12(dir, "node_modules", pkg, rel);
+    if (dirname6(dir) === dir) return null;
+  }
+}
+function runBin(root, pkg, bin, args, extraEnv = {}) {
+  const entry = binPath(root, pkg, bin);
+  if (!entry) return { code: 1, output: `${pkg} isn't installed in this project (run npm install)
+`, ms: 0, spawnBlocked: false };
+  return run2(process.execPath, [entry, ...args], root, extraEnv);
+}
+function runScript(root, script) {
+  const bins = [];
+  for (let dir = root; ; dir = dirname6(dir)) {
+    bins.push(join12(dir, "node_modules", ".bin"));
+    if (dirname6(dir) === dir) break;
+  }
+  return run2("/bin/sh", ["-c", script], root, { PATH: [...bins, dirname6(process.execPath), process.env.PATH ?? ""].join(delimiter) });
+}
+var tail = (s, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
+function runTests(root, profile) {
+  const out = join12(root, TEST_RESULTS);
+  mkdirSync4(dirname6(out), { recursive: true });
+  const args = ["run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
+  if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
+  const r = runBin(root, "vitest", "vitest", args, { ACTORD_FAULT_PROFILE: profile });
+  const command = `vitest run${profile === "extended" ? "" : " (standard profile: [extended] tests excluded)"}`;
+  if (SANDBOX_BLOCK.test(r.output) || r.spawnBlocked) {
+    const summary = r.spawnBlocked ? "blocked: the sandbox refused to start the test runner" : "blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)";
+    return { step: { id: "tests", status: "blocked", command, durationMs: r.ms, summary, detail: { output: tail(r.output) } }, tests: null, blocked: true };
+  }
+  let tests = null;
+  try {
+    const doc = JSON.parse(readFileSync11(out, "utf8"));
+    tests = doc.testResults.flatMap((f) => f.assertionResults.map((a) => ({ name: a.fullName ?? a.title, status: a.status })));
+  } catch {
+    tests = null;
+  }
+  if (!tests) return { step: { id: "tests", status: "fail", command, durationMs: r.ms, summary: `no test report (exit ${r.code})`, detail: { output: tail(r.output) } }, tests, blocked: false };
+  const passed = tests.filter((t) => t.status === "passed").length;
+  const failed = tests.filter((t) => t.status === "failed").length;
+  return {
+    step: {
+      id: "tests",
+      status: failed === 0 && r.code === 0 ? "pass" : "fail",
+      command,
+      durationMs: r.ms,
+      summary: `${passed} passed, ${failed} failed, ${tests.length - passed - failed} skipped (workerd)`,
+      detail: { passed, failed, total: tests.length, ...failed ? { failures: tests.filter((t) => t.status === "failed").map((t) => t.name), output: tail(r.output) } : {} }
+    },
+    tests,
+    blocked: false
+  };
+}
+async function verify(cwd, opts) {
+  const root = findProjectRoot(cwd);
+  const profile = opts.profile === "extended" ? "extended" : "standard";
+  const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", verdictReasons: ["no actor project here"], fingerprint: null };
+  if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
+  const steps = [];
+  const pkg = readJson(join12(root, "package.json"));
+  const script = pkg?.scripts?.typecheck;
+  const tc = script ? runScript(root, script) : runBin(root, "typescript", "tsc", ["--noEmit"]);
+  const tcBlocked = tc.code !== 0 && (tc.spawnBlocked || SANDBOX_BLOCK.test(tc.output));
+  steps.push({
+    id: "typecheck",
+    status: tc.code === 0 ? "pass" : tcBlocked ? "blocked" : "fail",
+    command: script ? `npm run typecheck (${script})` : "tsc --noEmit",
+    durationMs: tc.ms,
+    summary: tc.code === 0 ? "no type errors" : tc.spawnBlocked ? "blocked: the sandbox refused to start the type checker" : tcBlocked ? "blocked: the sandbox denies the local port `wrangler types` needs (see docs on network.allowLocalBinding)" : "type errors",
+    ...tc.code === 0 ? {} : { detail: { output: tail(tc.output, 25) } }
+  });
+  const started = Date.now();
+  const c = await check(root, {});
+  steps.push({
+    id: "check",
+    status: c.data.ok ? "pass" : "fail",
+    command: "actord check",
+    durationMs: Date.now() - started,
+    summary: `${c.data.errors} error(s), ${c.data.warnings} warning(s)`,
+    detail: { errors: c.data.errors, warnings: c.data.warnings, codes: c.data.diagnostics.map((d) => `${d.severity}:${d.code}`) }
+  });
+  const t = runTests(root, profile);
+  steps.push(t.step);
+  const { claims: raw, error } = readClaims(root);
+  const claims = classifyClaims(raw, t.tests, t.blocked);
+  const count2 = (s) => claims.filter((x) => x.status === s).length;
+  const summary = {
+    provedLocally: count2("proved-locally"),
+    stubOnly: count2("stub-only"),
+    notGuaranteed: count2("not-guaranteed"),
+    blocked: count2("blocked"),
+    failing: count2("failing"),
+    untested: count2("untested")
+  };
+  const failed = steps.some((s) => s.status === "fail") || summary.failing > 0 || summary.untested > 0 || error !== null;
+  const verdict = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
+  const reasons = verdictReasons(steps, claims, error);
+  const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, verdictReasons: reasons, fingerprint: fingerprint(root) };
+  const outPath = resolve7(cwd, opts.out ?? join12(root, ".actord/evidence.json"));
+  mkdirSync4(dirname6(outPath), { recursive: true });
+  writeFileSync4(
+    outPath,
+    `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "verify", toolkitVersion: VERSION, volatile: ["projectRoot", "generatedAt", "steps[].durationMs"], ...evidence }, null, 2)}
+`
+  );
+  const lines = [
+    `actord verify: ${evidence.system ?? "system"} \xB7 ${verdict.toUpperCase()} \xB7 evidence in ${relative5(cwd, outPath) || outPath}`,
+    ...steps.map((s) => `  ${s.status === "pass" ? "\u2713" : s.status === "blocked" ? "\u2298" : "\u2717"} ${s.id.padEnd(9)} ${s.summary}`),
+    ...error ? [`  \u2717 claims    ${error}`] : [],
+    claims.length ? "" : "  (no actord.claims.json: nothing is claimed about delivery or effects)",
+    ...claims.length ? [
+      `Claims: ${summary.provedLocally} proved locally \xB7 ${summary.stubOnly} stub only \xB7 ${summary.notGuaranteed} not guaranteed \xB7 ${summary.blocked} blocked \xB7 ${summary.failing} failing \xB7 ${summary.untested} untested`,
+      ...claims.map((cl) => `  ${statusMark(cl.status)} ${cl.status.padEnd(14)} ${cl.id}: ${cl.statement}${cl.why ? ` (${cl.why})` : ""}`)
+    ] : []
+  ];
+  lines.push("", `Verdict: ${verdict.toUpperCase()}${reasons.length ? `: ${reasons.join("; ")}` : ""}`);
+  lines.push("Before any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.");
+  return { data: evidence, text: lines.join("\n"), exitCode: verdict === "fail" ? 1 : 0 };
+}
+function verdictReasons(steps, claims, claimsError) {
+  const ids = (status) => claims.filter((c) => c.status === status).map((c) => c.id);
+  const reasons = [
+    ...steps.filter((s) => s.status === "fail").map((s) => `${s.id} failed (${s.summary})`),
+    ...claimsError ? [`claims unreadable (${claimsError})`] : [],
+    ...ids("failing").length ? [`${ids("failing").length} claim(s) failing: ${ids("failing").join(", ")}`] : [],
+    ...ids("untested").length ? [`${ids("untested").length} claim(s) untested: ${ids("untested").join(", ")}`] : [],
+    ...steps.filter((s) => s.status === "blocked").map((s) => `${s.id} blocked (${s.summary})`)
+  ];
+  return reasons;
+}
+function statusMark(s) {
+  return { "proved-locally": "\u2713", "stub-only": "~", "not-guaranteed": "\xB7", blocked: "\u2298", failing: "\u2717", untested: "?" }[s] ?? "?";
+}
+async function systemName(root) {
+  const m = readJson(join12(root, "actord.manifest.json"));
+  return m?.system?.name ?? (await loadProject(root)).manifest?.system.name ?? null;
+}
+function test(cwd, opts) {
+  const root = findProjectRoot(cwd);
+  if (!root) return { data: { projectRoot: null, step: null }, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
+  const t = runTests(root, opts.profile === "extended" ? "extended" : "standard");
+  const text = `actord test: ${t.step.status} \xB7 ${t.step.summary}${t.step.detail?.output ? `
+${String(t.step.detail.output)}` : ""}`;
+  return { data: { projectRoot: root, step: t.step }, text, exitCode: t.step.status === "pass" ? 0 : t.step.status === "blocked" ? 0 : 1 };
+}
+
+// src/cli/main.ts
+var HELP = `actord ${VERSION}: conventions, checks, and inspection for actor systems on Cloudflare
+
+Usage: actord <command> [options]
+
+Commands:
+  doctor                       Check the environment, project, pins, and Cloudflare tooling
+  init [dir] [--adopt]         Create a starter project in an empty dir, or add the verify skill,
+       [--name N] [--host H]   host guidance (claude, codex, none) to an existing one (never overwrites)
+  check [--changed <file>...]  Validate the declaration, routes, schemas, config, and manifest
+        [--format brief]       (brief: hard errors only, silent when clean; for hooks)
+  graph [--write]              Print the topology; --write updates actord.manifest.json;
+        [--format mermaid]     mermaid prints it as a Mermaid flowchart for docs and PRs
+  diff [--base <ref>]          Classify architectural changes against the committed manifest
+       [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
+  events [--follow] [--notable] Query or follow local structured events (.actord/events.ndjson);
+         [--actor A] [--kind K] --json prints NDJSON; --notable keeps faults only; --exclusive
+         [--correlation C]     (the monitor's) exits quietly if this session already follows
+         [--file F] [--exclusive] the project
+  trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
+  test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
+  verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
+         [--profile extended]  .actord/evidence.json (verdict pass, fail, or blocked)
+  room [--follow]              The Room's view: topology with changes, mailboxes, contracts, and
+       [--base-file <path>]    evidence; --follow --json prints a snapshot whenever they change
+  guard -- <command>           Whether the Room's effect guard holds a shell command, and the diff
+                               and deploy plan it shows (deploy and remote-write patterns)
+
+Options:
+  --json            Print machine-readable output (with schemaVersion)
+  --exit-zero       Exit 0 whatever the result (for skill injection, where any other exit aborts)
+  -h, --help        Show help
+  -v, --version     Show the toolkit version
+
+Exit status: 0 ok \xB7 1 hard errors \xB7 2 usage \xB7 3 not in an actor project.
+Read-only commands never contact Cloudflare. Deploys belong to wrangler, after a person approves.`;
+var str = (v) => typeof v === "string" ? v : void 0;
+var commands = {
+  doctor: ({ cwd }) => doctor(cwd),
+  check: ({ cwd, values, positionals }) => check(cwd, { changed: [...values.changed ?? [], ...values.changed !== void 0 ? positionals : []], format: str(values.format) }),
+  graph: ({ cwd, values }) => graph(cwd, { write: values.write === true, format: str(values.format) }),
+  diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) }),
+  events: ({ cwd, values }) => events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
+  trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
+  init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit), host: str(values.host) }),
+  verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
+  test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
+  room: ({ cwd, values }) => room(cwd, { baseFile: str(values["base-file"]) }),
+  guard: ({ cwd, positionals }) => {
+    if (positionals.length === 0) throw new UsageError("guard needs the command to judge: actord guard -- <command>");
+    return guard(cwd, positionals.join(" "));
+  }
+};
+async function readStdin() {
+  if (process.stdin.isTTY) return "";
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
+async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: process.cwd() }) {
+  try {
+    const { values, positionals } = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: false,
+      options: {
+        json: { type: "boolean" },
+        "exit-zero": { type: "boolean" },
+        changed: { type: "string", multiple: true },
+        format: { type: "string" },
+        write: { type: "boolean" },
+        base: { type: "string" },
+        "base-file": { type: "string" },
+        follow: { type: "boolean" },
+        notable: { type: "boolean" },
+        exclusive: { type: "boolean" },
+        actor: { type: "string" },
+        kind: { type: "string" },
+        correlation: { type: "string" },
+        file: { type: "string" },
+        adopt: { type: "boolean" },
+        name: { type: "string" },
+        toolkit: { type: "string" },
+        host: { type: "string" },
+        out: { type: "string" },
+        profile: { type: "string" },
+        help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" }
+      }
+    });
+    const [name, ...rest] = positionals;
+    if (values.version) {
+      io.out.write(`${VERSION}
+`);
+      return 0;
+    }
+    if (!name || values.help) {
+      io.out.write(`${HELP}
+`);
+      return name || values.help ? 0 : 2;
+    }
+    if (name === "hook") return await hook(rest[0], await readStdin(), process.env, io.out, io.err);
+    const handler = commands[name];
+    if (!handler) throw new UsageError(`unknown command "${name}"`);
+    const json = values.json === true;
+    if (name === "events" && values.follow === true) {
+      if (values.exclusive === true && !claimMonitor(io.cwd)) return 0;
+      const filter = { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file), json };
+      return await followEvents(io.cwd, filter, io.out);
+    }
+    if (name === "room" && values.follow === true) return await followRoom(io.cwd, io.out, process.argv[1] ?? "");
+    if (name === "events" && json) {
+      const r = events(io.cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) });
+      io.out.write(r.data.events.map((e) => `${JSON.stringify(e)}
+`).join(""));
+      return r.exitCode;
+    }
+    const result2 = await handler({ positionals: rest, json, cwd: io.cwd, values });
+    io.out.write(json ? toJson(name, result2.data) : result2.text ? `${result2.text}
+` : "");
+    return values["exit-zero"] === true ? 0 : result2.exitCode;
+  } catch (err) {
+    if (err instanceof UsageError) {
+      io.err.write(`actord: ${err.message}
+Run \`actord --help\` for usage.
+`);
+      return 2;
+    }
+    io.err.write(`actord: internal error: ${err instanceof Error ? err.stack ?? err.message : String(err)}
+`);
+    return 70;
+  }
+}
+
+// src/cli/bin.ts
+var emit = process.emitWarning.bind(process);
+process.emitWarning = ((warning, ...rest) => {
+  const text = typeof warning === "string" ? warning : warning.message;
+  if (/Type Stripping is an experimental feature/.test(text)) return;
+  return emit(warning, ...rest);
+});
+process.exitCode = await main(process.argv.slice(2));

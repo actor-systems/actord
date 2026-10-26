@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 30
     env:
       CLAUDE_CODE_VERSION: 2.1.310
+      CODEX_VERSION: 0.164.0
       DISABLE_TELEMETRY: "1"
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
     steps:
@@ -28,8 +29,9 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
-      - name: Build reproduces the committed plugins/claude/dist
-        run: npm run --silent build -w @actord/toolkit && git diff --exit-code -- plugins/claude/dist plugins/claude/hooks/effect-patterns.ts
+      - run: npm install -g "@openai/codex@${CODEX_VERSION}"
+      - name: Build reproduces both committed plugin distributions
+        run: npm run --silent build -w @actord/toolkit && git diff --exit-code -- plugins/claude/dist plugins/codex/dist plugins/claude/hooks/effect-patterns.ts
       - run: npm run verify
       - if: always()
         uses: actions/upload-artifact@v4

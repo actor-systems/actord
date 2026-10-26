@@ -2,6 +2,8 @@
 
 - Date: 2026-10-25. Status: implemented locally. Scope: shared core and Codex consolidation; schema comparator corrections have a separate owner.
 
+**Superseded:** The separate-repository artifact sync and provenance pins below are superseded by [decision 0014](0014-one-repository.md). Both adapters now build in this repository from `packages/toolkit` and the root `examples/`; no sync command is required.
+
 `packages/toolkit` supplies the core consumed by both hosts. The existing Claude plugin stays in `plugins/claude/`. The sibling `actord/` repository is the Codex adapter and pins built artifacts and generated reference apps with source/artifact hashes. Consumers never need a sibling checkout.
 
 `actord init --host claude|codex|none` selects project guidance independently from declarations, native runtime, tests and reliability claims. Direct CLI calls infer the project profile from `package.json` (`actord.host`) or Codex guidance; a new unprofiled directory defaults to Claude. The Codex launcher sets `ACTORD_HOST=codex`, and the Claude launcher sets `ACTORD_HOST=claude`. An explicit init flag overrides the environment. Adoption preserves existing host files. Codex doctor findings do not ask for Claude permission settings.

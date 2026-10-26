@@ -1,6 +1,6 @@
 // Bundles the CLI into one dependency-free ESM file for npm (dist/cli.mjs) and for the plugin
-// (plugins/claude/dist/actord.mjs). The plugin copy is what ships; tests run against it.
-import { chmodSync, copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// both plugins (plugins/{claude,codex}/dist/actord.mjs). Tests run against the shipped builds.
+import { chmodSync, copyFileSync, mkdirSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -9,7 +9,6 @@ import { EFFECT_PATTERNS } from "./src/patterns.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(here, "package.json"), "utf8"));
-const pluginDist = join(here, "..", "..", "plugins", "claude", "dist");
 
 // Start from nothing so a clean checkout and this tree produce identical bytes.
 rmSync(join(here, "dist"), { recursive: true, force: true });
@@ -39,6 +38,19 @@ for (const file of readdirSync(join(here, "dist/types"), { recursive: true })) {
   const path = join(here, "dist/types", String(file));
   writeFileSync(path, readFileSync(path, "utf8").replace(/(from\s+["']\.{1,2}\/[^"']+)\.ts(["'])/g, "$1.js$2"));
 }
+// The reference apps have one source: root examples/. Package template data in the toolkit so a
+// cached Codex plugin can scaffold them without a checkout or maintained example copies.
+const templates = {};
+for (const name of ["release-radar", "briefing-desk"]) {
+  const source = join(here, "..", "..", "examples", name);
+  templates[name] = Object.fromEntries(readdirSync(source, { recursive: true }).map(String).sort()
+    .filter((f) => !/(^|\/)(node_modules|\.actord|\.wrangler|\.claude|CLAUDE\.md|\.DS_Store|worker-configuration\.d\.ts|package-lock\.json|\.env[^/]*|\.dev.vars[^/]*)(\/|$)/.test(f))
+    .filter((f) => lstatSync(join(source, f)).isFile())
+    .map((f) => [f, readFileSync(join(source, f), "utf8")]));
+}
+writeFileSync(join(here, "dist/reference-templates.json"), JSON.stringify(templates, null, 2) + "\n");
+copyFileSync(join(here, "../../LICENSE"), join(here, "dist/LICENSE"));
+copyFileSync(join(here, "../../NOTICE"), join(here, "dist/NOTICE"));
 // The Room's effect guard matches the same table in-process (a node process per Bash call would cost
 // every session), so it gets a generated copy; `actord guard` makes the decision once one matches.
 const patterns = EFFECT_PATTERNS.map((p) => ({ id: p.id, kind: p.kind, description: p.description, source: p.regex.source, flags: p.regex.flags }));
@@ -48,10 +60,13 @@ writeFileSync(
     `export type EffectPatternSource = { id: string; kind: string; description: string; source: string; flags: string }\n\n` +
     `export const EFFECT_PATTERNS: readonly EffectPatternSource[] = ${JSON.stringify(patterns, null, 2)}\n`,
 );
-mkdirSync(pluginDist, { recursive: true });
-copyFileSync(join(here, "dist/cli.mjs"), join(pluginDist, "actord.mjs"));
-chmodSync(join(pluginDist, "actord.mjs"), 0o755);
-writeFileSync(join(pluginDist, "VERSION"), `${pkg.version}\n`);
-// Until @actord/toolkit is on npm, the plugin carries its package so `actord init` can pin it offline.
-execFileSync("npm", ["pack", "--silent", "--pack-destination", pluginDist], { cwd: here, stdio: ["ignore", "ignore", "inherit"] });
-console.log(`built @actord/toolkit ${pkg.version} → dist/cli.mjs, plugins/claude/dist/actord.mjs`);
+for (const host of ["claude", "codex"]) {
+  const dist = join(here, "..", "..", "plugins", host, "dist");
+  mkdirSync(dist, { recursive: true });
+  for (const file of readdirSync(dist)) if (file.endsWith(".tgz")) rmSync(join(dist, file));
+  copyFileSync(join(here, "dist/cli.mjs"), join(dist, "actord.mjs"));
+  chmodSync(join(dist, "actord.mjs"), 0o755);
+  writeFileSync(join(dist, "VERSION"), `${pkg.version}\n`);
+  execFileSync("npm", ["pack", "--silent", "--pack-destination", dist], { cwd: here, stdio: ["ignore", "ignore", "inherit"] });
+}
+console.log(`built @actord/toolkit ${pkg.version} → dist/cli.mjs, plugins/{claude,codex}/dist/actord.mjs`);

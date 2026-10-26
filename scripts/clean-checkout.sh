@@ -22,9 +22,9 @@ step "a stray .DS_Store in every directory"
 find . \( -path ./.git -o -name node_modules \) -prune -o -type d -print | while IFS= read -r d; do
   printf '\0\0\0\1Bud1' >"$d/.DS_Store"
 done
-step "build reproduces plugins/claude/dist"
+step "build reproduces both plugin distributions"
 npm run --silent build -w @actord/toolkit
-git diff --exit-code --stat -- plugins/claude/dist plugins/claude/hooks/effect-patterns.ts
+git diff --exit-code --stat -- plugins/claude/dist plugins/codex/dist plugins/claude/hooks/effect-patterns.ts
 step "npm run verify"
 status=0
 npm run --silent verify >verify.log 2>&1 || status=$?

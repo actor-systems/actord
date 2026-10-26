@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "actord",
+  "version": "0.2.0",
+  "description": "Codex workflows for the shared native Cloudflare actor core.",
+  "license": "Apache-2.0",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup-actor-project/SKILL.md",
+      "interface": {
+        "displayName": "actord",
+        "shortDescription": "Native actors with evidence",
+        "capabilities": []
+      }
+    }
+  }
+}
