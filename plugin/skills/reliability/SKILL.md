@@ -37,7 +37,9 @@ to step 1 for the faults around it:
    delivery retry; a scheduled wake and a restart; simultaneous messages around an external await; an
    unavailable model or tool; gateway acceptance followed by a lost acknowledgment; a denied capability.
    Skip only what the system can't exhibit, and say why.
-4. **Run them:** `actord test --profile ${user_config.fault_profile}`, then `actord verify`.
+4. **Run them:** `actord test --profile ${user_config.fault_profile}`, then `actord verify`. The profile is
+   the plugin's `fault_profile` option: `standard` unless it was set to `extended`. Where the option was
+   never saved, the line above shows its placeholder; use `standard`.
 5. **When something fails,** find out why with `actord events --notable` and `actord trace <id>`.
 
 ## Report (done when shown)

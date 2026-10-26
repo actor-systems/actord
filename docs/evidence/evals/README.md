@@ -53,6 +53,10 @@ release-m: suite score 0.97, mean Δ +0.06, 9/12 cases at threshold, $10.05, 794
   was a needless heredoc. I'll use the dedicated tools"; one that couldn't run its tests ran
   `actord verify` and reported BLOCKED. The stop it targets was rare (five of about 180 plugin runs across
   F to J), so these runs show the mechanism, not a rate.
+- **An unfilled option in `reliability`.** In all six recover plugin runs, the skill's
+  `actord test --profile ${user_config.fault_profile}` reached Claude as written: Claude Code fills
+  options only once they're saved, and eval runs (like a fresh install) save none. One run invented
+  `--profile faults`. After run M, the skill states the default (`standard`) beside the placeholder.
 - **Below 1.00 with the plugin:** `design-release-monitor` in M (one run ended before the boundary critic
   reported back, and the judge failed it 2–1 on explaining the boundaries) and `investigate-trace` (in
   each run, one plugin run answered without `actord trace` or `actord events`).
