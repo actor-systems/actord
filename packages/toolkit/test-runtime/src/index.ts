@@ -3,8 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents/lifecycle";
 import { z } from "zod";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
-import { defineSystem, message, webhook } from "../../src/system.ts";
-import { handleWebhook } from "../../src/sources/index.ts";
+import { defineSystem, inboundEmail, message, webhook } from "../../src/system.ts";
+import { applyDecision, approvalDecided, handleWebhook } from "../../src/sources/index.ts";
 
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
@@ -25,17 +25,20 @@ export const system = defineSystem({
     "probe.poked": message({ version: 1, description: "A declared source poked the probe", payload: z.object({ key: z.string() }) }),
     "probe.approve": message({ version: 1, description: "A person approves a parked effect", payload: z.object({ key: z.string(), by: z.string() }) }),
     "probe.deny": message({ version: 1, description: "A person denies a parked effect", payload: z.object({ key: z.string(), by: z.string(), effect: z.enum(["gateway.approval", "gateway.job-approval"]).optional() }) }),
+    "approval.decided": message({ version: 1, description: "A person answered an approval request", payload: approvalDecided }),
   },
   sources: {
     hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
+    mail: inboundEmail({ secret: "PROBE_APPROVAL_SECRET", owner: "PROBE_OWNER", from: "PROBE_FROM", send: "PROBE_SEND", message: "approval.decided" }),
   },
+  approvals: { notify: "notify.approval" },
   actors: {
     Probe: {
       binding: "PROBE",
       kind: "deterministic",
       purpose: "Exercises runtime edge cases",
       justification: ["state"],
-      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain", "gateway.job-approval"],
+      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain", "gateway.job-approval", "notify.approval"],
       schedules: [
         { every: "1h", message: "probe.tick.hourly" },
         { cron: "0 9 * * *", message: "probe.tick.daily" },
@@ -51,6 +54,8 @@ export const system = defineSystem({
     "gateway.job": { description: "Long work, settled later", kind: "job", idempotency: "key", deadline: "1h", probe: { every: "1m" }, completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-plain": { description: "Long work whose start can't be retried", kind: "job", idempotency: "none", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-approval": { description: "Long work a person must approve first", kind: "job", idempotency: "key", approval: "human", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
+    // Tests install approvalEmail with a fake send binding (overrideEffect); none is registered here.
+    "notify.approval": { description: "Email the owner that an approval is waiting", idempotency: "none" },
   },
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
@@ -67,8 +72,12 @@ export const system = defineSystem({
     { from: "@hooks", message: "probe.poked", to: "Probe" },
     { from: "@ingress", message: "probe.approve", to: "Probe" },
     { from: "@ingress", message: "probe.deny", to: "Probe" },
+    { from: "@mail", message: "approval.decided", to: "Probe" },
   ],
 });
+
+/** The same system without approvals.notify, which instances keyed "quiet-…" run ([approval-notify-absent]). */
+const unnotified: typeof system = { ...system, approvals: undefined };
 
 /** Another Lifecycle capability with its own job, to show actord shares the object's one alarm. */
 class Pinger extends LifecycleCapability {
@@ -99,7 +108,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
   }
 
-  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Probe", {
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });
     },
@@ -162,6 +171,10 @@ export class Probe extends DurableObject<Env> {
     "probe.deny": ({ payload }, ctx) => {
       const ok = ctx.deny(payload.effect ?? "gateway.approval", payload.key, "not today", { by: payload.by });
       ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.key, ok ? 1 : 0);
+    },
+    "approval.decided": ({ payload }, ctx) => {
+      const ok = applyDecision(ctx, payload);
+      ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.effectKey, ok ? 1 : 0);
     },
   }, { backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40 }); // a test can hold a retry back
 

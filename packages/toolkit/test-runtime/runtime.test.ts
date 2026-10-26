@@ -966,7 +966,7 @@ it("[approval-expiry-wake] a parked approval holds the alarm until it expires, a
   overrideEffect("gateway.approval", { run: async () => ++runs });
   await send("wake", "gateway.approval");
   await settle(env, system);
-  const row = await runInDurableObject(probe("wake"), (_i, s) => s.storage.sql.exec("SELECT status, next_at FROM _actors_outbox WHERE id LIKE 'fx:%:wake'").one());
+  const row = await runInDurableObject(probe("wake"), (_i, s) => s.storage.sql.exec("SELECT status, next_at FROM _actors_outbox WHERE id = 'fx:gateway.approval:wake'").one());
   expect(row.status).toBe("awaiting_approval");
   expect(Number(row.next_at) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
   await settle(env, system);
@@ -992,7 +992,7 @@ it("[approval-identity] an approval records who approved and through which sende
   await ingress(env, system, "Probe", "probe.approve", { key: "who", by: "owner@example.com" }, { key: "who" });
   await settle(env, system);
   expect(events.find((e) => e.kind === "note" && e.effectKey === "who")).toMatchObject({ detail: { by: "owner@example.com", via: "@ingress" } });
-  const body = await runInDurableObject(probe("who"), (_i, s) => JSON.parse(String(s.storage.sql.exec("SELECT body FROM _actors_outbox WHERE id LIKE 'fx:%:who'").one().body)));
+  const body = await runInDurableObject(probe("who"), (_i, s) => JSON.parse(String(s.storage.sql.exec("SELECT body FROM _actors_outbox WHERE id = 'fx:gateway.approval:who'").one().body)));
   expect(body.approvedBy).toMatchObject({ from: "@ingress", by: "owner@example.com" });
   expect(typeof body.approvedBy.messageId).toBe("string");
 });

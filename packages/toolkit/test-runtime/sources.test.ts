@@ -1,9 +1,10 @@
 // Declared sources, tested in workerd through the probe Worker's own fetch (SELF), as GitHub would call it.
 import { env } from "cloudflare:workers";
-import { SELF } from "cloudflare:test";
+import { SELF, abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
-import { handleWebhook } from "../src/sources/index.ts";
-import { captureEvents, injectFault, resetSeams } from "../src/testing.ts";
+import { EffectRejected, ingress } from "../src/runtime/index.ts";
+import { approvalEmail, handleWebhook, SUBJECT_TAG, verifyApprovalToken } from "../src/sources/index.ts";
+import { captureEvents, expireApprovals, injectFault, overrideEffect, resetSeams, settle } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
@@ -155,4 +156,103 @@ it("[source-malformed] a signed delivery that isn't JSON, names no event, or map
     ["source.invalid", "invalid_key", "gh-nokey"],
   ]);
   expect(await probe("s-mal").poked()).toEqual([]);
+});
+
+// ---- Asking for approval (plan 2, Task 5) ----
+
+type Sent = { from: unknown; to: unknown; subject: string; text: string; headers?: Record<string, string> };
+/** Install the real email adapter for notify.approval, with a fake send binding that keeps every message. */
+function mailbox(): Sent[] {
+  const sent: Sent[] = [];
+  const e = env as unknown as Record<string, string>;
+  overrideEffect("notify.approval", approvalEmail({ send: { send: async (m) => void sent.push(m as Sent) }, from: e.PROBE_FROM!, to: e.PROBE_OWNER!, secret: e.PROBE_APPROVAL_SECRET! }));
+  return sent;
+}
+const park = (key: string, instance = key) => ingress(env, system, "Probe", "probe.effect", { effect: "gateway.approval", key }, { key: instance });
+const parkedRow = (instance: string, key: string) =>
+  runInDurableObject(probe(instance), (_i, s) => s.storage.sql.exec<{ status: string; next_at: number }>("SELECT status, next_at FROM _actors_outbox WHERE id = ?", `fx:gateway.approval:${key}`).one());
+const notifyRows = (instance: string) => runInDurableObject(probe(instance), (_i, s) => s.storage.sql.exec<{ id: string; status: string }>("SELECT id, status FROM _actors_outbox WHERE target = 'notify.approval' ORDER BY seq").toArray());
+
+it("[approval-notifies] a parked effect emails the owner once, with a signed token naming it in the subject", async () => {
+  const events = captureEvents();
+  const sent = mailbox();
+  let runs = 0;
+  overrideEffect("gateway.approval", { run: async () => ++runs });
+  await park("an-1");
+  await settle(env, system);
+  const row = await parkedRow("an-1", "an-1");
+  expect(row.status).toBe("awaiting_approval");
+  expect(runs).toBe(0);
+  expect(sent).toHaveLength(1);
+  const mail = sent[0]!;
+  expect(mail).toMatchObject({ from: "actord@probe.example", to: "owner@probe.example" });
+  const token = SUBJECT_TAG.exec(mail.subject)?.[1];
+  expect(token).toBeDefined();
+  expect(mail.subject).toBe(`Approve gateway.approval? [actord:${token}]`);
+  expect(mail.headers).toEqual({ "X-Actord-Approval": token });
+  expect(await verifyApprovalToken("probe-approval-secret", token!, Date.now())).toEqual({ ok: true, claims: { actor: "Probe", key: "an-1", effect: "gateway.approval", effectKey: "an-1", exp: row.next_at } });
+  // The body says what, why, what a denial does, when it expires and how to answer, in that order, with no link to click.
+  const lines = [
+    "Needs a person", // the effect's description, then its input as indented JSON
+    '"key": "an-1"',
+    "If you deny it: the actor is told it was denied and the effect never runs.",
+    `This request expires at ${new Date(row.next_at).toISOString()}.`,
+    "Reply with approve, or deny followed by a reason, on the first line.",
+  ];
+  const at = lines.map((l) => mail.text.indexOf(l));
+  expect(at.every((i) => i >= 0)).toBe(true);
+  expect([...at].sort((a, b) => a - b)).toEqual(at);
+  expect(mail.text).not.toMatch(/http/i);
+  // The request is an effect of its own, keyed by the effect it asks about, and it settled.
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effect === "notify.approval")).toMatchObject([{ effectKey: "approval:gateway.approval:an-1", detail: { approvalFor: "an-1" } }]);
+  expect(await notifyRows("an-1")).toEqual([{ id: "fx:notify.approval:approval:gateway.approval:an-1", status: "confirmed" }]);
+});
+
+it("[approval-notify-once] parking the same effect again, after a restart's orphan recovery, sends no second email", async () => {
+  const events = captureEvents();
+  const sent = mailbox();
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  await park("an-2");
+  await settle(env, system);
+  expect(sent).toHaveLength(1);
+  // As if the instance died while the attempt was marked running: recovery retries the keyed effect, which parks again.
+  await runInDurableObject(probe("an-2"), (_i, s) => void s.storage.sql.exec("UPDATE _actors_outbox SET status = 'running' WHERE id = 'fx:gateway.approval:an-2'"));
+  await abortAllDurableObjects();
+  await settle(env, system);
+  expect(events.filter((e) => e.kind === "effect.awaiting_approval" && e.effectKey === "an-2")).toHaveLength(2);
+  expect((await parkedRow("an-2", "an-2")).status).toBe("awaiting_approval");
+  expect(sent).toHaveLength(1);
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effect === "notify.approval")).toHaveLength(1);
+  expect(await notifyRows("an-2")).toHaveLength(1);
+});
+
+it("[approval-notify-absent] a system without approvals.notify parks without enqueuing anything", async () => {
+  const events = captureEvents();
+  const sent = mailbox();
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  // A "quiet-" instance runs the probe system without approvals.notify (test-runtime/src/index.ts).
+  await park("an-3", "quiet-an-3");
+  await settle(env, system);
+  expect((await parkedRow("quiet-an-3", "an-3")).status).toBe("awaiting_approval");
+  expect(await notifyRows("quiet-an-3")).toEqual([]);
+  expect(await runInDurableObject(probe("quiet-an-3"), (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox").one().n)).toBe(1);
+  expect(events.filter((e) => e.effect === "notify.approval")).toEqual([]);
+  expect(sent).toEqual([]);
+});
+
+it("[approval-notify-fails] a notification that fails or ends in doubt leaves the effect parked, and it still expires", async () => {
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  for (const [key, run] of [
+    ["an-4", async () => { throw new EffectRejected("mailbox full"); }],
+    ["an-5", async () => { throw new Error("connection reset after send"); }],
+  ] as const) {
+    overrideEffect("notify.approval", { run });
+    await park(key);
+    await settle(env, system);
+    expect((await notifyRows(key)).map((r) => r.status)).toEqual([key === "an-4" ? "failed" : "in_doubt"]);
+    expect((await parkedRow(key, key)).status).toBe("awaiting_approval");
+    await expireApprovals(env, system, "Probe", key);
+    await settle(env, system);
+    expect(await probe(key).outcomes()).toMatchObject([{ key, status: "failed", error: "approval expired" }]);
+  }
 });
