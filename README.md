@@ -99,7 +99,7 @@ Run `/actord:start` in a session. It runs `actord doctor`, explains what it foun
 | --- | --- |
 | `packages/toolkit/` | `@actord/toolkit`: the `actord` CLI, the runtime, and the test helpers (one package, for npm) |
 | `plugins/claude/` | The Claude Code plugin; `.claude-plugin/marketplace.json` points here |
-| `plugins/codex/` | The Codex plugin, moving in from its own repository; `.agents/plugins/marketplace.json` will point here |
+| `plugins/codex/` | The Codex plugin; `.agents/plugins/marketplace.json` points here |
 | `examples/` | Release Radar and Briefing Desk, the reference apps and integration tests for both plugins |
 
 The toolkit and both plugins share one version and one release tag, and the core is used in place: a change

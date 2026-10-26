@@ -6,7 +6,7 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-26T01:01:50.068Z): **55 pass · 0 fail · 0 blocked.** G0 through G7 passed.
+`npm run verify` (2026-10-26T01:37:59.384Z): **61 pass · 0 fail · 0 blocked.** G0 through G7 passed.
 
 Since the 51-check release candidate: a review from the Codex implementation of the same charter found
 unsafe payload classifications, now corrected (decision 0011); Codex consolidated its adapter onto this
@@ -16,6 +16,11 @@ verdict and its reasons; `start` reaches the plugin's own CLI when `bin/` isn't 
 `CLAUDE.md` carries the read-method, deploy-plan, and file-writing rules; the test helper `tick()` fires
 wakes due now; the runtime decides duplicates inside the transaction; `reliability` takes reported failures;
 and a hook puts a note beside a refused heredoc (decision 0013). Release runs L and M measure that plugin.
+
+Version 0.2.0 puts the toolkit and both plugins in one repository (decision 0014): `packages/toolkit`,
+`plugins/claude/`, and `plugins/codex/`, one version and one release tag, Apache-2.0 throughout. The Codex
+plugin's own checks (`g1.codex.*`, `g2.codex.adapter`, `g7.codex.consumer`) are part of the gates; it has no
+model-backed evaluations yet, so the eval results below are the Claude plugin's.
 
 - **G5 passes on runs L and M.** Every safety and negative-trigger case is 1.00 with the plugin in both
   runs. On the host, the plugin arm of every case in run M passes at least as often as the baseline. A
@@ -33,10 +38,11 @@ and a hook puts a note beside a refused heredoc (decision 0013). Release runs L 
   an existing test of the handler case. G1 passes: `start-orients` is 1.00 in both runs.
 - **G6 passes:** every Room acceptance step is recorded passing, A10 in the Desktop app (3.6556.2, running
   Claude Code 2.1.308). The run showed the topology unreadable on the dark theme and a misleading reply; both
-  are fixed (`1a80691`), and the fixed diagram hasn't been looked at in the Desktop app yet.
+  are fixed (`1a80691`), and the owner re-checked the fixed diagram in the Desktop app.
 
-The release tag `actord--v0.1.0` (annotated, made with `claude plugin tag`) marks `623c6ac`. It's local only:
-the repository has no remote, and the tag is never pushed without your authorization. Nothing was deployed, published, or run against a
+Release tags (annotated, made with `claude plugin tag`): `actord--v0.2.0` marks the commit that records this
+report, and `actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. Both are local only: the
+repository has no remote, and no tag is pushed without your authorization. Nothing was deployed, published, or run against a
 Cloudflare account. Model-backed spend, all approved: $145.02 ($41.56 of $50, $21.44 of $25, $10.35 of
 about $10, $10.74 of about $20, $20.34 of about $22, $20.54 of about $21, $10.00 and $10.05 of about $10
 each).
@@ -60,7 +66,8 @@ plugins/claude/
   dist/actord-toolkit-0.2.0.tgz      the toolkit package `actord init` vendors until it's on npm
   tests/                             mod tests and recorded CLI fixtures
   evals/                             12 cases + offline scaffolds
-plugins/codex/                       the Codex plugin (moving in; decision 0014)
+plugins/codex/                       the Codex plugin: manifest, six skills, launcher, dist (decision 0014)
+.agents/plugins/marketplace.json     Codex marketplace "actord" → ./plugins/codex
 packages/toolkit/                    @actord/toolkit: CLI, /system, /runtime, /testing, /vitest
 examples/release-radar, examples/briefing-desk
 fixtures/                            2 valid, 12 negative (each with expected diagnostics), recorded event logs
@@ -203,7 +210,7 @@ Per-component (rounded)
 
 ## Failing and blocked checks
 
-None: every check passes (`npm run verify`, 2026-10-26T01:01:50.068Z).
+None: every check passes (`npm run verify`, 2026-10-26T01:37:59.384Z).
 
 ## Limitations and unverified claims
 
@@ -252,12 +259,12 @@ Then `/actord:start` in a session. Requirements: Claude Code 2.1.287+, Node 22.1
 | Gate | Status | Checks (status) |
 | --- | --- | --- |
 | G0 — Ground truth | **passed** | `g0.versions` pass; `g0.guardrails` pass; `g0.spike.types` pass; `g0.spike.typecheck` pass; `g0.spike.runtime` pass; `g0.sandbox` pass |
-| G1 — Installable plugin | **passed** | `g1.cli.typecheck` pass; `g1.cli.unit` pass; `g1.dist.fresh` pass; `g1.launcher` pass; `g1.validate.plugin` pass; `g1.validate.marketplace` pass; `g1.install` pass; `g1.budget` pass; `g1.trust` pass; `g1.start-session` pass |
-| G2 — Model and CLI | **passed** | `g2.contract.types` pass; `g2.fixtures.typecheck` pass; `g2.cli.model` pass; `g2.negative.unchanged` pass |
+| G1 — Installable plugin | **passed** | `g1.cli.typecheck` pass; `g1.cli.unit` pass; `g1.dist.fresh` pass; `g1.codex.validate` pass; `g1.codex.distribution` pass; `g1.codex.install` pass; `g1.codex.format` pass; `g1.launcher` pass; `g1.validate.plugin` pass; `g1.validate.marketplace` pass; `g1.install` pass; `g1.budget` pass; `g1.trust` pass; `g1.start-session` pass |
+| G2 — Model and CLI | **passed** | `g2.codex.adapter` pass; `g2.contract.types` pass; `g2.fixtures.typecheck` pass; `g2.cli.model` pass; `g2.negative.unchanged` pass |
 | G3 — Runtime evidence | **passed** | `g3.radar.typecheck` pass; `g3.radar.check` pass; `g3.radar.runtime` pass; `g3.radar.trace` pass; `g3.radar.dev` pass; `g3.cli.events` pass |
 | G4 — Agentic example | **passed** | `g4.desk.typecheck` pass; `g4.desk.check` pass; `g4.desk.runtime` pass; `g4.desk.trace` pass; `g4.desk.dev` pass; `g4.runtime.probe` pass |
 | G5 — Agent-guided development | **passed** | `g5.cli.unit` pass; `g5.skills.lint` pass; `g5.evals.static` pass; `g5.inventory` pass; `g5.starter.smoke` pass; `g5.verify.blocked` pass; `g5.examples.verify` pass; `g5.evals.run` pass; `g5.evals.host` pass |
 | G6 — The Room | **passed** | `g6.cli.room` pass; `g6.fixtures` pass; `g6.mod.validate` pass; `g6.mod.typecheck` pass; `g6.mod.test` pass; `g6.monitor` pass; `g6.trust` pass; `g6.no-hooks` pass; `g6.acceptance` pass |
-| G7 — Release candidate | **passed** | `g7.docs` pass; `g7.release-evidence` pass; `g7.tag` pass; `g7.clean-checkout` pass; `g7.container` pass |
+| G7 — Release candidate | **passed** | `g7.codex.consumer` pass; `g7.docs` pass; `g7.release-evidence` pass; `g7.tag` pass; `g7.clean-checkout` pass; `g7.container` pass |
 
 Records: `docs/verification-report.md` (generated 2026-10-25T11:04:20.742Z), `docs/evidence/clean-checkout-verification-report.md`, `docs/evidence/container-install.txt`, `docs/evidence/room-acceptance.md`, `docs/evidence/evals/README.md`.
