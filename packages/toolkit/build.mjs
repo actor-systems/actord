@@ -28,8 +28,9 @@ await build({
 chmodSync(join(here, "dist/cli.mjs"), 0o755);
 // Library entry points for projects: plain ESM (Node won't strip types under node_modules) plus .d.ts.
 const library = { outdir: join(here, "dist"), outExtension: { ".js": ".mjs" }, bundle: true, format: "esm", target: "es2022", legalComments: "none", logLevel: "warning" };
-await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), runtime: join(here, "src/runtime/index.ts") }, platform: "neutral" });
-await build({ ...library, entryPoints: { testing: join(here, "src/testing.ts") }, platform: "neutral", external: ["cloudflare:test"] });
+// The Agents SDK is a peer dependency: the runtime composes the project's own copy of Lifecycle.
+await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), runtime: join(here, "src/runtime/index.ts") }, platform: "neutral", external: ["agents", "agents/*"] });
+await build({ ...library, entryPoints: { testing: join(here, "src/testing.ts") }, platform: "neutral", external: ["cloudflare:test", "agents", "agents/*"] });
 await build({ ...library, entryPoints: { vitest: join(here, "src/vitest.ts") }, platform: "node" });
 execFileSync("npx", ["--no-install", "tsc", "-p", join(here, "tsconfig.build.json")], { cwd: here, stdio: "inherit" });
 // Declarations keep the source's relative ".ts" specifiers; projects resolve ".js" to ".d.ts" reliably.

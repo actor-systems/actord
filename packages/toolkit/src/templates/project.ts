@@ -5,6 +5,7 @@ export { claudeMd, settingsJson, verifySkill } from "./claude.ts";
 
 export const PINNED = {
   "@cloudflare/vitest-plugin": "1.4.7",
+  agents: "0.30.1",
   typescript: "7.0.2",
   vitest: "5.0.5",
   wrangler: "4.152.0",
@@ -79,11 +80,14 @@ export const GreetingRecorded = message({
 });
 `,
     "src/actors/greeter.ts": `import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 export class Greeter extends DurableObject<Env> {
-  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Greeter", {
+  readonly lifecycle = Lifecycle.install(this);
+
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Greeter", {
     "greeting.requested": ({ payload }, ctx) => {
       ctx.send("greeting.recorded", { name: payload.name, text: \`Hello, \${payload.name}!\` });
     },
@@ -92,23 +96,22 @@ export class Greeter extends DurableObject<Env> {
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
   }
-
-  alarm() {
-    return this.actor.alarm();
-  }
 }
 `,
     "src/actors/guestbook.ts": `import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
 export class Guestbook extends DurableObject<Env> {
+  readonly lifecycle = Lifecycle.install(this);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (message_id TEXT PRIMARY KEY, name TEXT NOT NULL, text TEXT NOT NULL)");
   }
 
-  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Guestbook", {
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Guestbook", {
     "greeting.recorded": ({ id, payload }, ctx) => {
       ctx.sql.exec("INSERT INTO entries (message_id, name, text) VALUES (?, ?, ?)", id, payload.name, payload.text);
     },
@@ -116,10 +119,6 @@ export class Guestbook extends DurableObject<Env> {
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  alarm() {
-    return this.actor.alarm();
   }
 
   entries(): Array<{ name: string; text: string }> {

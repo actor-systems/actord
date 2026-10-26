@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
@@ -15,6 +16,8 @@ export interface BoardRow {
 
 /** The board: the latest status of every item. */
 export class Desk extends DurableObject<Env> {
+  readonly lifecycle = Lifecycle.install(this);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS board (
@@ -22,7 +25,7 @@ export class Desk extends DurableObject<Env> {
       updates INTEGER NOT NULL)`);
   }
 
-  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "Desk", {
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Desk", {
     "briefing.updated": ({ payload: p }, ctx) => {
       ctx.sql.exec(
         `INSERT INTO board (item_id, title, status, category, priority, summary, reason, updates) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
@@ -42,10 +45,6 @@ export class Desk extends DurableObject<Env> {
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  alarm() {
-    return this.actor.alarm();
   }
 
   board(): BoardRow[] {

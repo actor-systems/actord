@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
+import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import { deriveId, ingress } from "../src/runtime/index.ts";
 import { overrideEffect, resetSeams, settle } from "../src/testing.ts";
@@ -74,6 +74,21 @@ it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a 
   expect(await probe("orph-plain").outcomes()).toMatchObject([{ key: "orph-plain", status: "in_doubt" }]);
   expect(await probe("orph-keyed").outcomes()).toMatchObject([{ key: "orph-keyed", status: "confirmed" }]);
   expect(keyedRuns).toBe(1);
+});
+
+it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the object's one alarm", async () => {
+  let runs = 0;
+  overrideEffect("gateway.keyed", { run: async () => { if (++runs === 1) throw new Error("transient"); return "ok"; } });
+  await send("shared", "gateway.keyed");        // first attempt fails, so a retry is pending in 40 ms
+  await probe("shared").pingAt(Date.now() + 20); // the Pinger capability's own job
+  const owners = await runInDurableObject(probe("shared"), (_i, s) =>
+    s.storage.sql.exec<{ capability: string }>("SELECT capability FROM cf_agents_jobs ORDER BY capability").toArray().map((r) => r.capability));
+  expect(owners).toEqual(["actord", "pinger"]);
+  await new Promise((r) => setTimeout(r, 60));
+  await runDurableObjectAlarm(probe("shared"));
+  await settle(env, system);
+  expect(await probe("shared").pings()).toBe(1);
+  expect(await probe("shared").outcomes()).toEqual([{ key: "shared", status: "confirmed", error: null }]);
 });
 
 it("derived message ids are deterministic and position-sensitive", () => {

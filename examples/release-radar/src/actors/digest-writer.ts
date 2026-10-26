@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type EffectAdapter, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 
@@ -12,6 +13,8 @@ const logGateway: EffectAdapter<{ title: string; severity: string }, { accepted:
 
 /** Keeps the findings and notifies once per finding. Separate from the ledger so notification retries never hold up ingest. */
 export class DigestWriter extends DurableObject<Env> {
+  readonly lifecycle = Lifecycle.install(this);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(
@@ -20,7 +23,7 @@ export class DigestWriter extends DurableObject<Env> {
   }
 
   actor = actorRuntime(
-    { ctx: this.ctx, env: this.env },
+    { lifecycle: this.lifecycle, ctx: this.ctx, env: this.env },
     system,
     "DigestWriter",
     {
@@ -41,10 +44,6 @@ export class DigestWriter extends DurableObject<Env> {
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  alarm() {
-    return this.actor.alarm();
   }
 
   findings(): Array<{ item_id: string; severity: string; title: string }> {

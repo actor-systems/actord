@@ -1,19 +1,22 @@
 // @actord/toolkit/testing: helpers for tests that run in workerd with @cloudflare/vitest-plugin.
 // Import only from test files: it depends on the `cloudflare:test` module.
-import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import type { EffectAdapter, FaultPoint } from "./runtime/index.ts";
+import { listDurableObjectIds, runInDurableObject } from "cloudflare:test";
+import type { ActorRuntime, EffectAdapter, FaultPoint } from "./runtime/index.ts";
 import type { System } from "./system.ts";
 
 interface Seams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter>;
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  runtimes: Map<string, ActorRuntime>;
 }
 function seams(): Seams {
   const g = globalThis as { __actorsTestSeams?: Seams };
-  g.__actorsTestSeams ??= { faults: [], effects: {} };
+  g.__actorsTestSeams ??= { faults: [], effects: {}, runtimes: new Map() };
   return g.__actorsTestSeams;
 }
+// Create the seams at import, before any actor is constructed, so every runtime registers itself in them.
+seams();
 
 /**
  * Make the next `times` matching steps throw. "before-handler" fails before any state change,
@@ -62,8 +65,8 @@ async function outboxCounts(stub: unknown): Promise<{ pending: number; running: 
 
 /**
  * Wait until no effect is running anywhere in the system and, unless `deliver` is false, deliver every
- * pending outbox row, fast-forwarding retry backoff. Stops when the system is quiet or `rounds` run out;
- * returns the number of busy rounds.
+ * pending outbox row, fast-forwarding retry backoff by driving the runtime directly rather than through
+ * the alarm. Stops when the system is quiet or `rounds` run out; returns the number of busy rounds.
  */
 export async function settle(env: unknown, system: System, options: { rounds?: number; deliver?: boolean } = {}): Promise<number> {
   const e = env as Env;
@@ -81,9 +84,8 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
         any = true;
         await runInDurableObject(stub, async (_i, state) => {
           state.storage.sql.exec("UPDATE _actors_outbox SET next_at = 0 WHERE status = 'pending'");
-          if ((await state.storage.getAlarm()) === null) await state.storage.setAlarm(Date.now() + 3_600_000);
+          await seams().runtimes.get(state.id.toString())?.drive();
         });
-        await runDurableObjectAlarm(stub);
       }
     }
     if (!any) return busy;
@@ -96,8 +98,8 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
 let lastWake = 0;
 
 /**
- * Simulate a scheduled wake now: mark the instance's next tick due at the current time and run its alarm,
- * as when an alarm fires on schedule, so the wake's `payload.at` is now. Each call is a distinct wake (a
+ * Simulate a scheduled wake now: mark the instance's next tick due at the current time and drive it, as
+ * when its job fires on schedule, so the wake's `payload.at` is now. Each call is a distinct wake (a
  * later scheduled time, so a distinct message id).
  */
 export async function tick(env: unknown, system: System, actor: string, key = "main"): Promise<boolean> {
@@ -110,9 +112,7 @@ export async function tick(env: unknown, system: System, actor: string, key = "m
   const due = String(at);
   await runInDurableObject(stub, async (_i, state) => {
     state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES ('schedule.next', ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", due);
-    // An alarm set to "now" would fire on its own and race the test; park one far ahead instead,
-    // since runDurableObjectAlarm runs whatever alarm is set, whenever it is due.
-    if ((await state.storage.getAlarm()) === null) await state.storage.setAlarm(Date.now() + 3_600_000);
+    await seams().runtimes.get(state.id.toString())?.drive();
   });
-  return runDurableObjectAlarm(stub);
+  return true;
 }

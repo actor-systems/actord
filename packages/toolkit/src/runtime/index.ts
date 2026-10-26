@@ -1,4 +1,5 @@
 // @actord/toolkit/runtime: a small helper that a native Durable Object class composes (no base class).
+// The class installs the Agents SDK's Lifecycle, and actord runs as one capability on it (capability.ts).
 //
 // What it guarantees, and how (each is exercised by tests that run in workerd):
 // - Validation: an envelope is refused unless it is well formed, travels a declared route, carries the
@@ -9,8 +10,8 @@
 //   everything back and the sender retries. The transaction holds the input gate, so keep handlers to
 //   storage work: anything slow belongs in an effect.
 // - Delivery: outgoing messages sit in a SQLite outbox and are delivered after commit, retried with
-//   backoff from the alarm until acknowledged or exhausted (at least once; receivers dedupe). Messages
-//   from one sender to one receiver keep their order except across retries.
+//   backoff from actord's Lifecycle job until acknowledged or exhausted (at least once; receivers
+//   dedupe). Messages from one sender to one receiver keep their order except across retries.
 // - Effects: run after commit, outside the transaction, so other messages interleave while they wait.
 //   An attempt whose acknowledgment is lost is retried only when the effect declares an idempotency key;
 //   otherwise it is recorded and reported as in_doubt, never as delivered.
@@ -31,6 +32,8 @@ import type {
   System,
 } from "../system.ts";
 import { durationMs } from "../system.ts";
+import type { Lifecycle } from "agents/lifecycle";
+import { ActordCapability } from "./capability.ts";
 
 // ---- Minimal structural types for the Durable Object APIs we use (no dependency on workers-types) ----
 
@@ -49,9 +52,13 @@ export interface DurableObjectStateLike {
   storage: {
     sql: SqlStorageLike;
     transaction<T>(closure: () => Promise<T>): Promise<T>;
-    setAlarm(when: number): Promise<void> | void;
-    getAlarm(): Promise<number | null> | number | null;
   };
+}
+/** What actorRuntime needs from the Durable Object: its Lifecycle, which owns the alarm, and ctx and env. */
+export interface ActorHost {
+  lifecycle: Lifecycle;
+  ctx: DurableObjectStateLike;
+  env: unknown;
 }
 interface StubLike {
   receive(envelope: Envelope): Promise<Receipt>;
@@ -214,10 +221,8 @@ export interface RuntimeOptions<S extends AnySystem> {
 export interface ActorRuntime {
   /** The RPC entry point: expose it as a public `receive(envelope)` method on the Durable Object. */
   receive(envelope: unknown): Promise<Receipt>;
-  /** Forward the Durable Object's alarm() here. */
-  alarm(): Promise<void>;
-  /** Arm the schedule (idempotent). receive() also arms it. */
-  start(): Promise<void>;
+  /** @internal for @actord/toolkit/testing */
+  drive(): Promise<void>;
   /** Resolve an effect parked for human approval. */
   decide(effectKey: string, decision: "approve" | "deny", reason?: string): Promise<EffectOutcome>;
   /** Pending and dead outbox rows, for tests and inspection. */
@@ -231,6 +236,8 @@ interface TestSeams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter>;
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  /** Each instance's runtime by ctx.id.toString(), so test helpers can drive it without the alarm. */
+  runtimes?: Map<string, ActorRuntime>;
 }
 function seams(): TestSeams | undefined {
   return (globalThis as { __actorsTestSeams?: TestSeams }).__actorsTestSeams;
@@ -275,7 +282,7 @@ interface Pending {
 }
 
 export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
-  host: { ctx: DurableObjectStateLike; env: unknown },
+  host: ActorHost,
   system: S,
   actorName: A,
   handlers: Handlers<S, A>,
@@ -292,6 +299,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const defaultKey = options.defaultKey ?? "main";
   const effectsDeclared = new Set<string>(spec.effects ?? []);
   for (const q of SCHEMA) ctx.storage.sql.exec(q);
+  // Lifecycle runs start() once per instance, before its first fetch or alarm; receive() and drive()
+  // start it themselves, since native RPC and the test helpers bypass that.
+  const cap = new ActordCapability({ start, drive });
+  host.lifecycle.use(cap);
   const key = ctx.id.name ?? ctx.id.toString();
   const self = `${actorName}:${key}`;
   let draining: Promise<void> | null = null;
@@ -331,6 +342,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   }
 
   async function receive(raw: unknown): Promise<Receipt> {
+    await cap.ready();
     await recoverOrphans();
     const e = raw as Partial<Envelope>;
     if (!e || typeof e !== "object" || e.v !== ENVELOPE_VERSION || typeof e.id !== "string" || typeof e.type !== "string" || typeof e.from !== "string" || typeof e.to !== "string" || typeof e.version !== "number") {
@@ -466,30 +478,33 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   /** One drain at a time per instance; a caller arriving mid-drain shares it (new rows are picked up). */
   function drain(): Promise<void> {
-    if (draining) return draining;
-    // Clear the guard in .finally, which runs after this assignment even when the loop finds nothing to do.
-    const run: Promise<void> = drainLoop().finally(() => {
-      if (draining === run) draining = null;
-    });
-    draining = run;
-    return run;
+    draining ??= drainThenArm();
+    return draining;
+  }
+
+  async function drainThenArm(): Promise<void> {
+    try {
+      await drainLoop();
+    } finally {
+      // Release the guard before arming, which awaits storage: a row queued meanwhile (an effect's
+      // result) then starts its own drain instead of joining one that has stopped looking. The await
+      // above means drain() has set the guard by now, even when the loop finds nothing to do.
+      draining = null;
+      await cap.arm(earliestWake());
+    }
   }
 
   async function drainLoop(): Promise<void> {
-    try {
-      for (;;) {
-        const due = sql
-          .exec<{ id: string; kind: string; target: string; body: string; attempts: number }>(
-            "SELECT id, kind, target, body, attempts FROM _actors_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY seq LIMIT 1",
-            now(),
-          )
-          .toArray()[0];
-        if (!due) break;
-        if (due.kind === "message") await deliverMessage(due);
-        else startEffect(due);
-      }
-    } finally {
-      await armAlarm();
+    for (;;) {
+      const due = sql
+        .exec<{ id: string; kind: string; target: string; body: string; attempts: number }>(
+          "SELECT id, kind, target, body, attempts FROM _actors_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY seq LIMIT 1",
+          now(),
+        )
+        .toArray()[0];
+      if (!due) break;
+      if (due.kind === "message") await deliverMessage(due);
+      else startEffect(due);
     }
   }
 
@@ -532,7 +547,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         if (fx?.result) enqueueResult(fx.result, row.id, req, { key: req.key, status: "in_doubt", error: reason });
       }
     }
-    if (orphans.length > 0) await armAlarm();
+    if (orphans.length > 0) await cap.arm(earliestWake());
   }
 
   function retryOrExhaust(row: { id: string; attempts: number }, error: string, event: Omit<ActorEvent, "$actord" | "kind" | "at" | "actor">, overloaded = false): void {
@@ -662,23 +677,29 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (meta("schedule.next") === null) {
       const every = durationMs(spec.schedule.every) ?? 3_600_000;
       setMeta("schedule.next", String(now() + every));
-      await armAlarm();
+      await cap.arm(earliestWake());
     }
   }
 
-  async function armAlarm(): Promise<void> {
+  /** The one place every source of a wake meets: the earliest time actord must run, or null for never. */
+  function earliestWake(): number | null {
     const candidates: number[] = [];
     const next = sql.exec<{ t: number | null }>("SELECT MIN(next_at) AS t FROM _actors_outbox WHERE status = 'pending'").toArray()[0]?.t;
     if (next !== null && next !== undefined) candidates.push(next);
     const tick = meta("schedule.next");
     if (tick) candidates.push(Number(tick));
-    if (candidates.length === 0) return;
-    const when = Math.min(...candidates);
-    const current = await ctx.storage.getAlarm();
-    if (current === null || current !== when) await ctx.storage.setAlarm(when);
+    return candidates.length === 0 ? null : Math.min(...candidates);
   }
 
-  async function alarm(): Promise<void> {
+  async function start(): Promise<void> {
+    await recoverOrphans();
+    await ensureSchedule();
+    await cap.arm(earliestWake());
+  }
+
+  /** What the actord job runs: the schedule's tick if due, inbox retention, then the outbox. */
+  async function drive(): Promise<void> {
+    await cap.ready();
     await recoverOrphans();
     const tick = meta("schedule.next");
     if (spec.schedule && tick && Number(tick) <= now()) {
@@ -704,14 +725,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     await drain();
   }
 
-  return {
+  const runtime: ActorRuntime = {
     receive,
-    alarm,
-    async start() {
-      await recoverOrphans();
-      await ensureSchedule();
-      await armAlarm();
-    },
+    drive,
     async decide(effectKey, decision, reason) {
       const row = sql.exec<{ id: string; body: string; attempts: number; target: string }>("SELECT id, body, attempts, target FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval'", `fx:%:${effectKey}`).toArray()[0];
       if (!row) return { status: "denied", key: effectKey, error: "no effect awaiting approval with that key" };
@@ -738,6 +754,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         .map((r) => ({ id: r.id, kind: r.kind, target: r.target, status: r.status, attempts: r.attempts, lastError: r.last_error }));
     },
   };
+  seams()?.runtimes?.set(ctx.id.toString(), runtime);
+  return runtime;
 }
 
 /**

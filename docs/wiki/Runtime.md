@@ -1,7 +1,7 @@
 # The runtime and its guarantees
 
-Actors stay native Durable Object classes that compose `actorRuntime(...)`. What it guarantees, each
-backed by tests in workerd (see `examples/release-radar/tests/`):
+Actors stay native Durable Object classes that install `Lifecycle` and compose `actorRuntime(...)`. What it
+guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`):
 
 | Guarantee | How |
 | --- | --- |
