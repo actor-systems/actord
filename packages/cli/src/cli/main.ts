@@ -19,7 +19,8 @@ Commands:
        [--name N] [--host H]   host guidance (claude, codex, none) to an existing one (never overwrites)
   check [--changed <file>...]  Validate the declaration, routes, schemas, config, and manifest
         [--format brief]       (brief: hard errors only, silent when clean; for hooks)
-  graph [--write]              Print the topology; --write updates actord.manifest.json
+  graph [--write]              Print the topology; --write updates actord.manifest.json;
+        [--format mermaid]     mermaid prints it as a Mermaid flowchart for docs and PRs
   diff [--base <ref>]          Classify architectural changes against the committed manifest
        [--base-file <path>]    (default base: HEAD) and print a deploy plan, never a deploy
   events [--follow] [--notable] Query or follow local structured events (.actord/events.ndjson);
@@ -57,7 +58,7 @@ const commands: Record<string, Handler> = {
   doctor: ({ cwd }) => doctor(cwd),
   check: ({ cwd, values, positionals }) =>
     check(cwd, { changed: [...((values.changed as string[] | undefined) ?? []), ...(values.changed !== undefined ? positionals : [])], format: str(values.format) }),
-  graph: ({ cwd, values }) => graph(cwd, { write: values.write === true }),
+  graph: ({ cwd, values }) => graph(cwd, { write: values.write === true, format: str(values.format) }),
   diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) }),
   events: ({ cwd, values }) =>
     events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),

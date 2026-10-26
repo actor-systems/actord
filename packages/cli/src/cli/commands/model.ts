@@ -6,6 +6,7 @@ import { type DiffResult, diffManifests, EMPTY_MANIFEST } from "../../model/diff
 import { fingerprint } from "../../model/fingerprint.ts";
 import { loadProject, type Project } from "../../model/load.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "../../model/manifest.ts";
+import { renderMermaid } from "../../model/mermaid.ts";
 import type { CommandResult } from "../output.ts";
 import { findProjectRoot } from "../project.ts";
 
@@ -87,9 +88,14 @@ export interface GraphData {
   projectRoot: string | null;
   manifest: Manifest | null;
   written: string | null;
+  /** With --format mermaid: the topology as a Mermaid flowchart. */
+  mermaid?: string;
 }
 
-export async function graph(cwd: string, opts: { write?: boolean }): Promise<CommandResult<GraphData>> {
+export async function graph(cwd: string, opts: { write?: boolean; format?: string }): Promise<CommandResult<GraphData>> {
+  if (opts.format !== undefined && opts.format !== "text" && opts.format !== "mermaid") {
+    return { data: { projectRoot: null, manifest: null, written: null }, text: `✗ unknown --format "${opts.format}" (text or mermaid)`, exitCode: 2 };
+  }
   const root = findProjectRoot(cwd);
   if (!root) return noProject(cwd, { manifest: null, written: null });
   const project = await loadProject(root);
@@ -98,6 +104,10 @@ export async function graph(cwd: string, opts: { write?: boolean }): Promise<Com
   if (opts.write) {
     writeFileSync(join(root, MANIFEST_FILE), serializeManifest(project.manifest));
     written = MANIFEST_FILE;
+  }
+  if (opts.format === "mermaid") {
+    const mermaid = renderMermaid(project.manifest);
+    return { data: { projectRoot: root, manifest: project.manifest, written, mermaid }, text: mermaid, exitCode: 0 };
   }
   const text = renderGraph(project.manifest) + (written ? `\n\nwrote ${written}` : "");
   return { data: { projectRoot: root, manifest: project.manifest, written }, text, exitCode: 0 };

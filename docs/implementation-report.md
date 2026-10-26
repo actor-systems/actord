@@ -68,11 +68,11 @@ spikes/do-messaging/                 G0 platform probes, sandbox reproduction
 
 ## Working CLI commands
 
-`doctor`, `init [--adopt] [--host claude|codex|none]`, `check [--changed] [--format brief]`, `graph [--write]`, `diff [--base|--base-file]`,
+`doctor`, `init [--adopt] [--host claude|codex|none]`, `check [--changed] [--format brief]`, `graph [--write] [--format mermaid]`, `diff [--base|--base-file]`,
 `events [--follow] [--notable] [--exclusive]`, `trace <id>`, `test [--profile extended]`, `verify`,
 `room [--follow]`, `guard -- <command>`, and the hook entry points `hook check-on-edit | evidence-gate | heredoc-note`.
 Every command has `--json` with `schemaVersion` and a `volatile` list; exit 0 ok, 1 errors, 2 usage, 3 no
-project. Evidence: 129 CLI unit tests (`g5.cli.unit`, `g6.cli.room`), CLI snapshots and 12 negative fixtures
+project. Evidence: 136 CLI unit tests (`g5.cli.unit`, `g6.cli.room`), CLI snapshots and 12 negative fixtures
 that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged`).
 
 ## Reference-app demos
@@ -90,7 +90,7 @@ that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged
 
 | Suite | Count | Where |
 | --- | --- | --- |
-| CLI unit and snapshot tests (Vitest) | 129 | `packages/cli/test` |
+| CLI unit and snapshot tests (Vitest) | 136 | `packages/cli/test` |
 | Runtime probe tests (workerd) | 6 | `packages/cli/test-runtime` |
 | Release Radar (workerd) | 22 (21 + 1 extended) | `examples/release-radar/tests` |
 | Briefing Desk (workerd) | 11 | `examples/briefing-desk/tests` |

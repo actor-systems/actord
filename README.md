@@ -88,7 +88,7 @@ See [decision 0012](docs/decisions/0012-shared-core-host-adapters.md).
 | `actord init [dir] [--adopt]` | Creates a tested starter project (or adds the verify skill, `ask` rules, and CLAUDE.md to an existing one); never overwrites |
 | `actord doctor [--json]` | Checks Node, Claude Code, the project, CLI version pinning, Worker config, the verify skill, and permission rules, and reports actionable fixes |
 | `actord check [--changed <file>...] [--format brief] [--json]` | Validates what the compiler can't: routes, schemas, schedules, effects, budgets, `wrangler.jsonc` bindings and `exports`, Worker entry exports, and manifest freshness. Hard errors exit 1; warnings advise |
-| `actord graph [--write] [--json]` | Prints the topology; `--write` updates the derived `actord.manifest.json` |
+| `actord graph [--write] [--format mermaid] [--json]` | Prints the topology; `--write` updates the derived `actord.manifest.json`; `--format mermaid` prints it as a Mermaid flowchart, which GitHub and Obsidian draw |
 | `actord diff [--base <ref>] [--base-file <path>] [--json]` | Classifies architectural changes against the manifest committed at `<ref>` (default `HEAD`): compatible, breaking, or risky; approval-required; irreversible. Ends with a deploy plan, never a deploy |
 | `actord events [--follow] [--notable] [--json]` | Queries or follows the local structured event log (`.actord/events.ndjson`, written by tests); `--json` prints NDJSON, `--notable` keeps faults only |
 | `actord test [--profile extended]` | Runs the workerd tests (the standard profile skips `[extended]` tests) |
