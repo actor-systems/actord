@@ -374,9 +374,20 @@ export const checks = [
       return { ...r, status: "pass", reason: "docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt" };
     },
   },
-  command("g7.tag", "G7", "claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag", "claude plugin tag plugin --dry-run", {
-    classify: (r) => (r.code === 0 && /would create tag actord--v\d+\.\d+\.\d+/.test(r.output) ? { status: "pass", reason: /tag (actord--v[\d.]+)/.exec(r.output)[1] } : { status: "fail", reason: `exit ${r.code}` }),
-  }),
+  {
+    id: "g7.tag",
+    gate: "G7",
+    title: "claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag",
+    // --force only lets the dry run validate once the release is tagged; a dry run creates and moves nothing.
+    command: "claude plugin tag plugin --dry-run --force",
+    async run({ sh }) {
+      const r = sh("claude plugin tag plugin --dry-run --force");
+      const tag = /would create tag (actord--v\d+\.\d+\.\d+)/.exec(r.output)?.[1];
+      if (r.code !== 0 || !tag) return { ...r, status: "fail", reason: `exit ${r.code}` };
+      const at = sh(`git rev-parse --short "${tag}^{commit}"`);
+      return { ...r, status: "pass", reason: at.code === 0 ? `${tag}, tagged at ${at.output.trim()}` : `${tag}, not yet tagged` };
+    },
+  },
   {
     id: "g7.clean-checkout",
     gate: "G7",

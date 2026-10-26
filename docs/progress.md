@@ -5,10 +5,10 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**Release candidate; every gate passes** (G0–G7, `npm run verify`). Release runs L and M are the eval record
+**v0.1.0 tagged; every gate passes** (G0–G7, `npm run verify`). The local tag `actord--v0.1.0` marks
+`623c6ac` (never pushed without authorization; there's no remote). Release runs L and M are the eval record
 (`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds). Room acceptance A10 passed in
-the Desktop app; the topology fixes it prompted (`1a80691`) haven't been looked at there yet. Next, only with
-the owner's go-ahead: the local tag `actord--v0.1.0` (never pushed without authorization). Report:
+the Desktop app, and the owner re-checked the topology fixes it prompted. Report:
 `docs/implementation-report.md`.
 
 ## Done
@@ -53,9 +53,10 @@ the owner's go-ahead: the local tag `actord--v0.1.0` (never pushed without autho
   (CLI file mode), absolute path in a snapshot, skipped checks counted as passing, machine paths in reports.
 
 ## Next
-- ASK OWNER before creating the local tag `actord--v0.1.0`, and before any further model-backed eval run.
-- Optional: the owner updates the installed plugin and re-opens `/actord-room` in the Desktop app to see the
-  topology fixes from `1a80691`.
+- ASK OWNER before any further model-backed eval run, before pushing or moving the tag, and before merging
+  `shared-core-and-compat` into `main`.
+- A later release: consider Pele (obsidianmd/pele) to draw the Room's topology from `actord graph --format
+  mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 
 ## Open issues
 - Eval runs deny the loopback port workerd needs (decision 0004), so agents in evals can't run their own

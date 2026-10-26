@@ -35,8 +35,8 @@ and a hook puts a note beside a refused heredoc (decision 0013). Release runs L 
   Claude Code 2.1.308). The run showed the topology unreadable on the dark theme and a misleading reply; both
   are fixed (`1a80691`), and the fixed diagram hasn't been looked at in the Desktop app yet.
 
-The release tag (`actord--v0.1.0`, validated by `claude plugin tag --dry-run`) waits only for your go-ahead;
-it would be local only and never pushed without your authorization. Nothing was deployed, published, or run against a
+The release tag `actord--v0.1.0` (annotated, made with `claude plugin tag`) marks `623c6ac`. It's local only:
+the repository has no remote, and the tag is never pushed without your authorization. Nothing was deployed, published, or run against a
 Cloudflare account. Model-backed spend, all approved: $145.02 ($41.56 of $50, $21.44 of $25, $10.35 of
 about $10, $10.74 of about $20, $20.34 of about $22, $20.54 of about $21, $10.00 and $10.05 of about $10
 each).
