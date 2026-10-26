@@ -202,7 +202,7 @@ export const checks = [
     command: "npm run --silent build -w @actord/toolkit",
     async run({ sh, root }) {
       const version = JSON.parse(readFileSync(join(root, "packages/toolkit/package.json"))).version;
-      const files = [...["claude", "codex"].flatMap(host => [`plugins/${host}/dist/actord.mjs`, `plugins/${host}/dist/VERSION`, `plugins/${host}/dist/actord-toolkit-${version}.tgz`]), "plugins/claude/hooks/effect-patterns.ts"].map((f) => join(root, f));
+      const files = [...["claude", "codex"].flatMap(host => [`plugins/${host}/dist/actord.mjs`, `plugins/${host}/dist/VERSION`, `plugins/${host}/dist/actord-toolkit-${version}.tgz`]), "plugins/codex/dist/reference-templates.json", "plugins/claude/hooks/effect-patterns.ts"].map((f) => join(root, f));
       const before = files.map(hash);
       const r = sh("npm run --silent build -w @actord/toolkit");
       if (r.code !== 0) return { ...r, status: "fail", reason: "build failed" };

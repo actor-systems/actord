@@ -38,7 +38,7 @@ for (const file of readdirSync(join(here, "dist/types"), { recursive: true })) {
   const path = join(here, "dist/types", String(file));
   writeFileSync(path, readFileSync(path, "utf8").replace(/(from\s+["']\.{1,2}\/[^"']+)\.ts(["'])/g, "$1.js$2"));
 }
-// The reference apps have one source: root examples/. Package template data in the toolkit so a
+// The reference apps have one source: root examples/. Ship template data only with Codex so a
 // cached Codex plugin can scaffold them without a checkout or maintained example copies.
 const templates = {};
 for (const name of ["release-radar", "briefing-desk"]) {
@@ -48,7 +48,9 @@ for (const name of ["release-radar", "briefing-desk"]) {
     .filter((f) => lstatSync(join(source, f)).isFile())
     .map((f) => [f, readFileSync(join(source, f), "utf8")]));
 }
-writeFileSync(join(here, "dist/reference-templates.json"), JSON.stringify(templates, null, 2) + "\n");
+const codexDist = join(here, "..", "..", "plugins", "codex", "dist");
+mkdirSync(codexDist, { recursive: true });
+writeFileSync(join(codexDist, "reference-templates.json"), JSON.stringify(templates, null, 2) + "\n");
 copyFileSync(join(here, "../../LICENSE"), join(here, "dist/LICENSE"));
 copyFileSync(join(here, "../../NOTICE"), join(here, "dist/NOTICE"));
 // The Room's effect guard matches the same table in-process (a node process per Bash call would cost

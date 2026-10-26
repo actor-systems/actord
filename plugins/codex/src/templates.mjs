@@ -1,8 +1,8 @@
-// Reference templates are built from the root examples into the shared toolkit archive.
+// Reference templates are built from the root examples into the Codex distribution.
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 
 export function scaffoldTemplate(args, root, env) {
   try {
@@ -25,20 +25,12 @@ export function scaffoldTemplate(args, root, env) {
     const version = fs.readFileSync(path.join(dist, "VERSION"), "utf8").trim();
     const archive = `actord-toolkit-${version}.tgz`;
     const templates = JSON.parse(
-      execFileSync(
-        "tar",
-        [
-          "-xOf",
-          path.join(dist, archive),
-          "package/dist/reference-templates.json",
-        ],
-        { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
-      ),
+      fs.readFileSync(path.join(dist, "reference-templates.json"), "utf8"),
     );
     const files = templates[values.template];
     if (!files || typeof files !== "object")
       throw Error(
-        "Reference template missing from toolkit archive; rebuild the toolkit.",
+        "Reference template missing from Codex distribution; rebuild the toolkit.",
       );
     for (const [file, content] of Object.entries(files)) {
       const destination = path.resolve(target, file);

@@ -8,9 +8,9 @@ The owner reviews and merges; version 0.2.0 has not been tagged by this migratio
 - `plugins/codex/` contains the portable Apache-2.0 manifest, six skills, launcher, template adapter,
   README and generated distribution. Its root marketplace entry points directly at that directory.
 - One `packages/toolkit/build.mjs` writes the same CLI, VERSION and toolkit archive into both plugins.
-  `g1.dist.fresh` checks all six artifacts and the existing generated effect-pattern table.
+  `g1.dist.fresh` checks all six artifacts, Codex’s template data and the existing generated effect-pattern table.
 - Root `examples/` are the only source copies of the reference apps. Their filtered source data is
-  packaged in the toolkit archive during the shared build, so a separately cached plugin can create
+  written to `plugins/codex/dist/reference-templates.json` during the shared build, so a separately cached plugin can create
   either example without access to a checkout. The build excludes dependencies, session/runtime state,
   secrets, generated environment declarations and Claude guidance. No maintained template copy,
   vendor/core, provenance pin or sync command exists in the Codex adapter.
@@ -19,7 +19,8 @@ The owner reviews and merges; version 0.2.0 has not been tagged by this migratio
 - Root LICENSE and NOTICE apply throughout; each toolkit archive includes both. No separate MIT
   adapter license ships. Decision 0012 records that its synchronization process is superseded by 0014.
 - Claude skills, hooks, the Room and launcher source are unchanged. Its generated toolkit archive was
-  rebuilt to include the shared template data and legal notices. The previous repository was not modified.
+  rebuilt with legal notices only; reference template data ships exclusively in Codex’s distribution,
+  outside both toolkit archives. The previous repository was not modified.
 
 ## Executed verification
 

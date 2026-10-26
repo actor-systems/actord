@@ -39,8 +39,9 @@ The launcher sets `ACTORD_HOST=codex`. The shared host profile writes `AGENTS.md
 pins and remain usable without the plugin.
 
 Run `npm ci` and `npm run build -w @actord/toolkit` at the repository root. The same build writes both
-plugins' CLI, VERSION and toolkit tarball. Root example sources are packaged as template data in that
-archive, so installed/cached Codex plugins can scaffold without the repository. No vendor directory,
+plugins' CLI, VERSION and toolkit tarball. Root example sources are built into
+`plugins/codex/dist/reference-templates.json`, so installed/cached Codex plugins can scaffold without the
+repository. The template data ships only with Codex; neither toolkit tarball contains it. No vendor directory,
 provenance pins, sync script, or second copy of the example source is maintained here.
 
 Tests live in `tests/codex-*.test.mjs`; validation, installation and standalone consumer scripts live in

@@ -43,14 +43,12 @@ const archive = path.join(
 const inventory = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
   .trim()
   .split("\n");
-if (!inventory.includes("package/dist/reference-templates.json"))
-  throw Error("Packaged reference templates missing");
+if (inventory.includes("package/dist/reference-templates.json"))
+  throw Error(
+    "Codex-only reference templates must not ship in the toolkit archive",
+  );
 const templates = JSON.parse(
-  execFileSync(
-    "tar",
-    ["-xOf", archive, "package/dist/reference-templates.json"],
-    { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
-  ),
+  fs.readFileSync(path.join(plugin, "dist/reference-templates.json"), "utf8"),
 );
 for (const [name, template] of Object.entries(templates))
   for (const [file, content] of Object.entries(template)) {
