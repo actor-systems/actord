@@ -671,20 +671,29 @@ it("[heartbeat-armed-cancelling] while a cancel is in flight, actord keeps a wak
 });
 
 it("[job-probe-in-flight] a look that comes due while a probe still runs books the next one, not an immediate wake", async () => {
-  overrideEffectBudget("gateway.job", { timeoutMs: 150 });
+  // The probe runs until the test answers it, never until a timeout: a short timeout raced settle(), whose rounds
+  // drive every instance in the file and so grow slower as the file grows (and slower still on a busy runner).
+  // The answer is made here, in the test's context: see [job-settle-while-cancelling].
+  overrideEffectBudget("gateway.job", { timeoutMs: 60_000 });
   let probes = 0;
-  overrideEffect("gateway.job", { start: async () => ({ runId: "busy" }), probe: () => { probes++; return new Promise(() => {}); } });
+  let answer!: (r: { done: false }) => void;
+  const reply = new Promise<{ done: false }>((r) => (answer = r));
+  overrideEffect("gateway.job", { start: async () => ({ runId: "busy" }), probe: () => { probes++; return reply; } });
   await startJob("jpf");
   await settle(env, system);
   await probeDue("jpf");
-  await settle(env, system, { rounds: 1 }); // the probe starts, and hangs
-  await probeDue("jpf"); // its next look is due while it still runs
-  const before = Date.now();
-  await settle(env, system, { rounds: 1 });
-  expect(probes).toBe(1);
-  // Left in the past, next_at would hold actord's wake there and re-fire the alarm until the probe ends.
-  expect((await jobRow("jpf"))!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
-  await settle(env, system); // let the hung probe reach its timeout
+  await settle(env, system, { rounds: 1 }); // the probe starts, and runs until answered below
+  try {
+    await probeDue("jpf"); // its next look is due while it still runs
+    const before = Date.now();
+    await settle(env, system, { rounds: 1 });
+    expect(probes).toBe(1);
+    // Left in the past, next_at would hold actord's wake there and re-fire the alarm until the probe ends.
+    expect((await jobRow("jpf"))!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
+  } finally {
+    answer({ done: false }); // pass or fail, let the probe finish, so no later test waits on it
+  }
+  await settle(env, system);
 });
 
 it("[job-cancel-during-probe] a cancel asked for while a probe runs is still issued", async () => {
