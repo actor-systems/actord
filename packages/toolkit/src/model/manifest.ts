@@ -51,6 +51,8 @@ export interface ManifestEffect {
   idempotency: string;
   reconcile: boolean;
   approval: string;
+  /** Present only when the effect declares one: how long an approval waits before it expires. */
+  expires?: string;
   result: string | null;
   /** Present only when the effect declares one. */
   budget?: { maxAttempts?: number; timeoutMs?: number };
@@ -109,6 +111,7 @@ export function normalize(system: System): Manifest {
       idempotency: e.idempotency,
       reconcile: e.reconcile ?? false,
       approval: e.approval ?? "none",
+      ...(e.expires ? { expires: e.expires } : {}),
       result: e.result ?? null,
       ...(e.budget ? { budget: { ...(e.budget.maxAttempts !== undefined ? { maxAttempts: e.budget.maxAttempts } : {}), ...(e.budget.timeoutMs !== undefined ? { timeoutMs: e.budget.timeoutMs } : {}) } } : {}),
       kind: e.kind ?? "call",

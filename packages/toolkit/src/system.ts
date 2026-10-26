@@ -75,6 +75,8 @@ export interface EffectSpec {
   readonly reconcile?: boolean;
   /** "human": the effect goes through an approval gateway before it runs. */
   readonly approval?: "human" | "none";
+  /** How long an approval request waits for a person before it expires and the actor hears it failed. Default "3d". Only with approval: "human". */
+  readonly expires?: Duration;
   /**
    * A message delivered back to the requesting actor with the outcome ({ key, status, value | error, usage? }),
    * on a route from the actor to itself. This makes the external wait an explicit message boundary.

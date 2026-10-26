@@ -51,3 +51,23 @@ describe("job effect checks", () => {
     expect(jobCodes({ description: "Notify", idempotency: "key" })).toEqual([]);
   });
 });
+
+describe("approval expiry checks", () => {
+  const codes = (fx: EffectSpec) => {
+    const system = defineSystem({
+      name: "approvals",
+      messages: { "ci.start": Start, "ci.finished": Done } as Record<string, MessageSpec>,
+      actors: { Runner: { binding: "RUNNER", kind: "deterministic", purpose: "Runs CI", justification: ["state"], effects: ["ci.run"] } },
+      effects: { "ci.run": fx },
+      routes: [{ from: "@ingress", message: "ci.start", to: "Runner" }],
+    });
+    const project: Project = { root: "/nowhere", system, manifest: normalize(system), loadError: null, config: null, configFile: null, entryFile: null, entryExports: null, committedManifest: null, committedManifestRaw: null };
+    return checkProject(project).filter((d) => d.code.startsWith("APPROVAL_")).map((d) => `${d.severity}:${d.code}`);
+  };
+  it("APPROVAL_EXPIRES_IGNORED: expires without approval: human", () => {
+    expect(codes({ description: "x", idempotency: "key", expires: "1d" })).toEqual(["warning:APPROVAL_EXPIRES_IGNORED"]);
+    expect(codes({ description: "x", idempotency: "key", approval: "none", expires: "1d" })).toEqual(["warning:APPROVAL_EXPIRES_IGNORED"]);
+    expect(codes({ description: "x", idempotency: "key", approval: "human", expires: "1d" })).toEqual([]);
+    expect(codes({ description: "x", idempotency: "key" })).toEqual([]);
+  });
+});

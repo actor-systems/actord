@@ -21,6 +21,8 @@ export const system = defineSystem({
     "probe.job.start": message({ version: 1, description: "Start a job", payload: z.object({ key: z.string() }) }),
     "probe.job.done": message({ version: 1, description: "A job reports it finished", payload: z.object({ key: z.string(), ok: z.boolean(), effect: z.enum(["gateway.job", "gateway.job-plain", "gateway.job-approval"]).optional() }) }),
     "probe.job.cancel": message({ version: 1, description: "Cancel a job", payload: z.object({ key: z.string() }) }),
+    "probe.approve": message({ version: 1, description: "A person approves a parked effect", payload: z.object({ key: z.string(), by: z.string() }) }),
+    "probe.deny": message({ version: 1, description: "A person denies a parked effect", payload: z.object({ key: z.string(), by: z.string(), effect: z.enum(["gateway.approval", "gateway.job-approval"]).optional() }) }),
   },
   actors: {
     Probe: {
@@ -57,6 +59,8 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.job.start", to: "Probe" },
     { from: "@ingress", message: "probe.job.done", to: "Probe" },
     { from: "@ingress", message: "probe.job.cancel", to: "Probe" },
+    { from: "@ingress", message: "probe.approve", to: "Probe" },
+    { from: "@ingress", message: "probe.deny", to: "Probe" },
   ],
 });
 
@@ -84,6 +88,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL, at INTEGER)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS approvals (key TEXT NOT NULL, ok INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
   }
 
@@ -127,6 +132,14 @@ export class Probe extends DurableObject<Env> {
     "probe.job.cancel": ({ payload }, ctx) => {
       ctx.cancelJob("gateway.job", payload.key);
     },
+    "probe.approve": ({ payload }, ctx) => {
+      const ok = ctx.approve("gateway.approval", payload.key, { by: payload.by });
+      ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.key, ok ? 1 : 0);
+    },
+    "probe.deny": ({ payload }, ctx) => {
+      const ok = ctx.deny(payload.effect ?? "gateway.approval", payload.key, "not today", { by: payload.by });
+      ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.key, ok ? 1 : 0);
+    },
   }, { backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40 }); // a test can hold a retry back
 
   receive(envelope: Envelope) {
@@ -152,6 +165,9 @@ export class Probe extends DurableObject<Env> {
   }
   settled(): Array<{ key: string; ok: boolean }> {
     return this.ctx.storage.sql.exec<{ key: string; ok: number }>("SELECT key, ok FROM settled ORDER BY rowid").toArray().map((r) => ({ key: r.key, ok: r.ok === 1 }));
+  }
+  approvals(): Array<{ key: string; ok: boolean }> {
+    return this.ctx.storage.sql.exec<{ key: string; ok: number }>("SELECT key, ok FROM approvals ORDER BY rowid").toArray().map((r) => ({ key: r.key, ok: r.ok === 1 }));
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);

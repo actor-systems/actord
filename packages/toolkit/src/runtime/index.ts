@@ -252,9 +252,9 @@ export interface HandlerContext<S extends AnySystem, A extends ActorName<S>> {
   /** Queue an external effect, deduplicated by key; it runs after commit, outside the transaction. */
   effect(name: EffectsOf<S, A>, input: unknown, options: { key: string }): void;
   /** Release an effect parked for human approval; it runs after this handler commits. False if none is waiting. */
-  approve(name: EffectsOf<S, A>, key: string): boolean;
+  approve(name: EffectsOf<S, A>, key: string, identity?: { by: string }): boolean;
   /** Refuse an effect parked for human approval. False if none is waiting. */
-  deny(name: EffectsOf<S, A>, key: string, reason: string): boolean;
+  deny(name: EffectsOf<S, A>, key: string, reason: string, identity?: { by: string }): boolean;
   /** Deliver `type` to this instance after `delay` (a Duration like "5m", or milliseconds). One timer per key: setting it again replaces it. Set only if this handler commits. */
   after<M extends TimerMessages<S, A>>(delay: Duration | number, type: M, payload: PayloadIn<S, M>, options: { key: string }): void;
   /** Deliver `type` to this instance at `when` (epoch milliseconds). Same rules as `after`. */
@@ -346,6 +346,9 @@ function maybeFault(actor: string, type: string | undefined, at: FaultPoint): vo
 
 /** How far away the wake may be while an effect runs: the longest a lost attempt goes unnoticed. */
 const HEARTBEAT_MS = 30_000;
+/** How long an approval request waits for a person, unless the effect says otherwise. */
+const DEFAULT_APPROVAL_EXPIRES: Duration = "3d";
+const APPROVAL_EXPIRED = "approval expired";
 
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS _actors_inbox (id TEXT PRIMARY KEY, type TEXT NOT NULL, sender TEXT NOT NULL, handled_at INTEGER NOT NULL)",
@@ -573,21 +576,21 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         const body = JSON.stringify({ name: effectName, key: opts.key, input, causationId: current.id, correlationId: current.correlationId });
         pending.push({ kind: "effect", id, target: effectName, body, event: { kind: "effect.requested", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId } });
       },
-      approve(name, effectKey) {
+      approve(name, effectKey, identity) {
         const id = `fx:${name as string}:${effectKey}`;
         const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval'", id).toArray()[0];
         if (!row) return false;
-        sql.exec("UPDATE _actors_outbox SET status = 'pending', next_at = ?, body = ? WHERE id = ?", now(), JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: current.id }), id);
-        notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: name as string, effectKey, reason: "approved by a person" });
+        sql.exec("UPDATE _actors_outbox SET status = 'pending', next_at = ?, body = ? WHERE id = ?", now(), JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: { messageId: current.id, from: current.from, by: identity?.by ?? null } }), id);
+        notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: name as string, effectKey, reason: "approved by a person", detail: { by: identity?.by ?? null, via: current.from } });
         return true;
       },
-      deny(name, effectKey, reason) {
+      deny(name, effectKey, reason, identity) {
         const id = `fx:${name as string}:${effectKey}`;
         const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval'", id).toArray()[0];
         if (!row) return false;
         const req = JSON.parse(row.body) as { causationId: string; correlationId: string };
         sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason, id);
-        notes.push({ kind: "effect.denied", at: now(), actor: self, effect: name as string, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason });
+        notes.push({ kind: "effect.denied", at: now(), actor: self, effect: name as string, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason, detail: { by: identity?.by ?? null, via: current.from } });
         return true;
       },
       after(delay, type, payload, opts) {
@@ -808,7 +811,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const fx = system.effects?.[req.name];
     const base = { effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId };
     if (fx?.approval === "human" && !req.approved) {
-      sql.exec("UPDATE _actors_outbox SET status = 'awaiting_approval' WHERE id = ?", row.id);
+      const expiresMs = durationMs(fx.expires ?? DEFAULT_APPROVAL_EXPIRES) ?? durationMs(DEFAULT_APPROVAL_EXPIRES)!;
+      sql.exec("UPDATE _actors_outbox SET status = 'awaiting_approval', next_at = ? WHERE id = ?", now() + expiresMs, row.id);
       emit({ kind: "effect.awaiting_approval", at: now(), actor: self, ...base });
       return;
     }
@@ -1047,7 +1051,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   /** The one place every source of a wake meets: the earliest time actord must run, or null for never. */
   function earliestWake(): number | null {
     const candidates: number[] = [];
-    const next = sql.exec<{ t: number | null }>("SELECT MIN(next_at) AS t FROM _actors_outbox WHERE status = 'pending'").toArray()[0]?.t;
+    // A parked approval's next_at is when it expires.
+    const next = sql.exec<{ t: number | null }>("SELECT MIN(next_at) AS t FROM _actors_outbox WHERE status IN ('pending', 'awaiting_approval')").toArray()[0]?.t;
     if (next !== null && next !== undefined) candidates.push(next);
     // Only declared schedules count: a removed schedule's leftover due time must not hold the alarm.
     for (const key of scheduleKeys()) {
@@ -1101,8 +1106,21 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       if ((job.body.deadlineAt ?? 0) <= now()) finishEffect(job, job.body, "in_doubt", null, "deadline passed", { settledBy: "deadline" });
       else startProbe(job);
     }
+    expireApprovals();
     sql.exec("DELETE FROM _actors_inbox WHERE handled_at < ?", now() - retention);
     await drain();
+  }
+
+  /** An approval nobody answered in time is a denial: the effect never runs, and the actor hears it failed. A kept job completion doesn't change that. */
+  function expireApprovals(): void {
+    const due = sql.exec<{ id: string; attempts: number; body: string }>("SELECT id, attempts, body FROM _actors_outbox WHERE status = 'awaiting_approval' AND next_at <= ?", now()).toArray();
+    for (const row of due) {
+      const req = JSON.parse(row.body) as JobBody;
+      sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", APPROVAL_EXPIRED, row.id);
+      emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, reason: APPROVAL_EXPIRED });
+      const result = system.effects?.[req.name]?.result;
+      if (result) enqueueResult(result, row.id, req, { key: req.key, status: "failed", error: APPROVAL_EXPIRED });
+    }
   }
 
   /** Deliver one due timer to this instance. The id is derived from the key and due time, so a redelivery is a duplicate. */
@@ -1146,15 +1164,18 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     receive,
     drive,
     async decide(effectKey, decision, reason) {
+      await cap.ready();
+      await recoverOrphans();
       const row = sql.exec<{ id: string; body: string; attempts: number; target: string }>("SELECT id, body, attempts, target FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval'", `fx:%:${effectKey}`).toArray()[0];
       if (!row) return { status: "denied", key: effectKey, error: "no effect awaiting approval with that key" };
       const req = JSON.parse(row.body) as { name: string; causationId: string; correlationId: string };
       if (decision === "deny") {
         sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason ?? "denied by a person", row.id);
-        emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason: reason ?? "denied by a person" });
+        emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason: reason ?? "denied by a person", detail: { by: null, via: "@rpc" } });
         return { status: "denied", key: effectKey, error: reason ?? "denied by a person" };
       }
-      sql.exec("UPDATE _actors_outbox SET status = 'pending', body = ?, next_at = ? WHERE id = ?", JSON.stringify({ ...JSON.parse(row.body), approved: true }), now(), row.id);
+      sql.exec("UPDATE _actors_outbox SET status = 'pending', body = ?, next_at = ? WHERE id = ?", JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: { messageId: null, from: "@rpc", by: null } }), now(), row.id);
+      emit({ kind: "note", at: now(), actor: self, correlationId: req.correlationId, effect: req.name, effectKey, reason: "approved by a person", detail: { by: null, via: "@rpc" } });
       await drain();
       await inflight.get(row.id);
       const done = sql.exec<{ status: string; body: string; last_error: string | null }>("SELECT status, body, last_error FROM _actors_outbox WHERE id = ?", row.id).toArray()[0]!;

@@ -97,6 +97,8 @@ export function checkProject(project: Project): Diagnostic[] {
         if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
           add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
     }
+    if (e.expires !== undefined && e.approval !== "human")
+      add("warning", "APPROVAL_EXPIRES_IGNORED", e.name, `${e.name} sets expires: "${e.expires}" but has no approval: "human", so nothing waits to expire`, `Add approval: "human", or remove expires.`);
     if (e.kind === "job") {
       if (e.deadline === null || durationMs(e.deadline) === null)
         add("error", "JOB_DEADLINE_MISSING", e.name, e.deadline === null ? `${e.name} is a job with no deadline, so a job that never reports back would wait forever` : `${e.name} has deadline "${e.deadline}", which isn't a duration like 2h`, `Add deadline: "2h": how long to wait before the outcome is in_doubt.`);

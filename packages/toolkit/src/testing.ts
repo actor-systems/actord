@@ -185,3 +185,19 @@ export async function expireJobs(env: unknown, system: System, actor: string, ke
     return waiting;
   });
 }
+
+/**
+ * Make every approval an instance is waiting on expire now, and drive it, as when the approval's
+ * deadline passes: each becomes denied with "approval expired". Returns how many were waiting.
+ */
+export async function expireApprovals(env: unknown, system: System, actor: string, key = "main"): Promise<number> {
+  const spec = system.actors[actor];
+  if (!spec) throw new Error(`${actor} is not declared`);
+  const stub = (env as Env)[spec.binding]!.getByName(key);
+  return runInDurableObject(stub, async (_i, state) => {
+    const waiting = state.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE status = 'awaiting_approval'").one().n as number;
+    state.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", Date.now());
+    await seams().runtimes.get(state.id.toString())?.drive();
+    return waiting;
+  });
+}

@@ -3,7 +3,7 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { afterEach, expect, it, vi } from "vitest";
 import { deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
-import { captureEvents, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
@@ -851,4 +851,105 @@ it("[effect-key-reuse-job] a job key requested again is a duplicate attributed t
   expect(starts).toBe(1);
   expect(events.filter((e) => e.kind === "effect.requested" && e.effectKey === "jdup")).toHaveLength(1);
   expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "jdup")).toMatchObject([{ causationId: "job-second", detail: { existingStatus: "awaiting_job", firstCausationId: "job-first" } }]);
+});
+
+it("[approval-expiry] an approval nobody answers expires and the actor hears it failed", async () => {
+  const events = captureEvents();
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  await send("exp", "gateway.approval");
+  await settle(env, system);
+  await expireApprovals(env, system, "Probe", "exp");
+  await settle(env, system);
+  expect(await probe("exp").outcomes()).toMatchObject([{ key: "exp", status: "failed", error: "approval expired" }]);
+  expect(events.find((e) => e.kind === "effect.denied" && e.effectKey === "exp")).toMatchObject({ reason: "approval expired" });
+});
+
+it("[approval-expiry-wake] a parked approval holds the alarm until it expires, and an unexpired one is left alone", async () => {
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  await send("wake", "gateway.approval");
+  await settle(env, system);
+  const row = await runInDurableObject(probe("wake"), (_i, s) => s.storage.sql.exec("SELECT status, next_at FROM _actors_outbox WHERE id LIKE 'fx:%:wake'").one());
+  expect(row.status).toBe("awaiting_approval");
+  expect(Number(row.next_at) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
+  const alarm = await runInDurableObject(probe("wake"), (_i, s) => s.storage.getAlarm());
+  expect(alarm).not.toBeNull();
+  expect(alarm!).toBeLessThanOrEqual(Number(row.next_at));
+  await settle(env, system);
+  expect(await probe("wake").outcomes()).toEqual([]);
+});
+
+it("[approval-identity] an approval records who approved and through which sender", async () => {
+  const events = captureEvents();
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  await send("who", "gateway.approval");
+  await settle(env, system);
+  await ingress(env, system, "Probe", "probe.approve", { key: "who", by: "owner@example.com" }, { key: "who" });
+  await settle(env, system);
+  expect(events.find((e) => e.kind === "note" && e.effectKey === "who")).toMatchObject({ detail: { by: "owner@example.com", via: "@ingress" } });
+  const body = await runInDurableObject(probe("who"), (_i, s) => JSON.parse(String(s.storage.sql.exec("SELECT body FROM _actors_outbox WHERE id LIKE 'fx:%:who'").one().body)));
+  expect(body.approvedBy).toMatchObject({ from: "@ingress", by: "owner@example.com" });
+  expect(typeof body.approvedBy.messageId).toBe("string");
+});
+
+it("[denial-identity] a denial records who denied and through which sender", async () => {
+  const events = captureEvents();
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  await send("nay", "gateway.approval");
+  await settle(env, system);
+  await ingress(env, system, "Probe", "probe.deny", { key: "nay", by: "owner@example.com" }, { key: "nay" });
+  await settle(env, system);
+  expect(events.find((e) => e.kind === "effect.denied" && e.effectKey === "nay")).toMatchObject({ reason: "not today", detail: { by: "owner@example.com", via: "@ingress" } });
+});
+
+it("[approval-identity-rpc] decide() records the person through the RPC sender", async () => {
+  const events = captureEvents();
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  await send("rpc-ap", "gateway.approval");
+  await send("rpc-no", "gateway.approval");
+  await settle(env, system);
+  await probe("rpc-ap").decide("rpc-ap", "approve");
+  await probe("rpc-no").decide("rpc-no", "deny");
+  expect(events.find((e) => e.kind === "note" && e.effectKey === "rpc-ap")).toMatchObject({ detail: { via: "@rpc" } });
+  expect(events.find((e) => e.kind === "effect.denied" && e.effectKey === "rpc-no")).toMatchObject({ detail: { via: "@rpc" } });
+});
+
+it("[approve-after-expiry] approving after expiry does nothing and the effect never runs", async () => {
+  let runs = 0;
+  overrideEffect("gateway.approval", { run: async () => ++runs });
+  await send("late-ap", "gateway.approval");
+  await settle(env, system);
+  await expireApprovals(env, system, "Probe", "late-ap");
+  await ingress(env, system, "Probe", "probe.approve", { key: "late-ap", by: "owner@example.com" }, { key: "late-ap" });
+  await settle(env, system);
+  expect(await probe("late-ap").approvals()).toEqual([{ key: "late-ap", ok: false }]);
+  expect(runs).toBe(0);
+});
+
+it("[approval-expiry-job] an expired job approval is a denial even when a completion was kept", async () => {
+  let starts = 0;
+  overrideEffect("gateway.job-approval", { run: async () => ({ handle: `h${++starts}` }) } as never);
+  await send("job-exp", "gateway.job-approval");
+  await settle(env, system);
+  await ingress(env, system, "Probe", "probe.job.done", { key: "job-exp", ok: true, effect: "gateway.job-approval" }, { key: "job-exp" });
+  await expireApprovals(env, system, "Probe", "job-exp");
+  await settle(env, system);
+  expect(starts).toBe(0);
+  expect(await probe("job-exp").outcomes()).toMatchObject([{ key: "job-exp", status: "failed", error: "approval expired" }]);
+});
+
+it("[decide-cold] decide() on a freshly aborted instance recovers orphans first", async () => {
+  let runs = 0;
+  overrideEffect("gateway.approval", { run: async () => ++runs });
+  overrideEffect("gateway.keyed", { run: () => new Promise(() => {}) }); // hangs until the crash below
+  await send("cold", "gateway.approval");
+  await send("cold", "gateway.keyed");
+  await settle(env, system, { rounds: 2 });
+  await abortAllDurableObjects(); // a crash: the keyed attempt is orphaned on a cold instance
+  let keyedRuns = 0;
+  overrideEffect("gateway.keyed", { run: async () => ++keyedRuns });
+  // The first call the new instance gets is decide(), not a message.
+  expect(await probe("cold").decide("cold", "approve")).toMatchObject({ status: "confirmed", value: 1 });
+  // Before anything else drives the instance: decide() itself recovered the orphan and its drain re-ran it.
+  expect(runs).toBe(1);
+  expect(keyedRuns).toBe(1);
 });

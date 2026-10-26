@@ -71,11 +71,11 @@ export class Analyst extends DurableObject<Env> {
         const item = load(ctx);
         if (item?.status !== "awaiting_approval") return ctx.note(`no briefing awaiting approval (status ${item?.status ?? "unknown"})`);
         if (payload.decision === "approve") {
-          ctx.approve("notify.brief", item.item_id);
+          ctx.approve("notify.brief", item.item_id, { by: payload.by });
           ctx.sql.exec("UPDATE item SET status = 'sending'");
           update(ctx, { status: "sending", reason: `approved by ${payload.by}` });
         } else {
-          ctx.deny("notify.brief", item.item_id, `refused by ${payload.by}`);
+          ctx.deny("notify.brief", item.item_id, `refused by ${payload.by}`, { by: payload.by });
           ctx.sql.exec("UPDATE item SET status = 'denied'");
           update(ctx, { status: "denied", reason: `refused by ${payload.by}` });
         }
