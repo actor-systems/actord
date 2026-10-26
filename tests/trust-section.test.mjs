@@ -1,17 +1,17 @@
-// Every hook command, mod event, mod call, and monitor command shipped in plugins/claude/ must appear in the
-// README's "Trust and safety" section. The listing comes from the plugin's own files and from
-// `claude plugin validate`, which reads the mod's source the way Claude Code does.
+// Every hook command, mod event, mod call, and monitor command shipped in plugins/claude/ must appear on the
+// "Trust and safety" wiki page (docs/wiki/Trust-and-Safety.md, published to the GitHub wiki). The listing
+// comes from the plugin's own files and from `claude plugin validate`, which reads the mod's source the way
+// Claude Code does.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const root = new URL("..", import.meta.url).pathname;
-const readme = readFileSync(`${root}README.md`, "utf8");
-const trust = readme.slice(readme.indexOf("## Trust and safety"), readme.indexOf("\n## ", readme.indexOf("## Trust and safety") + 3));
+const trust = readFileSync(`${root}docs/wiki/Trust-and-Safety.md`, "utf8");
 const json = (p) => (existsSync(`${root}${p}`) ? JSON.parse(readFileSync(`${root}${p}`, "utf8")) : null);
 
-test("README has a trust section", () => assert.ok(trust.length > 200));
+test("the wiki has a trust page", () => assert.ok(trust.length > 200));
 
 test("every settings-style hook command is listed", () => {
   const hooks = json("plugins/claude/hooks/hooks.json")?.hooks ?? {};

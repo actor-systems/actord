@@ -104,6 +104,7 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0011](decisions/0011-payload-compatibility.md) | Payload compatibility: "compatible" is a proof, and the plan drains what isn't |
 | [0013](decisions/0013-heredoc-note-and-recover-trigger.md) | A note beside refused heredocs; `reliability` takes reported failures |
 | [0014](decisions/0014-one-repository.md) | One repository for the core and both plugins, one version, Apache-2.0 |
+| [0015](decisions/0015-readme-wiki-contributing.md) | A landing-page README, a wiki for reference (from `docs/wiki/`), CONTRIBUTING for the repository |
 
 ## Coding-host adapters
 

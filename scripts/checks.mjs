@@ -230,7 +230,7 @@ export const checks = [
       return { status: "pass", reason: `always-on ~${b.max} tokens${b.max > 1000 ? " (over the 1,000 target)" : ""}` };
     },
   }),
-  command("g1.trust", "G1", "README trust section lists every hook, mod event, mod call, monitor", "node --test tests/trust-section.test.mjs"),
+  command("g1.trust", "G1", "The Trust and safety page lists every hook, mod event, mod call, monitor", "node --test tests/trust-section.test.mjs"),
   {
     id: "g1.start-session",
     gate: "G1",
@@ -349,7 +349,7 @@ export const checks = [
     },
   }),
   command("g6.monitor", "G6", "The monitor prints notable events once per session and starts with inspect or reliability", "node --test tests/monitor.test.mjs"),
-  command("g6.trust", "G6", "README trust section lists every mod event, mod call, and monitor command; no forbidden calls", "node --test tests/trust-section.test.mjs"),
+  command("g6.trust", "G6", "The Trust and safety page lists every mod event, mod call, and monitor command; no forbidden calls", "node --test tests/trust-section.test.mjs"),
   command("g6.no-hooks", "G6", "Core path with disableAllHooks: installs, starter verifies, Room view and guard decision as CLI text", "scripts/no-hooks-smoke.sh"),
   {
     id: "g6.acceptance",
@@ -369,7 +369,7 @@ export const checks = [
       return notRun.length ? { status: "blocked", reason, evidenceSource: "recorded-acceptance" } : { status: "pass", reason, evidenceSource: "recorded-acceptance" };
     },
   },
-  command("g7.docs", "G7", "README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow", "node --test tests/release.test.mjs"),
+  command("g7.docs", "G7", "README landing page, wiki pages (install, update, uninstall, CLI, the Room, trust, limitations), CONTRIBUTING, architecture page, CI workflow", "node --test tests/release.test.mjs"),
   {
     id: "g7.release-evidence",
     gate: "G7",

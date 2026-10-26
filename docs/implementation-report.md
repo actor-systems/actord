@@ -238,7 +238,7 @@ claude plugin install actord@actord
 ```
 
 Then `/actord:start` in a session. Requirements: Claude Code 2.1.287+, Node 22.18+. Developing the repository:
-`npm install && npm run verify`. Update and uninstall: README.
+`npm install && npm run verify`. Update and uninstall: the wiki's [Getting started](https://github.com/actor-systems/actord/wiki/Getting-Started) page.
 
 ## Open risks
 
