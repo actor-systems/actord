@@ -17,7 +17,7 @@ const out = (doc: unknown, exitCode = 0) => ({ value: { exitCode, stdout: `${JSO
 type Calls = { argv: string[][]; spawned: string[][]; status: Array<string | undefined>; registered: string[]; bash: string[]; asked: string[] }
 
 /** Stubs for everything the Room calls; the CLI's answers are the recorded fixtures. */
-function engine(on: any, opts: { room?: unknown; roomExit?: number; trace?: unknown; guard?: unknown; guardFails?: boolean; surfaces?: string[]; answer?: string | 'dismiss'; commands?: unknown[]; panes?: unknown[] } = {}): Calls {
+function engine(on: any, opts: { room?: unknown; roomExit?: number; trace?: unknown; guard?: unknown; guardFails?: boolean; surfaces?: string[]; answer?: string | 'dismiss'; commands?: unknown[]; panes?: unknown[]; open?: unknown } = {}): Calls {
   const calls: Calls = { argv: [], spawned: [], status: [], registered: [], bash: [], asked: [] }
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('classic.SessionStart', () => ({}))
@@ -26,7 +26,7 @@ function engine(on: any, opts: { room?: unknown; roomExit?: number; trace?: unkn
     calls.registered.push(e.name)
     return { value: { command: e.name } }
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', () => ({ value: opts.open ?? { isPlaced: true } }))
   on('ui.status', (_: unknown, e: { text?: string }) => {
     calls.status.push(e.text)
     return { value: undefined }
@@ -108,6 +108,20 @@ test('the status line summarizes the project in an interactive session', async (
   await start($)
   expect(calls.status).toContain(ROOM.status)
   expect(calls.registered).toEqual(['actord-room'])
+})
+
+test('/actord-room says "wide enough" only when a narrow terminal holds the pane back', async ($, on) => {
+  engine(on, { open: { isPlaced: false, reason: 'below 110 columns (80 now)' } })
+  await start($)
+  expect((await $.command.run(typed('actord-room'))).text).toBe('The actord Room is open; it shows once the window is wide enough.')
+})
+
+test('/actord-room reports the status when a surface draws the pane as it attaches (the Desktop app)', async ($, on) => {
+  engine(on, { open: { isPlaced: false, reason: 'no surface that places panes is attached yet' } })
+  await start($)
+  const opened = await $.command.run(typed('actord-room'))
+  expect(opened.text).toMatch(/^The actord Room is open: /)
+  expect(opened.text).not.toMatch(/wide enough/)
 })
 
 test('/actord-room starts one follower, and a reloaded module restarts it only for a pane still up', async ($, on) => {

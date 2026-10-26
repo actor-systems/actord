@@ -203,6 +203,6 @@ describe("topology SVG", () => {
     expect(svg).toContain("A&lt;b&gt;");
     expect(svg).toContain("m&amp;n");
     expect(svg).not.toContain("A<b>");
-    expect(svg).toMatch(/stroke="#cf222e" color="#cf222e" stroke-dasharray="5 4"/);
+    expect(svg).toMatch(/stroke="#e5534b" stroke-dasharray="5 4" marker-end="url\(#actord-arrow-removed\)"/);
   });
 });

@@ -78,11 +78,13 @@ function follow($: EngineInterface) {
 }
 
 async function openRoom($: EngineInterface) {
-  const { isPlaced } = await $.ui.open({ id: PANE, title: 'actord Room' })
+  const opened = await $.ui.open({ id: PANE, title: 'actord Room' })
   const snap = await refresh($)
   if (!snap) return { text: 'No actor project here (no system.ts with a package.json at or above this directory), so the Room has nothing to show.' }
   follow($)
-  return { text: isPlaced ? `The actord Room is open: ${snap.status ?? ''}` : 'The actord Room is open; it shows once the window is wide enough.' }
+  // Undrawn for width only on a narrow terminal (the reason names columns); elsewhere a surface draws it as it attaches.
+  const narrow = !opened.isPlaced && /column/i.test(opened.reason)
+  return { text: narrow ? 'The actord Room is open; it shows once the window is wide enough.' : `The actord Room is open: ${snap.status ?? ''}` }
 }
 
 async function selectMessage($: EngineInterface, id: string) {

@@ -42,7 +42,12 @@ export function topologyWithChanges(base: Manifest | null, head: Manifest): Topo
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const COLOR = { added: "#1a7f37", removed: "#cf222e" } as const;
+// Surfaces draw this inline, on light and dark themes alike, so names and lines take the surface's own text
+// color (currentColor) and quieter parts a lower opacity. Changes keep hues that read on both.
+const COLOR = { added: "#2da44e", removed: "#e5534b" } as const;
+const QUIET = 0.65;
+const EXTERNAL = 0.75;
+const CHAR = 7; // a generous width per character of a 12px label
 
 export function topologySvg(t: Topology): string {
   const external = [...new Set(t.routes.map((r) => r.from).filter((f) => f.startsWith("@")))].sort();
@@ -63,29 +68,37 @@ export function topologySvg(t: Topology): string {
   }
   const W = 170;
   const H = 46;
-  const GX = 90;
+  // Wide enough for the longest label between columns; a self-loop and its label get room above the boxes.
+  const GX = Math.max(90, ...t.routes.filter((r) => r.from !== r.to).map((r) => r.message.length * CHAR + 30));
   const GY = 34;
+  const TOP = t.routes.some((r) => r.from === r.to) ? 50 : 20;
   const pos = new Map<string, { x: number; y: number }>();
   for (const [d, names] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
-    names.forEach((n, i) => pos.set(n, { x: 20 + d * (W + GX), y: 20 + i * (H + GY) }));
+    names.forEach((n, i) => pos.set(n, { x: 20 + d * (W + GX), y: TOP + i * (H + GY) }));
   }
   const width = Math.max(...[...pos.values()].map((p) => p.x + W)) + 20;
   const height = Math.max(...[...pos.values()].map((p) => p.y + H)) + 30;
   const kind = new Map(t.actors.map((a) => [a.name, a]));
+  // Paint for one attribute: a change's hue, else the surface's text color at the given opacity.
+  const paint = (attr: "fill" | "stroke", change: Change, opacity = 1) =>
+    change ? `${attr}="${COLOR[change]}"` : `${attr}="currentColor"${opacity < 1 ? ` ${attr}-opacity="${opacity}"` : ""}`;
+  const marker = (id: string, change: Change) =>
+    `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" ${paint("fill", change, QUIET)}/></marker>`;
+  const arrow = (change: Change) => `url(#actord-arrow${change ? `-${change}` : ""})`;
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="ui-sans-serif, system-ui" font-size="12">`,
-    `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>`,
+    `<defs>${marker("actord-arrow", null)}${marker("actord-arrow-added", "added")}${marker("actord-arrow-removed", "removed")}</defs>`,
   ];
   for (const r of t.routes) {
     const a = pos.get(r.from);
     const b = pos.get(r.to);
     if (!a || !b) continue;
-    const color = r.change ? COLOR[r.change] : "#57606a";
     const dash = r.change === "removed" ? ` stroke-dasharray="5 4"` : "";
     if (r.from === r.to) {
+      const cx = a.x + W / 2;
       parts.push(
-        `<path d="M${a.x + W - 30},${a.y} C${a.x + W - 10},${a.y - 28} ${a.x + W + 22},${a.y + 4} ${a.x + W},${a.y + 16}" fill="none" stroke="${color}" color="${color}"${dash} marker-end="url(#arrow)"/>`,
-        `<text x="${a.x + W - 4}" y="${a.y - 14}" fill="${color}">${esc(r.message)}</text>`,
+        `<path d="M${cx - 20},${a.y} C${cx - 20},${a.y - 30} ${cx + 20},${a.y - 30} ${cx + 20},${a.y}" fill="none" ${paint("stroke", r.change, QUIET)}${dash} marker-end="${arrow(r.change)}"/>`,
+        `<text x="${cx}" y="${a.y - 28}" text-anchor="middle" ${paint("fill", r.change, QUIET)}>${esc(r.message)}</text>`,
       );
       continue;
     }
@@ -93,20 +106,25 @@ export function topologySvg(t: Topology): string {
     const y1 = a.y + H / 2;
     const x2 = b.x;
     const y2 = b.y + H / 2;
+    // Clear of its own line: above a level or rising edge, below a falling one, by the rise across the label.
+    const slope = (y2 - y1) / (x2 - x1);
+    const rise = Math.round((Math.abs(slope) * r.message.length * CHAR) / 2);
+    const ly = slope > 0 ? (y1 + y2) / 2 + rise + 12 : (y1 + y2) / 2 - 5 - rise;
     parts.push(
-      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" color="${color}"${dash} marker-end="url(#arrow)"/>`,
-      `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 5}" text-anchor="middle" fill="${color}">${esc(r.message)}</text>`,
+      `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ${paint("stroke", r.change, QUIET)}${dash} marker-end="${arrow(r.change)}"/>`,
+      `<text x="${(x1 + x2) / 2}" y="${ly}" text-anchor="middle" ${paint("fill", r.change, QUIET)}>${esc(r.message)}</text>`,
     );
   }
   for (const [name, p] of pos) {
     const node = kind.get(name);
-    const color = node?.change ? COLOR[node.change] : name.startsWith("@") ? "#8c959f" : "#24292f";
-    const dash = node?.change === "removed" ? ` stroke-dasharray="5 4"` : "";
+    const change = node?.change ?? null;
+    const strength = name.startsWith("@") ? EXTERNAL : 1;
+    const dash = change === "removed" ? ` stroke-dasharray="5 4"` : "";
     parts.push(
-      `<rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="${name.startsWith("@") ? 23 : 8}" fill="none" stroke="${color}" stroke-width="1.5"${dash}/>`,
-      `<text x="${p.x + W / 2}" y="${p.y + (node ? 20 : 28)}" text-anchor="middle" font-weight="600" fill="${color}">${esc(name)}</text>`,
+      `<rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="${name.startsWith("@") ? 23 : 8}" fill="none" ${paint("stroke", change, strength)} stroke-width="1.5"${dash}/>`,
+      `<text x="${p.x + W / 2}" y="${p.y + (node ? 20 : 28)}" text-anchor="middle" font-weight="600" ${paint("fill", change, strength)}>${esc(name)}</text>`,
     );
-    if (node) parts.push(`<text x="${p.x + W / 2}" y="${p.y + 36}" text-anchor="middle" fill="#57606a">${esc(node.kind)}${node.change ? ` · ${node.change}` : ""}</text>`);
+    if (node) parts.push(`<text x="${p.x + W / 2}" y="${p.y + 36}" text-anchor="middle" ${paint("fill", null, QUIET)}>${esc(node.kind)}${node.change ? ` · ${node.change}` : ""}</text>`);
   }
   parts.push("</svg>");
   return parts.join("\n");

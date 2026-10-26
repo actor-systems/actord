@@ -86,7 +86,7 @@ export const ROOM = {
       "- Notifier (deterministic) · removed",
       "  ReleaseLedger (deterministic)"
     ],
-    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 990 176\" width=\"990\" height=\"176\" font-family=\"ui-sans-serif, system-ui\" font-size=\"12\">\n<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"currentColor\"/></marker></defs>\n<line x1=\"190\" y1=\"43\" x2=\"280\" y2=\"43\" stroke=\"#57606a\" color=\"#57606a\" marker-end=\"url(#arrow)\"/>\n<text x=\"235\" y=\"38\" text-anchor=\"middle\" fill=\"#57606a\">feed.poll.due</text>\n<line x1=\"190\" y1=\"123\" x2=\"280\" y2=\"43\" stroke=\"#57606a\" color=\"#57606a\" marker-end=\"url(#arrow)\"/>\n<text x=\"235\" y=\"78\" text-anchor=\"middle\" fill=\"#57606a\">feed.watch</text>\n<path d=\"M420,20 C440,-8 472,24 450,36\" fill=\"none\" stroke=\"#57606a\" color=\"#57606a\" marker-end=\"url(#arrow)\"/>\n<text x=\"446\" y=\"6\" fill=\"#57606a\">feed.fetched</text>\n<line x1=\"450\" y1=\"43\" x2=\"540\" y2=\"43\" stroke=\"#57606a\" color=\"#57606a\" marker-end=\"url(#arrow)\"/>\n<text x=\"495\" y=\"38\" text-anchor=\"middle\" fill=\"#57606a\">release.observed</text>\n<line x1=\"710\" y1=\"43\" x2=\"800\" y2=\"43\" stroke=\"#1a7f37\" color=\"#1a7f37\" marker-end=\"url(#arrow)\"/>\n<text x=\"755\" y=\"38\" text-anchor=\"middle\" fill=\"#1a7f37\">release.significant</text>\n<line x1=\"710\" y1=\"43\" x2=\"800\" y2=\"123\" stroke=\"#cf222e\" color=\"#cf222e\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/>\n<text x=\"755\" y=\"78\" text-anchor=\"middle\" fill=\"#cf222e\">release.significant</text>\n<rect x=\"20\" y=\"20\" width=\"170\" height=\"46\" rx=\"23\" fill=\"none\" stroke=\"#8c959f\" stroke-width=\"1.5\"/>\n<text x=\"105\" y=\"48\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#8c959f\">@clock</text>\n<rect x=\"20\" y=\"100\" width=\"170\" height=\"46\" rx=\"23\" fill=\"none\" stroke=\"#8c959f\" stroke-width=\"1.5\"/>\n<text x=\"105\" y=\"128\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#8c959f\">@ingress</text>\n<rect x=\"280\" y=\"20\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"#24292f\" stroke-width=\"1.5\"/>\n<text x=\"365\" y=\"40\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#24292f\">FeedPoller</text>\n<text x=\"365\" y=\"56\" text-anchor=\"middle\" fill=\"#57606a\">deterministic</text>\n<rect x=\"540\" y=\"20\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"#24292f\" stroke-width=\"1.5\"/>\n<text x=\"625\" y=\"40\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#24292f\">ReleaseLedger</text>\n<text x=\"625\" y=\"56\" text-anchor=\"middle\" fill=\"#57606a\">deterministic</text>\n<rect x=\"800\" y=\"20\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"#1a7f37\" stroke-width=\"1.5\"/>\n<text x=\"885\" y=\"40\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#1a7f37\">DigestWriter</text>\n<text x=\"885\" y=\"56\" text-anchor=\"middle\" fill=\"#57606a\">deterministic · added</text>\n<rect x=\"800\" y=\"100\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"#cf222e\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/>\n<text x=\"885\" y=\"120\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#cf222e\">Notifier</text>\n<text x=\"885\" y=\"136\" text-anchor=\"middle\" fill=\"#57606a\">deterministic · removed</text>\n</svg>",
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1209 206\" width=\"1209\" height=\"206\" font-family=\"ui-sans-serif, system-ui\" font-size=\"12\">\n<defs><marker id=\"actord-arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"currentColor\" fill-opacity=\"0.65\"/></marker><marker id=\"actord-arrow-added\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#2da44e\"/></marker><marker id=\"actord-arrow-removed\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto-start-reverse\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"#e5534b\"/></marker></defs>\n<line x1=\"190\" y1=\"73\" x2=\"353\" y2=\"73\" stroke=\"currentColor\" stroke-opacity=\"0.65\" marker-end=\"url(#actord-arrow)\"/>\n<text x=\"271.5\" y=\"68\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">feed.poll.due</text>\n<line x1=\"190\" y1=\"153\" x2=\"353\" y2=\"73\" stroke=\"currentColor\" stroke-opacity=\"0.65\" marker-end=\"url(#actord-arrow)\"/>\n<text x=\"271.5\" y=\"91\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">feed.watch</text>\n<path d=\"M418,50 C418,20 458,20 458,50\" fill=\"none\" stroke=\"currentColor\" stroke-opacity=\"0.65\" marker-end=\"url(#actord-arrow)\"/>\n<text x=\"438\" y=\"22\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">feed.fetched</text>\n<line x1=\"523\" y1=\"73\" x2=\"686\" y2=\"73\" stroke=\"currentColor\" stroke-opacity=\"0.65\" marker-end=\"url(#actord-arrow)\"/>\n<text x=\"604.5\" y=\"68\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">release.observed</text>\n<line x1=\"856\" y1=\"73\" x2=\"1019\" y2=\"73\" stroke=\"#2da44e\" marker-end=\"url(#actord-arrow-added)\"/>\n<text x=\"937.5\" y=\"68\" text-anchor=\"middle\" fill=\"#2da44e\">release.significant</text>\n<line x1=\"856\" y1=\"73\" x2=\"1019\" y2=\"153\" stroke=\"#e5534b\" stroke-dasharray=\"5 4\" marker-end=\"url(#actord-arrow-removed)\"/>\n<text x=\"937.5\" y=\"158\" text-anchor=\"middle\" fill=\"#e5534b\">release.significant</text>\n<rect x=\"20\" y=\"50\" width=\"170\" height=\"46\" rx=\"23\" fill=\"none\" stroke=\"currentColor\" stroke-opacity=\"0.75\" stroke-width=\"1.5\"/>\n<text x=\"105\" y=\"78\" text-anchor=\"middle\" font-weight=\"600\" fill=\"currentColor\" fill-opacity=\"0.75\">@clock</text>\n<rect x=\"20\" y=\"130\" width=\"170\" height=\"46\" rx=\"23\" fill=\"none\" stroke=\"currentColor\" stroke-opacity=\"0.75\" stroke-width=\"1.5\"/>\n<text x=\"105\" y=\"158\" text-anchor=\"middle\" font-weight=\"600\" fill=\"currentColor\" fill-opacity=\"0.75\">@ingress</text>\n<rect x=\"353\" y=\"50\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/>\n<text x=\"438\" y=\"70\" text-anchor=\"middle\" font-weight=\"600\" fill=\"currentColor\">FeedPoller</text>\n<text x=\"438\" y=\"86\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">deterministic</text>\n<rect x=\"686\" y=\"50\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/>\n<text x=\"771\" y=\"70\" text-anchor=\"middle\" font-weight=\"600\" fill=\"currentColor\">ReleaseLedger</text>\n<text x=\"771\" y=\"86\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">deterministic</text>\n<rect x=\"1019\" y=\"50\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"#2da44e\" stroke-width=\"1.5\"/>\n<text x=\"1104\" y=\"70\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#2da44e\">DigestWriter</text>\n<text x=\"1104\" y=\"86\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">deterministic · added</text>\n<rect x=\"1019\" y=\"130\" width=\"170\" height=\"46\" rx=\"8\" fill=\"none\" stroke=\"#e5534b\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\"/>\n<text x=\"1104\" y=\"150\" text-anchor=\"middle\" font-weight=\"600\" fill=\"#e5534b\">Notifier</text>\n<text x=\"1104\" y=\"166\" text-anchor=\"middle\" fill=\"currentColor\" fill-opacity=\"0.65\">deterministic · removed</text>\n</svg>",
     "alt": "release-radar: 4 actors, 6 routes, 4 changes against file:base.json",
     "changes": 4
   },
@@ -138,29 +138,19 @@ export const ROOM = {
       "errors": 0,
       "warnings": 0,
       "codes": [],
-      "checkedAt": "2026-10-25T01:30:55.669Z"
+      "checkedAt": "2026-10-26T00:09:51.443Z"
     }
   },
   "mailboxes": {
     "file": ".actord/events.ndjson",
-    "events": 372,
+    "events": 392,
     "actors": [
       {
         "name": "DigestWriter",
-        "received": 16,
+        "received": 18,
         "messages": [
           {
-            "messageId": "m-6",
-            "type": "release.vanished",
-            "from": "ReleaseLedger:main",
-            "to": "DigestWriter:main",
-            "outcome": "rejected",
-            "mark": "✗",
-            "attempts": 1,
-            "reason": "unknown_message"
-          },
-          {
-            "messageId": "1pk9rl5ohjfsq",
+            "messageId": "3grd9q72zkvw5",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -170,7 +160,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "38rq4zz6le5af",
+            "messageId": "3irgcn40txqyv",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -180,7 +170,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "1x38rbsut6xaz",
+            "messageId": "2pf4bsfo7096u",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -190,7 +180,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2kkqw5a57h3xo",
+            "messageId": "197xkdr0enhmm",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -200,7 +190,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2dswp40yb1wu5",
+            "messageId": "1rs9i7tmqlak1",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -210,7 +200,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2kb731eghoxo0",
+            "messageId": "3ies7eysxg355",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -220,7 +210,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "28rkzs1pyyvmo",
+            "messageId": "0qu3qe6qu6f9j",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -230,7 +220,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "01kk6vwmx3wwf",
+            "messageId": "3tcwcfn1tyhs9",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -240,7 +230,17 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "0ap89fexjyl66",
+            "messageId": "0ymmv6e76950c",
+            "type": "release.significant",
+            "from": "ReleaseLedger:main",
+            "to": "DigestWriter:main",
+            "outcome": "handled",
+            "mark": "✓",
+            "attempts": 1,
+            "reason": null
+          },
+          {
+            "messageId": "1zcde4kvsn2yf",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -250,7 +250,7 @@ export const ROOM = {
             "reason": "injected fault at deliver"
           },
           {
-            "messageId": "0yglngeo3y702",
+            "messageId": "1h3iuuduehepa",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -260,7 +260,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2608f1efj6o5e",
+            "messageId": "08pmvvoz7tszh",
             "type": "release.significant",
             "from": "ReleaseLedger:main",
             "to": "DigestWriter:main",
@@ -273,10 +273,10 @@ export const ROOM = {
       },
       {
         "name": "FeedPoller",
-        "received": 39,
+        "received": 45,
         "messages": [
           {
-            "messageId": "9023638a-89c2-4ebb-81d6-af4bc1fe7b68",
+            "messageId": "f2a771c8-6bc9-401e-acdc-41a43dc0a339",
             "type": "feed.watch",
             "from": "@ingress",
             "to": "FeedPoller:exhausted",
@@ -286,7 +286,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "237caitsl19p3",
+            "messageId": "1r1590fogo3s2",
             "type": "feed.poll.due",
             "from": "@clock",
             "to": "FeedPoller:exhausted",
@@ -296,7 +296,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "0rgrkrqibm6r6",
+            "messageId": "2419buk19676t",
             "type": "feed.fetched",
             "from": "FeedPoller:exhausted",
             "to": "FeedPoller:exhausted",
@@ -306,7 +306,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "a431038c-676c-4b59-881e-42dddd875dd2",
+            "messageId": "3a661156-65b6-4be2-9504-f8690a3ad7d8",
             "type": "feed.watch",
             "from": "@ingress",
             "to": "FeedPoller:lost-ack",
@@ -316,7 +316,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "1u1r2pfepcgjw",
+            "messageId": "32mzd665gddel",
             "type": "feed.poll.due",
             "from": "@clock",
             "to": "FeedPoller:lost-ack",
@@ -326,7 +326,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "3kffq589mit9g",
+            "messageId": "39pr890igpzbr",
             "type": "feed.fetched",
             "from": "FeedPoller:lost-ack",
             "to": "FeedPoller:lost-ack",
@@ -336,7 +336,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "b8982c13-5059-40ea-8beb-59f4c294aff4",
+            "messageId": "d99dcf57-fcfd-4142-8251-233a76650617",
             "type": "feed.watch",
             "from": "@ingress",
             "to": "FeedPoller:lost-ack-2",
@@ -346,7 +346,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2tq6bv2vzzjc0",
+            "messageId": "1lvlgfiefrerp",
             "type": "feed.poll.due",
             "from": "@clock",
             "to": "FeedPoller:lost-ack-2",
@@ -356,7 +356,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "20327h8u4x7wb",
+            "messageId": "3so62d7yjbbbg",
             "type": "feed.fetched",
             "from": "FeedPoller:lost-ack-2",
             "to": "FeedPoller:lost-ack-2",
@@ -366,7 +366,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "930ed5dd-67be-4849-9e30-991dda81636e",
+            "messageId": "5ce3ba14-1784-417f-8906-aefa4662961f",
             "type": "feed.watch",
             "from": "@ingress",
             "to": "FeedPoller:restart",
@@ -376,7 +376,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "3uzagw2qgi2ag",
+            "messageId": "0kt4k9ni90eae",
             "type": "feed.poll.due",
             "from": "@clock",
             "to": "FeedPoller:restart",
@@ -386,7 +386,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "26em9q9cu0qw3",
+            "messageId": "20hn8xbk54rw1",
             "type": "feed.fetched",
             "from": "FeedPoller:restart",
             "to": "FeedPoller:restart",
@@ -399,10 +399,10 @@ export const ROOM = {
       },
       {
         "name": "ReleaseLedger",
-        "received": 25,
+        "received": 27,
         "messages": [
           {
-            "messageId": "1g41x8mhs9v9f",
+            "messageId": "0kvbidax5k5e4",
             "type": "release.observed",
             "from": "FeedPoller:workers-sdk",
             "to": "ReleaseLedger:main",
@@ -412,7 +412,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2h34ivh4ou7hn",
+            "messageId": "332a249s44bsn",
             "type": "release.observed",
             "from": "FeedPoller:crash-after",
             "to": "ReleaseLedger:main",
@@ -420,6 +420,46 @@ export const ROOM = {
             "mark": "✓",
             "attempts": 2,
             "reason": "injected fault at after-handler"
+          },
+          {
+            "messageId": "1xrntg6e72t7w",
+            "type": "release.observed",
+            "from": "FeedPoller:desc",
+            "to": "ReleaseLedger:main",
+            "outcome": "handled",
+            "mark": "✓",
+            "attempts": 1,
+            "reason": null
+          },
+          {
+            "messageId": "3a0zf9udnn4er",
+            "type": "release.observed",
+            "from": "FeedPoller:desc",
+            "to": "ReleaseLedger:main",
+            "outcome": "handled",
+            "mark": "✓",
+            "attempts": 1,
+            "reason": null
+          },
+          {
+            "messageId": "042y22s6yiqki",
+            "type": "release.observed",
+            "from": "FeedPoller:desc",
+            "to": "ReleaseLedger:main",
+            "outcome": "handled",
+            "mark": "✓",
+            "attempts": 1,
+            "reason": null
+          },
+          {
+            "messageId": "0cwl5xsk7tu0x",
+            "type": "release.observed",
+            "from": "FeedPoller:desc",
+            "to": "ReleaseLedger:main",
+            "outcome": "handled",
+            "mark": "✓",
+            "attempts": 1,
+            "reason": null
           },
           {
             "messageId": "redelivered-1",
@@ -432,47 +472,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2f4qddfdfawbb",
-            "type": "release.observed",
-            "from": "FeedPoller:desc",
-            "to": "ReleaseLedger:main",
-            "outcome": "handled",
-            "mark": "✓",
-            "attempts": 1,
-            "reason": null
-          },
-          {
-            "messageId": "2ubch6nkrrvio",
-            "type": "release.observed",
-            "from": "FeedPoller:desc",
-            "to": "ReleaseLedger:main",
-            "outcome": "handled",
-            "mark": "✓",
-            "attempts": 1,
-            "reason": null
-          },
-          {
-            "messageId": "1h1qjb2uxxuk5",
-            "type": "release.observed",
-            "from": "FeedPoller:desc",
-            "to": "ReleaseLedger:main",
-            "outcome": "handled",
-            "mark": "✓",
-            "attempts": 1,
-            "reason": null
-          },
-          {
-            "messageId": "1cw8ktkjmi1eu",
-            "type": "release.observed",
-            "from": "FeedPoller:desc",
-            "to": "ReleaseLedger:main",
-            "outcome": "handled",
-            "mark": "✓",
-            "attempts": 1,
-            "reason": null
-          },
-          {
-            "messageId": "23jx3kj31kr2g",
+            "messageId": "33sorxikigan9",
             "type": "release.observed",
             "from": "FeedPoller:evicted",
             "to": "ReleaseLedger:main",
@@ -482,7 +482,7 @@ export const ROOM = {
             "reason": "injected fault at deliver"
           },
           {
-            "messageId": "0fbojcvutnwnu",
+            "messageId": "0ywmitt1k423q",
             "type": "release.observed",
             "from": "FeedPoller:exhausted",
             "to": "ReleaseLedger:main",
@@ -492,7 +492,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "3uqw98ko3ahr0",
+            "messageId": "0nzx89uvgji0a",
             "type": "release.observed",
             "from": "FeedPoller:lost-ack",
             "to": "ReleaseLedger:main",
@@ -502,7 +502,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "3e7d8hyvjyjma",
+            "messageId": "1x52h2g695afb",
             "type": "release.observed",
             "from": "FeedPoller:lost-ack-2",
             "to": "ReleaseLedger:main",
@@ -512,7 +512,7 @@ export const ROOM = {
             "reason": null
           },
           {
-            "messageId": "2dbu92t45zqo3",
+            "messageId": "2lru6ewxgzbkp",
             "type": "release.observed",
             "from": "FeedPoller:restart",
             "to": "ReleaseLedger:main",
@@ -538,7 +538,7 @@ export const ROOM = {
   },
   "evidence": {
     "state": "pass",
-    "generatedAt": "2026-10-25T01:30:57.858Z",
+    "generatedAt": "2026-10-26T00:05:03.093Z",
     "profile": "standard",
     "groups": [
       {
@@ -632,11 +632,11 @@ export const TRACE = {
   ],
   "projectRoot": "/work/release-radar",
   "found": true,
-  "target": "2dbu92t45zqo3",
-  "correlationId": "3uzagw2qgi2ag",
+  "target": "2lru6ewxgzbkp",
+  "correlationId": "0kt4k9ni90eae",
   "rootCauseUnknown": false,
   "root": {
-    "messageId": "3uzagw2qgi2ag",
+    "messageId": "0kt4k9ni90eae",
     "type": "feed.poll.due",
     "from": "@clock",
     "to": "FeedPoller:restart",
@@ -648,12 +648,12 @@ export const TRACE = {
     "effects": [
       {
         "effect": "feed.fetch",
-        "key": "poll-1792890857809",
+        "key": "poll-1792973103052",
         "outcome": "confirmed",
         "attempts": 1,
         "reason": null,
         "result": {
-          "messageId": "26em9q9cu0qw3",
+          "messageId": "20hn8xbk54rw1",
           "type": "feed.fetched",
           "from": "FeedPoller:restart",
           "to": "FeedPoller:restart",
@@ -665,7 +665,7 @@ export const TRACE = {
           "effects": [],
           "children": [
             {
-              "messageId": "2dbu92t45zqo3",
+              "messageId": "2lru6ewxgzbkp",
               "type": "release.observed",
               "from": "FeedPoller:restart",
               "to": "ReleaseLedger:main",
@@ -685,7 +685,7 @@ export const TRACE = {
   },
   "coverage": {
     "file": ".actord/events.ndjson",
-    "events": 372,
+    "events": 392,
     "note": "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record."
   }
 }
@@ -705,7 +705,7 @@ export const TRACE_UNKNOWN = {
   "root": null,
   "coverage": {
     "file": ".actord/events.ndjson",
-    "events": 372,
+    "events": 392,
     "note": "Local evidence from test and dev runs only. Production history isn't available, and the trace never infers events it didn't record."
   }
 }
