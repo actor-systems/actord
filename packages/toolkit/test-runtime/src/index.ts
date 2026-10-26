@@ -94,7 +94,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL, at INTEGER)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS approvals (key TEXT NOT NULL, ok INTEGER NOT NULL)");
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS pokes (id TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS pokes (id TEXT NOT NULL, cid TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
   }
 
@@ -151,8 +151,8 @@ export class Probe extends DurableObject<Env> {
     "probe.job.cancel": ({ payload }, ctx) => {
       ctx.cancelJob("gateway.job", payload.key);
     },
-    "probe.poked": ({ payload }, ctx) => {
-      ctx.sql.exec("INSERT INTO pokes (id) VALUES (?)", payload.key);
+    "probe.poked": ({ payload, correlationId }, ctx) => {
+      ctx.sql.exec("INSERT INTO pokes (id, cid) VALUES (?, ?)", payload.key, correlationId);
     },
     "probe.approve": ({ payload }, ctx) => {
       const ok = ctx.approve("gateway.approval", payload.key, { by: payload.by });
@@ -193,6 +193,9 @@ export class Probe extends DurableObject<Env> {
   }
   poked(): string[] {
     return this.ctx.storage.sql.exec<{ id: string }>("SELECT id FROM pokes ORDER BY rowid").toArray().map((r) => r.id);
+  }
+  pokeCorrelations(): string[] {
+    return this.ctx.storage.sql.exec<{ cid: string }>("SELECT cid FROM pokes ORDER BY rowid").toArray().map((r) => r.cid);
   }
   pingAt(time: number) {
     return this.pinger.pingAt(time);

@@ -1102,3 +1102,10 @@ it("[external-sender-route] the same message from a sender with no route is refu
   expect(r).toMatchObject({ status: "rejected", reason: "unauthorized_route" });
   expect(await probe("ext2").poked()).toEqual([]);
 });
+it("[external-sender-forged] an in-system sender name is refused before delivery", async () => {
+  await expect(deliverExternal(env, system, "Probe" as never, "Probe", "probe.outcome", { key: "f", status: "confirmed" }, { key: "forged" })).rejects.toThrow(/must start with "@"/);
+});
+it("[external-correlation] a supplied correlationId reaches the handler's envelope", async () => {
+  await deliverExternal(env, system, "@hooks", "Probe", "probe.poked", { key: "cc" }, { key: "cc", id: "d-cc", correlationId: "c-1" });
+  expect(await probe("cc").pokeCorrelations()).toEqual(["c-1"]);
+});

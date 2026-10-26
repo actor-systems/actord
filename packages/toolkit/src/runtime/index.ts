@@ -1261,6 +1261,7 @@ export async function deliverExternal(
   payload: unknown,
   options: { key?: string; id?: string; correlationId?: string } = {},
 ): Promise<Receipt> {
+  if (typeof from !== "string" || !from.startsWith("@")) throw new Error(`actord: deliverExternal sender must start with "@", got ${JSON.stringify(from)}`);
   const spec = system.actors[to];
   if (!spec) throw new Error(`actord: ${to} is not declared`);
   const ns = (env as Record<string, NamespaceLike>)[spec.binding];
