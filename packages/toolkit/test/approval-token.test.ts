@@ -37,4 +37,21 @@ describe("approval tokens", () => {
     expect(SUBJECT_TAG.exec(`Re: Approve notify.brief? [actord:${token}]`)?.[1]).toBe(token);
     expect(SUBJECT_TAG.exec("Re: Approve notify.brief? [actord:abc.def]")?.[1]).toBe("abc.def");
   });
+
+  it("is live at exp - 1 and expired at exp", async () => {
+    const token = await signApprovalToken("s3cret", claims);
+    expect((await verifyApprovalToken("s3cret", token, claims.exp - 1)).ok).toBe(true);
+    expect(await verifyApprovalToken("s3cret", token, claims.exp)).toEqual({ ok: false, reason: "expired" });
+  });
+
+  it("a correctly signed payload that isn't claims is malformed", async () => {
+    const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode("s3cret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    for (const json of ['{"actor":1}', "null", "not json"]) {
+      const payload = b64(enc.encode(json));
+      const sig = b64(new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(payload))));
+      expect(await verifyApprovalToken("s3cret", `${payload}.${sig}`, 0)).toEqual({ ok: false, reason: "malformed" });
+    }
+  });
 });

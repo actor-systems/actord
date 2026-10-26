@@ -9,7 +9,7 @@ export interface ApprovalClaims {
   readonly key: string;
   readonly effect: string;
   readonly effectKey: string;
-  /** Epoch milliseconds; the token is refused after this instant. */
+  /** Epoch milliseconds; the token is live while now < exp and expired from exp on. */
   readonly exp: number;
 }
 
@@ -35,7 +35,7 @@ export async function verifyApprovalToken(secret: string, token: string, now: nu
   if (!equalConstantTime(await hmac(secret, payload), given)) return { ok: false, reason: "bad_signature" };
   const claims = parseClaims(payload);
   if (!claims) return { ok: false, reason: "malformed" };
-  if (now > claims.exp) return { ok: false, reason: "expired" };
+  if (now >= claims.exp) return { ok: false, reason: "expired" };
   return { ok: true, claims };
 }
 
