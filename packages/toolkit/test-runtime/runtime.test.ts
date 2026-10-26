@@ -86,6 +86,8 @@ it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the o
   expect(owners).toEqual(["actord", "pinger"]);
   await new Promise((r) => setTimeout(r, 60));
   await runDurableObjectAlarm(probe("shared"));
+  await settle(env, system, { deliver: false }); // only waits, so the retry can only have come from the alarm
+  expect(runs).toBe(2);
   await settle(env, system);
   expect(await probe("shared").pings()).toBe(1);
   expect(await probe("shared").outcomes()).toEqual([{ key: "shared", status: "confirmed", error: null }]);
