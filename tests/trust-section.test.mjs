@@ -1,4 +1,4 @@
-// Every hook command, mod event, mod call, and monitor command shipped in plugin/ must appear in the
+// Every hook command, mod event, mod call, and monitor command shipped in plugins/claude/ must appear in the
 // README's "Trust and safety" section. The listing comes from the plugin's own files and from
 // `claude plugin validate`, which reads the mod's source the way Claude Code does.
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ const json = (p) => (existsSync(`${root}${p}`) ? JSON.parse(readFileSync(`${root
 test("README has a trust section", () => assert.ok(trust.length > 200));
 
 test("every settings-style hook command is listed", () => {
-  const hooks = json("plugin/hooks/hooks.json")?.hooks ?? {};
+  const hooks = json("plugins/claude/hooks/hooks.json")?.hooks ?? {};
   for (const [event, groups] of Object.entries(hooks)) {
     assert.ok(trust.includes(event), `trust section doesn't name hook event ${event}`);
     for (const g of groups) for (const h of g.hooks) {
@@ -25,7 +25,7 @@ test("every settings-style hook command is listed", () => {
 });
 
 test("every monitor command is listed", () => {
-  const monitors = json("plugin/monitors/monitors.json") ?? [];
+  const monitors = json("plugins/claude/monitors/monitors.json") ?? [];
   for (const m of monitors) {
     const shown = m.command.replace(/"?\$\{CLAUDE_PLUGIN_ROOT\}"?\//g, "");
     assert.ok(trust.includes(shown), `trust section doesn't show monitor command: ${shown}`);
@@ -33,8 +33,8 @@ test("every monitor command is listed", () => {
 });
 
 test("every mod event and mod call is listed", (t) => {
-  if (!json("plugin/hooks/hooks.json")?.modules) return t.skip("no mod module yet");
-  const r = spawnSync("claude", ["plugin", "validate", `${root}plugin`], { encoding: "utf8" });
+  if (!json("plugins/claude/hooks/hooks.json")?.modules) return t.skip("no mod module yet");
+  const r = spawnSync("claude", ["plugin", "validate", `${root}plugins/claude`], { encoding: "utf8" });
   if (r.error) return t.skip("claude not on PATH");
   const out = `${r.stdout}${r.stderr}`;
   const items = (label) =>

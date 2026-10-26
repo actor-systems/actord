@@ -22,7 +22,7 @@ details="$(claude plugin details actord@actord)"
 grep -E 'Skills \(7\)' <<<"$details"
 grep -E 'Agents \(2\)' <<<"$details"
 dir="$(jq -r '.[] | select(.id == "actord@actord") | .installPath // empty' <<<"$listed")"
-[ -d "$dir/bin" ] || dir="$root/plugin"
+[ -d "$dir/bin" ] || dir="$root/plugins/claude"
 launcher="$dir/bin/actord"
 
 step "starter project verifies through the installed launcher"

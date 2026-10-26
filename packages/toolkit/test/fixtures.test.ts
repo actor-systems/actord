@@ -1,11 +1,11 @@
-// Runs the shipped CLI (plugin/dist/actord.mjs, rebuilt by `npm run build`) against every fixture.
+// Runs the shipped CLI (plugins/claude/dist/actord.mjs, rebuilt by `npm run build`) against every fixture.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actord.mjs");
+const cli = join(repo, "plugins/claude/dist/actord.mjs");
 const fixtures = join(repo, "fixtures");
 const list = (kind: string) => readdirSync(join(fixtures, kind)).filter((d) => existsSync(join(fixtures, kind, d, "system.ts")));
 

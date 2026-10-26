@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 const root = new URL("..", import.meta.url).pathname;
-const launcher = join(root, "plugin/bin/actord");
-const bundled = readFileSync(join(root, "plugin/dist/VERSION"), "utf8").trim();
+const launcher = join(root, "plugins/claude/bin/actord");
+const bundled = readFileSync(join(root, "plugins/claude/dist/VERSION"), "utf8").trim();
 
 test("runs the bundled build outside any project", () => {
   const dir = mkdtempSync(join(tmpdir(), "actord-launcher-"));

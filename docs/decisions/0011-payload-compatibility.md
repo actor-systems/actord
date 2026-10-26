@@ -29,5 +29,5 @@ new) relies on multi-version routes this runtime doesn't have.
    a new message beside the old one and retire it in a later deploy.
 
 ## Evidence
-`packages/cli/test/diff.test.ts`: 35 classification cases (both review cases among them) and the drain
+`packages/toolkit/test/diff.test.ts`: 35 classification cases (both review cases among them) and the drain
 rules; 26 of them failed on the previous comparator.

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actord.mjs");
+const cli = join(repo, "plugins/claude/dist/actord.mjs");
 const flow = join(repo, "fixtures/events/release-radar-flow.ndjson");
 const faults = join(repo, "fixtures/events/release-radar-faults.ndjson");
 const tmp = mkdtempSync(join(tmpdir(), "actord-events-"));

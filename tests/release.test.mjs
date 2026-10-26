@@ -18,8 +18,18 @@ test("the README has every section a user needs", () => {
   }
 });
 
+// One version for the toolkit and both plugins, and so one release tag (decision 0014).
+test("the toolkit and every plugin share one version", () => {
+  const versions = {
+    "packages/toolkit/package.json": JSON.parse(read("packages/toolkit/package.json")).version,
+    "plugins/claude/.claude-plugin/plugin.json": JSON.parse(read("plugins/claude/.claude-plugin/plugin.json")).version,
+  };
+  if (existsSync(`${root}plugins/codex/plugin.json`)) versions["plugins/codex/plugin.json"] = JSON.parse(read("plugins/codex/plugin.json")).version;
+  assert.equal(new Set(Object.values(versions)).size, 1, `versions differ: ${JSON.stringify(versions)}`);
+});
+
 test("every CLI command in the help text has a README row", () => {
-  const main = read("packages/cli/src/cli/main.ts");
+  const main = read("packages/toolkit/src/cli/main.ts");
   const help = main.slice(main.indexOf("Commands:"), main.indexOf("Options:"));
   const commands = [...help.matchAll(/^ {2}([a-z]+)\b/gm)].map((m) => m[1]);
   assert.ok(commands.length >= 10);
@@ -42,7 +52,7 @@ test("the architecture page links every decision", () => {
 
 test("CI runs the offline lane from a clean checkout, with no secrets and no model-backed evals", () => {
   const ci = read(".github/workflows/verify.yml");
-  for (const step of ["actions/checkout", "npm ci", "npm run verify", "git diff --exit-code -- plugin/dist", "@anthropic-ai/claude-code@"]) {
+  for (const step of ["actions/checkout", "npm ci", "npm run verify", "git diff --exit-code -- plugins/claude/dist", "@anthropic-ai/claude-code@"]) {
     assert.ok(ci.includes(step), `CI lacks ${step}`);
   }
   assert.ok(!/secrets\./.test(ci), "CI must not use secrets");

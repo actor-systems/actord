@@ -12,7 +12,7 @@
 2. **The compiler is the first critic.** `defineSystem` uses `const` type parameters with `NoInfer`, so
    these are TypeScript errors: an undeclared actor or message in a route, an undeclared effect on an
    actor, an undeclared schedule message, and a payload that doesn't match its schema. Contract tests:
-   `packages/cli/test/types/system.types.ts` (`@ts-expect-error`) and `scripts/typecheck-fixtures.mjs`.
+   `packages/toolkit/test/types/system.types.ts` (`@ts-expect-error`) and `scripts/typecheck-fixtures.mjs`.
 3. **Payload schemas are Standard Schema; the toolkit never imports zod.** Validation uses
    `~standard.validate`; the manifest's payload JSON Schema comes from `~standard.jsonSchema.input()`
    (Standard JSON Schema), which zod 4.6 implements. Any compliant library works; a library without

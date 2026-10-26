@@ -39,7 +39,7 @@ describe("actord doctor", () => {
   it("in a complete project finds the pin, config, verify skill, and every ask rule", () => {
     const d = tmp();
     writeFileSync(join(d, "system.ts"), "export default {}\n");
-    writeFileSync(join(d, "package.json"), JSON.stringify({ devDependencies: { "@actord/toolkit": "0.1.0" } }));
+    writeFileSync(join(d, "package.json"), JSON.stringify({ devDependencies: { "@actord/toolkit": "0.2.0" } }));
     writeFileSync(join(d, "wrangler.jsonc"), "{}");
     mkdirSync(join(d, ".claude/skills/verify"), { recursive: true });
     writeFileSync(join(d, ".claude/skills/verify/SKILL.md"), "---\nname: verify\n---\n");

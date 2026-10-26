@@ -1,5 +1,5 @@
 {
-  "name": "@actord/toolkit",
+  "name": "actord",
   "private": true,
   "type": "module",
   "workspaces": [

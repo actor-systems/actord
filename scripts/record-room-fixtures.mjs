@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Records the CLI output the Room's mod tests stub with (plugin/tests/fixtures.ts), from the real CLI run
+// Records the CLI output the Room's mod tests stub with (plugins/claude/tests/fixtures.ts), from the real CLI run
 // on examples/release-radar. Run after `actord verify` there, so events, the check and evidence exist.
 // The base manifest drops DigestWriter and adds a retired Notifier, so the topology shows both highlights.
 // With --check it records nothing and fails when the CLI's documents no longer have the recorded shapes
@@ -14,7 +14,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const app = join(root, "examples/release-radar");
 const cli = (args, opts = {}) => {
   try {
-    return JSON.parse(execFileSync(process.execPath, [join(root, "packages/cli/src/cli/bin.ts"), ...args], { cwd: app, encoding: "utf8", ...opts }));
+    return JSON.parse(execFileSync(process.execPath, [join(root, "packages/toolkit/src/cli/bin.ts"), ...args], { cwd: app, encoding: "utf8", ...opts }));
   } catch (err) {
     if (err.stdout) return JSON.parse(err.stdout); // trace of an unknown id exits 1 with JSON
     throw err;
@@ -44,7 +44,7 @@ const outside = scrub(cli(["guard", "--json", "--", deployCommand], { cwd: dir }
 rmSync(dir, { recursive: true, force: true });
 
 if (process.argv.includes("--check")) {
-  const recorded = await import(join(root, "plugin/tests/fixtures.ts"));
+  const recorded = await import(join(root, "plugins/claude/tests/fixtures.ts"));
   const problems = [];
   const compare = (a, b, path) => {
     if (Array.isArray(a) && Array.isArray(b)) {
@@ -69,10 +69,10 @@ if (process.argv.includes("--check")) {
   compare(recorded.GUARD_OUTSIDE_PROJECT, outside, "guardOutside");
   for (const doc of [room, unknown, hold, outside, ...(trace.found ? [trace] : [])]) if (doc.schemaVersion !== recorded.ROOM.schemaVersion) problems.push(`schemaVersion ${doc.schemaVersion} != recorded ${recorded.ROOM.schemaVersion}`);
   if (problems.length) {
-    console.error(`plugin/tests/fixtures.ts no longer matches the CLI (re-record with node scripts/record-room-fixtures.mjs, then update the Room):\n  ${problems.join("\n  ")}`);
+    console.error(`plugins/claude/tests/fixtures.ts no longer matches the CLI (re-record with node scripts/record-room-fixtures.mjs, then update the Room):\n  ${problems.join("\n  ")}`);
     process.exit(1);
   }
-  console.log("plugin/tests/fixtures.ts matches the CLI's room, trace, and guard documents");
+  console.log("plugins/claude/tests/fixtures.ts matches the CLI's room, trace, and guard documents");
   process.exit(0);
 }
 
@@ -92,5 +92,5 @@ const out = [
   `export const DEPLOY_COMMAND = ${JSON.stringify(deployCommand)}`,
   "",
 ].join("\n");
-writeFileSync(join(root, "plugin/tests/fixtures.ts"), out);
-console.log(`recorded plugin/tests/fixtures.ts: ${room.status}; trace ${target} (${trace.found ? "found" : "unknown"}); guard hold=${hold.hold}`);
+writeFileSync(join(root, "plugins/claude/tests/fixtures.ts"), out);
+console.log(`recorded plugins/claude/tests/fixtures.ts: ${room.status}; trace ${target} (${trace.found ? "found" : "unknown"}); guard hold=${hold.hold}`);

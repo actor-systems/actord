@@ -1,7 +1,7 @@
 # Manual acceptance: the Room
 
 Interactive behavior that `claude plugin test` can't show: how the pane, status line, follower, and guard
-look and behave in a real session. It supplements the automated mod tests (`plugin/tests/room.test.tsx`)
+look and behave in a real session. It supplements the automated mod tests (`plugins/claude/tests/room.test.tsx`)
 and never replaces them. Record each run in `docs/evidence/room-acceptance.md` with the versions, the date,
 and one row per step (`pass`, `fail`, or `not run: why`); `node scripts/verify.mjs` reads that record.
 
@@ -10,7 +10,7 @@ Claude Code in a terminal at least 110 columns wide:
 
 ```sh
 cd examples/release-radar
-claude --plugin-dir ../../plugin
+claude --plugin-dir ../../plugins/claude
 ```
 
 | Step | Do | Expect |

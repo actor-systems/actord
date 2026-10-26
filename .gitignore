@@ -6,11 +6,11 @@ node_modules/
 coverage/
 .dev.vars
 .env
-plugin/evals/results/
+plugins/claude/evals/results/
 /scratch/
 .claude/settings.local.json
 .cc-writes/
 worker-configuration.d.ts
-plugin/.claude-plugin/types/
-packages/cli/dist/
-plugin/tsconfig.json
+plugins/claude/.claude-plugin/types/
+packages/toolkit/dist/
+plugins/claude/tsconfig.json

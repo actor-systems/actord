@@ -1,5 +1,5 @@
 // `actord room`, `actord guard`, and the monitor's lock, through the shipped CLI where it matters. The Room
-// mod draws these documents as printed, so their shapes are pinned here and in plugin/tests/fixtures.ts.
+// mod draws these documents as printed, so their shapes are pinned here and in plugins/claude/tests/fixtures.ts.
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ import { acquireLock, releaseLock } from "../src/cli/commands/events.ts";
 import { topologySvg, topologyWithChanges } from "../src/model/svg.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actord.mjs");
+const cli = join(repo, "plugins/claude/dist/actord.mjs");
 const tmp = mkdtempSync(join(tmpdir(), "actord-room-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 

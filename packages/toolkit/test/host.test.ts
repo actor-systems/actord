@@ -22,7 +22,7 @@ afterEach(() => {
 });
 it("Codex gets a project verify skill and guidance without Claude configuration", () => {
   const d = temp();
-  const r = init(d, "app", { host: "codex", toolkit: "0.1.0" });
+  const r = init(d, "app", { host: "codex", toolkit: "0.2.0" });
   const app = join(d, "app");
   expect(r.data.created).toContain("AGENTS.md");
   expect(existsSync(join(app, ".agents/skills/verify/SKILL.md"))).toBe(true);
@@ -54,7 +54,7 @@ it("Codex adoption preserves existing guidance and skills across repeated runs",
 });
 it("a host-neutral project carries only shared runtime and evidence files", () => {
   const d = temp();
-  const r = init(d, "plain", { host: "none", toolkit: "0.1.0" });
+  const r = init(d, "plain", { host: "none", toolkit: "0.2.0" });
   expect(
     r.data.created.some(
       (f) =>

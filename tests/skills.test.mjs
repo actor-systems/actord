@@ -1,10 +1,10 @@
-// The charter's skill and agent authoring rules, enforced on the shipped plugin/ directory.
+// The charter's skill and agent authoring rules, enforced on the shipped plugins/claude/ directory.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-const plugin = new URL("../plugin/", import.meta.url).pathname;
+const plugin = new URL("../plugins/claude/", import.meta.url).pathname;
 const frontmatter = (text) => {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
   assert.ok(m, "missing frontmatter");

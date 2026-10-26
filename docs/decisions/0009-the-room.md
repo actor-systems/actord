@@ -24,7 +24,7 @@ call in every session where the plugin is installed.
    Tests create many instances (one per feed), so per-instance boxes would bury the topology.
 5. **The guard is a prefilter plus a CLI decision.** Spawning Node for every Bash call would tax every
    session, so the mod tests the command against a copy of the shared pattern table generated at build
-   (`plugin/hooks/effect-patterns.ts`; `g1.dist.fresh` fails if stale). Only a match runs `actord guard`,
+   (`plugins/claude/hooks/effect-patterns.ts`; `g1.dist.fresh` fails if stale). Only a match runs `actord guard`,
    which decides `hold` and writes the question (diff summary and deploy plan) and the refusal. It holds
    only inside an actor project, so the plugin doesn't add a question to unrelated repositories.
    Refuse is the first option; refusing, dismissing, a failure (`.catch`), no surface to ask on, or any
@@ -45,8 +45,8 @@ call in every session where the plugin is installed.
     plugin-authoring skill's copy for the running version) and reports **blocked** when there are none.
 
 ## Evidence
-`claude plugin test plugin` (18 tests: every tab on terminal and desktop, /clear, reload, collision, schema
+`claude plugin test plugins/claude` (18 tests: every tab on terminal and desktop, /clear, reload, collision, schema
 pin, and every guard path), mutation checks of the guard (each mutation failed a test), CLI unit tests
-(`packages/cli/test/room.test.ts`), `tests/monitor.test.mjs`, `scripts/no-hooks-smoke.sh`, and a recorded
+(`packages/toolkit/test/room.test.ts`), `tests/monitor.test.mjs`, `scripts/no-hooks-smoke.sh`, and a recorded
 interactive acceptance run (`docs/evidence/room-acceptance.md`, 9 of 11 steps; the model-turn and Desktop
 steps are the owner's).

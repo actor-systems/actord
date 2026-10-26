@@ -79,7 +79,7 @@ exports[`valid fixtures > diff classifies evolved against minimal, with a plan a
     "risky": 1,
     "total": 4,
   },
-  "toolkitVersion": "0.1.0",
+  "toolkitVersion": "0.2.0",
   "volatile": [
     "projectRoot",
   ],
@@ -94,7 +94,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
   "ok": true,
   "schemaVersion": 1,
   "skipped": false,
-  "toolkitVersion": "0.1.0",
+  "toolkitVersion": "0.2.0",
   "volatile": [
     "projectRoot",
   ],
@@ -273,7 +273,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
     },
   },
   "schemaVersion": 1,
-  "toolkitVersion": "0.1.0",
+  "toolkitVersion": "0.2.0",
   "volatile": [
     "projectRoot",
   ],
@@ -311,7 +311,7 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
   "ok": true,
   "schemaVersion": 1,
   "skipped": false,
-  "toolkitVersion": "0.1.0",
+  "toolkitVersion": "0.2.0",
   "volatile": [
     "projectRoot",
   ],
@@ -451,7 +451,7 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
     },
   },
   "schemaVersion": 1,
-  "toolkitVersion": "0.1.0",
+  "toolkitVersion": "0.2.0",
   "volatile": [
     "projectRoot",
   ],

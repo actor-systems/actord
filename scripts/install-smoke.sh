@@ -6,7 +6,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cfg="$(mktemp -d)"
 trap 'rm -rf "$cfg"' EXIT
 export CLAUDE_CONFIG_DIR="$cfg"
-version="$(jq -r .version "$root/plugin/.claude-plugin/plugin.json")"
+version="$(jq -r .version "$root/plugins/claude/.claude-plugin/plugin.json")"
 step() { printf '%s\n' "== $*"; }
 
 step "marketplace add $root"
@@ -19,7 +19,7 @@ jq -e '.[] | select(.id == "actord@actord" and .enabled == true)' <<<"$listed" >
   || { echo "plugin not listed as enabled: $listed"; exit 1; }
 step "launcher from the installed plugin"
 dir="$(jq -r '.[] | select(.id == "actord@actord") | .installPath // empty' <<<"$listed")"
-[ -d "$dir/bin" ] || dir="$root/plugin"   # a local-path marketplace loads the plugin in place
+[ -d "$dir/bin" ] || dir="$root/plugins/claude"   # a local-path marketplace loads the plugin in place
 echo "launcher: $dir/bin/actord"
 got="$(cd "$cfg" && "$dir/bin/actord" --version)"
 [ "$got" = "$version" ] || { echo "launcher printed '$got', expected $version"; exit 1; }

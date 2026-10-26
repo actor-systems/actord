@@ -8,13 +8,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 const root = new URL("..", import.meta.url).pathname;
-const monitors = JSON.parse(readFileSync(join(root, "plugin/monitors/monitors.json"), "utf8"));
+const monitors = JSON.parse(readFileSync(join(root, "plugins/claude/monitors/monitors.json"), "utf8"));
 
 test("one monitor entry per starting skill, each a strict entry naming an existing skill", () => {
   assert.deepEqual(monitors.map((m) => m.when).sort(), ["on-skill-invoke:inspect", "on-skill-invoke:reliability"]);
   for (const m of monitors) {
     assert.deepEqual(Object.keys(m).sort(), ["command", "description", "name", "when"]);
-    assert.ok(existsSync(join(root, "plugin/skills", m.when.split(":")[1], "SKILL.md")));
+    assert.ok(existsSync(join(root, "plugins/claude/skills", m.when.split(":")[1], "SKILL.md")));
     assert.ok(!m.command.includes("user_config"), "monitors can't read userConfig");
   }
   assert.equal(new Set(monitors.map((m) => m.command)).size, 1, "both entries run the same follower");
@@ -28,7 +28,7 @@ test("the monitor prints each notable event once, and a second start in the same
     mkdirSync(join(project, ".actord"));
     const log = join(root, "fixtures/events/release-radar-faults.ndjson");
     copyFileSync(log, join(project, ".actord/events.ndjson"));
-    const command = monitors[0].command.replaceAll("${CLAUDE_PLUGIN_ROOT}", join(root, "plugin"));
+    const command = monitors[0].command.replaceAll("${CLAUDE_PLUGIN_ROOT}", join(root, "plugins", "claude"));
     // Both starts share a parent, as two monitors of one session do.
     const script = `${command} & first=$!; sleep 1.5; ${command}; echo "second-exit=$?"; sleep 0.5; kill $first`;
     const r = spawnSync("sh", ["-c", script], { cwd: project, encoding: "utf8", timeout: 15000 });

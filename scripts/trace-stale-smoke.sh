@@ -6,7 +6,7 @@ cd "$root/examples/briefing-desk"
 log=.actord/events.ndjson
 id="$(jq -r 'select(.kind == "note" and (.reason // "" | test("stale analysis ignored"))) | .messageId' "$log" | head -1)"
 [ -n "$id" ] || { echo "no stale analysis recorded in $log; run the example's tests first"; exit 1; }
-out="$(node "$root/plugin/dist/actord.mjs" trace "$id")"
+out="$(node "$root/plugins/claude/dist/actord.mjs" trace "$id")"
 echo "$out"
 grep -q "effect model.analyze .* ✓ confirmed" <<<"$out"
 grep -q "analysis.completed .* ◀ target" <<<"$out"

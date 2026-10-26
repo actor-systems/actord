@@ -1,7 +1,7 @@
 {
   "name": "actord",
   "displayName": "Actor-Native Cloudflare Toolkit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.",
   "author": {
     "name": "Actor-Native Cloudflare Toolkit contributors"

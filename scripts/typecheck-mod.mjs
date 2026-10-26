@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Type-checks the Room (plugin/hooks, plugin/types, plugin/tests) against the declarations Claude Code
+// Type-checks the Room (plugins/claude/hooks, plugins/claude/types, plugins/claude/tests) against the declarations Claude Code
 // writes for the installed build. Those are generated per build, so they aren't committed: this finds
 // them (ACTORD_CLAUDE_TYPES, the folder the engine lays beside a hot-reloaded mod, or the plugin-authoring
 // skill's copy) and exits 4, "blocked", when none exists for the running `claude --version`.
@@ -13,7 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const version = execFileSync("claude", ["--version"], { encoding: "utf8" }).trim().split(/\s/)[0];
 const candidates = [
   process.env.ACTORD_CLAUDE_TYPES,
-  join(root, "plugin/.claude-plugin/types/claude-code/index.d.ts"),
+  join(root, "plugins/claude/.claude-plugin/types/claude-code/index.d.ts"),
   ...globSync(`/private/tmp/claude-*/bundled-skills/${version}/*/plugin-authoring/types/claude-code.d.ts`),
   ...globSync(`/tmp/claude-*/bundled-skills/${version}/*/plugin-authoring/types/claude-code.d.ts`),
 ].filter((p) => p && existsSync(p));
@@ -42,7 +42,7 @@ writeFileSync(
       jsxFactory: "h",
       jsxFragmentFactory: "Fragment",
     },
-    include: [types, join(root, "plugin/hooks"), join(root, "plugin/types"), join(root, "plugin/tests")],
+    include: [types, join(root, "plugins/claude/hooks"), join(root, "plugins/claude/types"), join(root, "plugins/claude/tests")],
   }),
 );
 const r = spawnSync("npx", ["--no-install", "tsc", "-p", join(dir, "tsconfig.json")], { cwd: root, encoding: "utf8" });

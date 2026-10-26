@@ -190,25 +190,25 @@ export const checks = [
     },
   }),
   command("g1.cli.typecheck", "G1", "CLI typechecks (TypeScript 7)", "npm run --silent typecheck -w @actord/toolkit"),
-  command("g1.cli.unit", "G1", "CLI unit tests (doctor, effect pattern table)", "npx --no-install vitest run test/doctor.test.ts test/patterns.test.ts", { cwd: "packages/cli" }),
+  command("g1.cli.unit", "G1", "CLI unit tests (doctor, effect pattern table)", "npx --no-install vitest run test/doctor.test.ts test/patterns.test.ts", { cwd: "packages/toolkit" }),
   {
     id: "g1.dist.fresh",
     gate: "G1",
-    title: "Shipped plugin/dist matches a fresh build of packages/cli",
+    title: "Shipped plugins/claude/dist matches a fresh build of packages/toolkit",
     command: "npm run --silent build -w @actord/toolkit",
     async run({ sh, root }) {
-      const files = ["plugin/dist/actord.mjs", "plugin/dist/VERSION", "plugin/hooks/effect-patterns.ts"].map((f) => join(root, f));
+      const files = ["plugins/claude/dist/actord.mjs", "plugins/claude/dist/VERSION", "plugins/claude/hooks/effect-patterns.ts"].map((f) => join(root, f));
       const before = files.map(hash);
       const r = sh("npm run --silent build -w @actord/toolkit");
       if (r.code !== 0) return { ...r, status: "fail", reason: "build failed" };
       const after = files.map(hash);
       return before.every((h, i) => h === after[i])
         ? { ...r, status: "pass" }
-        : { ...r, status: "fail", reason: "plugin/dist was stale; it has been rebuilt, commit it" };
+        : { ...r, status: "fail", reason: "plugins/claude/dist was stale; it has been rebuilt, commit it" };
     },
   },
   command("g1.launcher", "G1", "bin/actord prefers the project pin, else the bundle", "node --test tests/launcher.test.mjs"),
-  command("g1.validate.plugin", "G1", "claude plugin validate --strict plugin", "claude plugin validate --strict plugin"),
+  command("g1.validate.plugin", "G1", "claude plugin validate --strict plugins/claude", "claude plugin validate --strict plugins/claude"),
   command("g1.validate.marketplace", "G1", "claude plugin validate --strict (marketplace)", "claude plugin validate --strict ."),
   command("g1.install", "G1", "Clean install from the repo marketplace, use, uninstall (isolated config)", "scripts/install-smoke.sh"),
   command("g1.budget", "G1", "Always-on context cost ≤ 1,500 tokens (target 1,000)", "scripts/budget.sh", {
@@ -224,7 +224,7 @@ export const checks = [
     id: "g1.start-session",
     gate: "G1",
     title: "`start` works in a fresh session (eval case start-orients)",
-    command: "claude plugin eval plugin --case start-orients (model-backed; owner-approved lane)",
+    command: "claude plugin eval plugins/claude --case start-orients (model-backed; owner-approved lane)",
     async run({ root }) {
       const rec = recordedEvalCase(root, "start-orients");
       if (!rec) return { status: "blocked", reason: "needs a model-backed fresh session; awaiting owner approval of the eval lane" };
@@ -234,23 +234,23 @@ export const checks = [
         : { status: "fail", reason: `score ${score} in ${rec.file}`, evidenceSource: "eval-run" };
     },
   },
-  command("g2.contract.types", "G2", "Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors", "npx --no-install tsc -p tsconfig.contract.json", { cwd: "packages/cli" }),
+  command("g2.contract.types", "G2", "Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors", "npx --no-install tsc -p tsconfig.contract.json", { cwd: "packages/toolkit" }),
   command("g2.fixtures.typecheck", "G2", "tsc passes on valid fixtures and fails where negative fixtures expect it", "node scripts/typecheck-fixtures.mjs"),
-  command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes", "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts", { cwd: "packages/cli" }),
+  command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes", "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts", { cwd: "packages/toolkit" }),
   command("g2.negative.unchanged", "G2", "No file under fixtures/negative differs from the last commit", "git diff --exit-code --stat HEAD -- fixtures/negative && test -z \"$(git status --porcelain -- fixtures/negative)\""),
   command("g3.radar.typecheck", "G3", "Release Radar typechecks (wrangler types + tsc)", "npm run --silent typecheck -w release-radar"),
-  command("g3.radar.check", "G3", "actord check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugin/dist/actord.mjs check", { cwd: "examples/release-radar" }),
+  command("g3.radar.check", "G3", "actord check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugins/claude/dist/actord.mjs check", { cwd: "examples/release-radar" }),
   command("g3.radar.runtime", "G3", "Release Radar fault matrix passes in workerd", "node scripts/run-example-tests.mjs examples/release-radar"),
   command("g3.radar.trace", "G3", "A real significant release traces from @clock to a confirmed notification", "scripts/trace-smoke.sh"),
   command("g3.radar.dev", "G3", "Release Radar runs under wrangler dev: front door, rejection, and a traced watch from the live log", "node scripts/dev-smoke.mjs release-radar", devSmoke),
-  command("g3.cli.events", "G3", "actord events/trace on recorded logs: known, unknown, truncated, retries, follow", "npx --no-install vitest run test/events.test.ts", { cwd: "packages/cli" }),
+  command("g3.cli.events", "G3", "actord events/trace on recorded logs: known, unknown, truncated, retries, follow", "npx --no-install vitest run test/events.test.ts", { cwd: "packages/toolkit" }),
   command("g4.desk.typecheck", "G4", "Briefing Desk typechecks, including the live Anthropic adapter", "npm run --silent typecheck -w briefing-desk"),
-  command("g4.desk.check", "G4", "actord check passes on Briefing Desk", "node ../../plugin/dist/actord.mjs check", { cwd: "examples/briefing-desk" }),
+  command("g4.desk.check", "G4", "actord check passes on Briefing Desk", "node ../../plugins/claude/dist/actord.mjs check", { cwd: "examples/briefing-desk" }),
   command("g4.desk.runtime", "G4", "Briefing Desk claims all have passing workerd tests (reentrancy, budget, approval, in-doubt)", "node scripts/run-example-tests.mjs examples/briefing-desk"),
   command("g4.desk.trace", "G4", "The stale model result traces to its cancelled item", "scripts/trace-stale-smoke.sh"),
   command("g4.desk.dev", "G4", "Briefing Desk runs under wrangler dev: an item travels Intake → Analyst → Desk, traced from the live log", "node scripts/dev-smoke.mjs briefing-desk", devSmoke),
-  command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/cli" }),
-  command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate, heredoc note), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/cli" }),
+  command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/toolkit" }),
+  command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate, heredoc note), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/toolkit" }),
   command("g5.skills.lint", "G5", "Seven skills and two read-only critics follow the charter's authoring rules", "node --test tests/skills.test.mjs"),
   command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
   {
@@ -268,12 +268,12 @@ export const checks = [
   },
   command("g5.starter.smoke", "G5", "A fresh starter from actord init verifies PASS offline; regenerating changes nothing", "scripts/starter-smoke.sh"),
   command("g5.verify.blocked", "G5", "actord verify inside the default sandbox reports BLOCKED, static evidence passing", "scripts/verify-blocked.sh"),
-  command("g5.examples.verify", "G5", "actord verify passes on both reference apps", "cd examples/release-radar && node ../../plugin/dist/actord.mjs verify && cd ../briefing-desk && node ../../plugin/dist/actord.mjs verify"),
+  command("g5.examples.verify", "G5", "actord verify passes on both reference apps", "cd examples/release-radar && node ../../plugins/claude/dist/actord.mjs verify && cd ../briefing-desk && node ../../plugins/claude/dist/actord.mjs verify"),
   {
     id: "g5.evals.run",
     gate: "G5",
     title: "Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0",
-    command: "claude plugin eval plugin --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
+    command: "claude plugin eval plugins/claude --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
     async run({ root }) {
       const runs = evalRuns(root).filter((r) => !r.doc.partial);
       if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved eval lane ($50 total ceiling)" };
@@ -314,9 +314,9 @@ export const checks = [
         : { status: "fail", reason: `plugin arm trails the baseline by more than one run: ${cases.filter((c) => !c.ok).map(show).join(", ")}. ${reason}`, evidenceSource: "eval-run" };
     },
   },
-  command("g6.cli.room", "G6", "actord room, guard, and the monitor lock (CLI unit tests)", "cd packages/cli && NO_COLOR=1 npx vitest run test/room.test.ts"),
+  command("g6.cli.room", "G6", "actord room, guard, and the monitor lock (CLI unit tests)", "cd packages/toolkit && NO_COLOR=1 npx vitest run test/room.test.ts"),
   command("g6.fixtures", "G6", "The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin)", "node scripts/record-room-fixtures.mjs --check"),
-  command("g6.mod.validate", "G6", "claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch", "claude plugin validate plugin", {
+  command("g6.mod.validate", "G6", "claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch", "claude plugin validate plugins/claude", {
     classify: (r) => {
       if (r.code !== 0) return { status: "fail", reason: `exit ${r.code}` };
       if (!/room\.tsx hooks: .*tool\.call\{tool=Bash\}/.test(r.output)) return { status: "fail", reason: "validate doesn't list the Room's hooks" };
@@ -327,7 +327,7 @@ export const checks = [
   command("g6.mod.typecheck", "G6", "The Room type-checks against this Claude Code build's mod declarations", "node scripts/typecheck-mod.mjs", {
     classify: (r) => (r.code === 0 ? { status: "pass" } : r.code === 4 ? { status: "blocked", reason: "no mod declarations for this Claude Code build on this machine" } : { status: "fail", reason: `exit ${r.code}` }),
   }),
-  command("g6.mod.test", "G6", "claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path", "claude plugin test plugin", {
+  command("g6.mod.test", "G6", "claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path", "claude plugin test plugins/claude", {
     classify: (r) => {
       const pass = Number(/(\d+) pass/.exec(r.output)?.[1] ?? 0);
       const fail = Number(/(\d+) fail/.exec(r.output)?.[1] ?? 1);
@@ -363,12 +363,12 @@ export const checks = [
     id: "g7.release-evidence",
     gate: "G7",
     title: "Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded",
-    command: "claude plugin validate plugin > docs/evidence/mod-listing.txt",
+    command: "claude plugin validate plugins/claude > docs/evidence/mod-listing.txt",
     async run({ sh, root }) {
-      const r = sh("claude plugin validate plugin");
+      const r = sh("claude plugin validate plugins/claude");
       const listing = r.output.split("\n").filter((l) => /room\.tsx|types \.\/types|Validation passed/.test(l)).map((l) => l.trim());
       if (r.code !== 0 || !listing.some((l) => / hooks: /.test(l)) || !listing.some((l) => / calls: /.test(l))) return { ...r, status: "fail", reason: "validate didn't list the mod's hooks and calls" };
-      writeFileSync(join(root, "docs/evidence/mod-listing.txt"), `# claude plugin validate plugin (Claude Code ${(sh("claude --version").output.trim().split(" ")[0])})\n${listing.join("\n")}\n`);
+      writeFileSync(join(root, "docs/evidence/mod-listing.txt"), `# claude plugin validate plugins/claude (Claude Code ${(sh("claude --version").output.trim().split(" ")[0])})\n${listing.join("\n")}\n`);
       const details = existsSync(join(root, "docs/evidence/plugin-details.txt")) ? readFileSync(join(root, "docs/evidence/plugin-details.txt"), "utf8") : "";
       if (!/Skills \(7\)/.test(details) || !/Agents \(2\)/.test(details)) return { ...r, status: "fail", reason: "docs/evidence/plugin-details.txt is missing or incomplete (g1.budget writes it)" };
       return { ...r, status: "pass", reason: "docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt" };
@@ -379,9 +379,9 @@ export const checks = [
     gate: "G7",
     title: "claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag",
     // --force only lets the dry run validate once the release is tagged; a dry run creates and moves nothing.
-    command: "claude plugin tag plugin --dry-run --force",
+    command: "claude plugin tag plugins/claude --dry-run --force",
     async run({ sh }) {
-      const r = sh("claude plugin tag plugin --dry-run --force");
+      const r = sh("claude plugin tag plugins/claude --dry-run --force");
       const tag = /would create tag (actord--v\d+\.\d+\.\d+)/.exec(r.output)?.[1];
       if (r.code !== 0 || !tag) return { ...r, status: "fail", reason: `exit ${r.code}` };
       const at = sh(`git rev-parse --short "${tag}^{commit}"`);
@@ -391,7 +391,7 @@ export const checks = [
   {
     id: "g7.clean-checkout",
     gate: "G7",
-    title: "A clean clone installs from the lockfile, rebuilds plugin/dist byte-for-byte, and passes npm run verify",
+    title: "A clean clone installs from the lockfile, rebuilds plugins/claude/dist byte-for-byte, and passes npm run verify",
     command: "scripts/clean-checkout.sh",
     async run({ sh }) {
       if (process.env.ACTORD_NESTED_VERIFY) return { status: "skipped", reason: "inside a clean-checkout run" };

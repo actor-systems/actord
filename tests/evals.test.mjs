@@ -1,4 +1,4 @@
-// Static checks of the eval suite (plugin/evals): structure the charter requires, verified for free
+// Static checks of the eval suite (plugins/claude/evals): structure the charter requires, verified for free
 // before any model-backed run.
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { hostRegressions } from "../scripts/checks.mjs";
 
-const evals = new URL("../plugin/evals/", import.meta.url).pathname;
+const evals = new URL("../plugins/claude/evals/", import.meta.url).pathname;
 const cases = readdirSync(evals).filter((d) => existsSync(join(evals, d, "prompt.md")));
 const fm = (text) => /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
 const read = (...p) => readFileSync(join(evals, ...p), "utf8");

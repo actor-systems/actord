@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The clean-checkout path CI takes, run locally: clone HEAD into a temporary directory, install from the
-# lockfile, confirm the build reproduces the committed plugin/dist, and run the full offline verification.
+# lockfile, confirm the build reproduces the committed plugins/claude/dist, and run the full offline verification.
 # Needs the npm registry (or its cache); no credentials, no model calls.
 set -euo pipefail
 # Under `npm run verify`, npm 11 exports the user's allow-scripts setting as npm_config_allow_scripts, and a
@@ -22,9 +22,9 @@ step "a stray .DS_Store in every directory"
 find . \( -path ./.git -o -name node_modules \) -prune -o -type d -print | while IFS= read -r d; do
   printf '\0\0\0\1Bud1' >"$d/.DS_Store"
 done
-step "build reproduces plugin/dist"
+step "build reproduces plugins/claude/dist"
 npm run --silent build -w @actord/toolkit
-git diff --exit-code --stat -- plugin/dist plugin/hooks/effect-patterns.ts
+git diff --exit-code --stat -- plugins/claude/dist plugins/claude/hooks/effect-patterns.ts
 step "npm run verify"
 status=0
 npm run --silent verify >verify.log 2>&1 || status=$?

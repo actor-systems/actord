@@ -4,7 +4,7 @@
 import { parseArgs } from "node:util";
 
 // src/version.ts
-var VERSION = true ? "0.1.0" : "0.0.0-dev";
+var VERSION = true ? "0.2.0" : "0.0.0-dev";
 var SCHEMA_VERSION = 1;
 
 // src/cli/commands/doctor.ts

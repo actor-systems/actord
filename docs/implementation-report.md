@@ -44,9 +44,9 @@ each).
 ## Installed package layout
 
 ```
-.claude-plugin/marketplace.json      marketplace "actord" → ./plugin
-plugin/
-  .claude-plugin/plugin.json         actord 0.1.0; userConfig check_on_edit, strict_evidence, fault_profile;
+.claude-plugin/marketplace.json      marketplace "actord" → ./plugins/claude
+plugins/claude/
+  .claude-plugin/plugin.json         actord 0.2.0; userConfig check_on_edit, strict_evidence, fault_profile;
                                      types → ./types/index.d.ts
   skills/                            start, setup, design, implement, reliability, inspect, evolve (+ references/)
   agents/                            boundary-critic, delivery-auditor (Read, Grep, Glob only)
@@ -56,11 +56,12 @@ plugin/
   monitors/monitors.json             actor-events (inspect), actor-events-reliability (reliability)
   types/index.d.ts                   the Room's $.state contract
   bin/actord                         sh launcher: project pin, else dist/actord.mjs
-  dist/actord.mjs, VERSION           the CLI, one dependency-free ESM file (124 KB)
-  dist/actord-toolkit-0.1.0.tgz      the toolkit package `actord init` vendors until it's on npm
+  dist/actord.mjs, VERSION           the CLI, one dependency-free ESM file (127 KB)
+  dist/actord-toolkit-0.2.0.tgz      the toolkit package `actord init` vendors until it's on npm
   tests/                             mod tests and recorded CLI fixtures
   evals/                             12 cases + offline scaffolds
-packages/cli/                        @actord/toolkit: CLI, /system, /runtime, /testing, /vitest
+plugins/codex/                       the Codex plugin (moving in; decision 0014)
+packages/toolkit/                    @actord/toolkit: CLI, /system, /runtime, /testing, /vitest
 examples/release-radar, examples/briefing-desk
 fixtures/                            2 valid, 12 negative (each with expected diagnostics), recorded event logs
 spikes/do-messaging/                 G0 platform probes, sandbox reproduction
@@ -84,18 +85,18 @@ that each fail with their expected codes (`g2.cli.model`, `g2.negative.unchanged
 | Causal path | `npx actord trace <id>` (`g3.radar.trace`, `g4.desk.trace`) | Root cause through effects to consequences; *unknown* where coverage ends |
 | Fresh project | `actord init` → `npm install` → `actord verify` (`g5.starter.smoke`, container lane) | PASS, 3 claims proved locally |
 | Under `wrangler dev` | `node scripts/dev-smoke.mjs release-radar|briefing-desk` (`g3.radar.dev`, `g4.desk.dev`) | PASS: each Worker boots from its `wrangler.jsonc` with throwaway state and no credentials; a desk item travels Intake → Analyst → a model effect failing within its budget (no key) → Desk, traced from the live log; the radar's watch and a 400 rejection are traced |
-| The Room | `claude --plugin-dir ../../plugin`, `/actord-room` (acceptance run) | Pane, live mailboxes, trace, stale check, `/clear`, close: 9 of 11 steps recorded passing |
+| The Room | `claude --plugin-dir ../../plugins/claude`, `/actord-room` (acceptance run) | Pane, live mailboxes, trace, stale check, `/clear`, close: 9 of 11 steps recorded passing |
 
 ## Test results
 
 | Suite | Count | Where |
 | --- | --- | --- |
-| CLI unit and snapshot tests (Vitest) | 136 | `packages/cli/test` |
-| Runtime probe tests (workerd) | 6 | `packages/cli/test-runtime` |
+| CLI unit and snapshot tests (Vitest) | 136 | `packages/toolkit/test` |
+| Runtime probe tests (workerd) | 6 | `packages/toolkit/test-runtime` |
 | Release Radar (workerd) | 22 (21 + 1 extended) | `examples/release-radar/tests` |
 | Briefing Desk (workerd) | 11 | `examples/briefing-desk/tests` |
 | DO messaging spike + platform probes (workerd) | spike suite | `spikes/do-messaging` |
-| Mod tests (`claude plugin test`, terminal + desktop) | 18 | `plugin/tests/room.test.tsx` |
+| Mod tests (`claude plugin test`, terminal + desktop) | 18 | `plugins/claude/tests/room.test.tsx` |
 | Repository tests (`node --test`) | 86 | guardrails 8, launcher 2, trust 4, skills 32, evals 33, monitor 2, release 5 |
 | Negative fixtures | 12 | `fixtures/negative/*/expected.json` |
 
@@ -185,7 +186,7 @@ Per-component (rounded)
 ## The mod's `hooks:` / `calls:` listing
 
 ```
-# claude plugin validate plugin (Claude Code 2.1.310)
+# claude plugin validate plugins/claude (Claude Code 2.1.310)
 ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
 ❯ types ./types/index.d.ts declares state: actord.snapshot, actord.tab, actord.selected, actord.trace
 ❯ ./room.tsx hooks: session.start, classic.SessionStart, command.run{command=actord-room}, command.run{command=actord-room-view}, ui.close{id=actord-room}, tool.call{tool=Bash}, ui.render{component=Pane, requestId=actord-room}

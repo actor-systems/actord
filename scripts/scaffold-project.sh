@@ -11,7 +11,7 @@ dest="$1"
 what="$2"
 mkdir -p "$dest"
 case "$what" in
-  starter) node "$root/plugin/dist/actord.mjs" init "$dest" --name starter-app >/dev/null ;;
+  starter) node "$root/plugins/claude/dist/actord.mjs" init "$dest" --name starter-app >/dev/null ;;
   deps) ;;
   release-radar | briefing-desk)
     (cd "$root/examples/$what" && tar cf - --exclude node_modules --exclude .actord --exclude .wrangler --exclude worker-configuration.d.ts .) | (cd "$dest" && tar xf -)
@@ -21,7 +21,7 @@ esac
 cp -cR "$root/node_modules" "$dest/node_modules" 2>/dev/null || cp -R "$root/node_modules" "$dest/node_modules"
 rm -rf "$dest/node_modules/@actord/toolkit" "$dest/node_modules/release-radar" "$dest/node_modules/briefing-desk" "$dest/node_modules/spike-do-messaging"
 mkdir -p "$dest/node_modules/@actord/toolkit"
-cp -R "$root/packages/cli/package.json" "$root/packages/cli/dist" "$dest/node_modules/@actord/toolkit/"
+cp -R "$root/packages/toolkit/package.json" "$root/packages/toolkit/dist" "$dest/node_modules/@actord/toolkit/"
 ln -sf ../@actord/toolkit/dist/cli.mjs "$dest/node_modules/.bin/actord"
 cd "$dest"
 if [ "$what" = deps ]; then git init -q -b main; echo "scaffolded deps at $dest"; exit 0; fi

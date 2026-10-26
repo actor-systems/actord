@@ -23,11 +23,11 @@ run in workerd (Cloudflare's runtime) decide what holds.
 From your shell:
 
 ```sh
-claude plugin marketplace add <org>/<repo>     # or a local clone: claude plugin marketplace add ./actord-plugin
+claude plugin marketplace add actord/actord     # or a local clone: claude plugin marketplace add ./actord
 claude plugin install actord@actord
 ```
 
-Or inside a Claude Code session: `/plugin marketplace add <org>/<repo>`, then `/plugin install actord@actord`.
+Or inside a Claude Code session: `/plugin marketplace add actord/actord`, then `/plugin install actord@actord`.
 
 Requirements: Claude Code 2.1.287+ (2.1.269+ without the Room) and Node.js 22.18+. Works in the terminal,
 the Desktop app's Code tab, and the VS Code extension. claude.ai and Cowork don't install plugins that
@@ -69,11 +69,17 @@ Run `/actord:start` in a session. It runs `actord doctor`, explains what it foun
 | Options (`userConfig`) | `check_on_edit` (true), `strict_evidence` (false), `fault_profile` (`standard` or `extended`); no credentials |
 | `bin/actord` | The deterministic machine interface, on `PATH` while the plugin is enabled. It prefers a project's pinned `@actord/toolkit` (`node_modules/.bin/actord`), so Claude and CI run the same version; otherwise it runs the bundled single-file build in `dist/` |
 
-## Shared core and host adapters
+## One repository: the core and both plugins
 
-`packages/cli` is also the single core used by the sibling Codex adapter in `../actord/`.
-That adapter bundles the same CLI/runtime with recorded provenance and keeps its portable manifest,
-skills and launcher separate. Refresh it from the owning source with `npm run core:sync` in that repository.
+| Path | What it is |
+| --- | --- |
+| `packages/toolkit/` | `@actord/toolkit`: the `actord` CLI, the runtime, and the test helpers (one package, for npm) |
+| `plugins/claude/` | The Claude Code plugin; `.claude-plugin/marketplace.json` points here |
+| `plugins/codex/` | The Codex plugin, moving in from its own repository; `.agents/plugins/marketplace.json` will point here |
+| `examples/` | Release Radar and Briefing Desk, the reference apps and integration tests for both plugins |
+
+The toolkit and both plugins share one version and one release tag, and the core is used in place: a change
+to it and to either plugin lands in one commit and one verification run (decision 0014).
 
 `actord init --host codex` writes `AGENTS.md` and `.agents/skills/verify/SKILL.md`;
 `--host claude` writes this plugin's original guidance and permission rules; `--host none` writes neither.
@@ -152,7 +158,7 @@ key: tests use deterministic doubles, and Briefing Desk's live Anthropic adapter
 ## Trust and safety
 
 Everything this plugin runs on your machine is listed here. `tests/trust-section.test.mjs` fails the build
-if a hook, mod event, mod call, or monitor command exists in `plugin/` without appearing in this section.
+if a hook, mod event, mod call, or monitor command exists in `plugins/claude/` without appearing in this section.
 
 **Hooks (settings-style command hooks; deterministic, no model calls):**
 - `PreToolUse` on `Bash`: runs `hooks/heredoc-note.sh` (5 s timeout), a POSIX `sh` script that exits at once
@@ -171,7 +177,7 @@ if a hook, mod event, mod call, or monitor command exists in `plugin/` without a
   reporting". It never blocks twice in a turn.
 
 **The Room (a mod, `hooks/room.tsx`; deterministic, no model calls, approves nothing).** Its events, as
-`claude plugin validate plugin` lists them:
+`claude plugin validate plugins/claude` lists them:
 - `session.start`: registers `/actord-room` (or `/actord-room-view` when another plugin owns the name). In an
   interactive session it runs `actord room --json` once for the status line, for example
   `3 actors · 5 routes · check ✓`. Headless runs (`-p`, the SDK, evals) run nothing.
@@ -183,7 +189,7 @@ if a hook, mod event, mod call, or monitor command exists in `plugin/` without a
 - `ui.render{component=Pane, requestId=actord-room}`: draws the Topology, Mailboxes, Contracts, and Evidence
   tabs from the snapshot. Selecting a message runs `actord trace <id> --json`.
 - `tool.call{tool=Bash}`: the effect guard. A Bash command that matches the deploy, secret, or remote-write
-  patterns (the table in `packages/cli/src/patterns.ts`, copied into `hooks/effect-patterns.ts` at build) is
+  patterns (the table in `packages/toolkit/src/patterns.ts`, copied into `hooks/effect-patterns.ts` at build) is
   passed to `actord guard --json`. Inside an actor project the guard holds it and asks you, showing the
   semantic diff summary and deploy plan; the default answer is Refuse. Refusing, dismissing, any failure (the
   hook's `.catch`), or a session with nobody to ask denies the command. "Run it" passes the command on
@@ -240,7 +246,7 @@ spellings of a command, and mods are not sandboxed.
 
 ## Evaluations
 
-`plugin/evals/` holds the `claude plugin eval` suite: six representative tasks, two adversarial ones,
+`plugins/claude/evals/` holds the `claude plugin eval` suite: six representative tasks, two adversarial ones,
 a deploy request, two prompts that must not trigger the plugin, and an onboarding case. Each runs with and
 without the plugin; `Δ` is what the plugin contributes. Results are graded from `.actord/evidence.json`,
 paired with process graders. Run it from this repository, because the scaffolds build offline workspaces
@@ -250,7 +256,7 @@ from `examples/`:
 scripts/eval-suite.sh <label> <max-cost-usd>   # e.g. scripts/eval-suite.sh 2026-10-25-run1 22
 ```
 
-It runs `claude plugin eval plugin --scaffold --no-publish --trust-plugin --keep-temp` with pinned models
+It runs `claude plugin eval plugins/claude --scaffold --no-publish --trust-plugin --keep-temp` with pinned models
 (`claude-sonnet-5-5`, judged by `claude-haiku-5-5`), the cost ceiling, and the tool grants the cases need,
 writes `docs/evidence/evals/<label>.json`, then re-runs each kept workspace's runtime tests on the host
 (`<label>.host.json`), because eval runs deny the loopback port workerd needs (decision 0004).
@@ -268,10 +274,10 @@ Other lanes, each a script you can run alone:
 
 | Script | What it shows |
 | --- | --- |
-| `scripts/clean-checkout.sh` | What CI runs: a fresh clone installs from the lockfile, rebuilds `plugin/dist` byte-for-byte, and passes `npm run verify` |
+| `scripts/clean-checkout.sh` | What CI runs: a fresh clone installs from the lockfile, rebuilds `plugins/claude/dist` byte-for-byte, and passes `npm run verify` |
 | `scripts/container-install.sh` | A clean Linux container installs Claude Code from npm, installs the plugin from this marketplace, creates and verifies a starter project, and uninstalls (network: npm only) |
 | `scripts/install-smoke.sh`, `scripts/no-hooks-smoke.sh` | Install and uninstall in a throwaway config; the core path with `disableAllHooks` |
-| `claude plugin test plugin` | The Room's mod tests (terminal and desktop surfaces) |
+| `claude plugin test plugins/claude` | The Room's mod tests (terminal and desktop surfaces) |
 | `node scripts/typecheck-mod.mjs` | The Room against this Claude Code build's mod declarations |
 | `node scripts/record-room-fixtures.mjs [--check]` | Re-record (or check) the CLI output the mod tests stub with |
 

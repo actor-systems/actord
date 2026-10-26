@@ -103,7 +103,8 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0010](decisions/0010-eval-lane.md) | The eval lane: what the graders measure; the deploy case asserts no deploy ran |
 | [0011](decisions/0011-payload-compatibility.md) | Payload compatibility: "compatible" is a proof, and the plan drains what isn't |
 | [0013](decisions/0013-heredoc-note-and-recover-trigger.md) | A note beside refused heredocs; `reliability` takes reported failures |
+| [0014](decisions/0014-one-repository.md) | One repository for the core and both plugins, one version, Apache-2.0 |
 
 ## Coding-host adapters
 
-The core in `packages/cli` is shared with the sibling Codex adapter in `../actord/`. Host profiles select project guidance only; native runtime, type contracts and evidence are the same. Claude integration stays in `plugin/`; Codex keeps its portable manifest, skills and launcher in its own distribution. See [decision 0012](decisions/0012-shared-core-host-adapters.md).
+The core in `packages/toolkit` serves both plugins in this repository: `plugins/claude/` and `plugins/codex/`. Host profiles select project guidance only; native runtime, type contracts and evidence are the same. Each plugin keeps its own manifest, skills, and launcher, and each host's marketplace file points at its plugin's directory. See [decision 0012](decisions/0012-shared-core-host-adapters.md) and [decision 0014](decisions/0014-one-repository.md).

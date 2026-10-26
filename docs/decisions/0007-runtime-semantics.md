@@ -57,7 +57,7 @@ with the binding can call `receive`).
 - **Recovery:** a `running` row with no in-memory attempt was orphaned by a restart. On the instance's first
   activity it's retried if the effect has an idempotency key, and otherwise recorded as `in_doubt`
   ("interrupted: the actor restarted while the attempt was in flight"), delivering the declared result
-  message. Tested in `packages/cli/test-runtime` with `abortAllDurableObjects()`.
+  message. Tested in `packages/toolkit/test-runtime` with `abortAllDurableObjects()`.
 - `@actord/toolkit/testing`'s `settle()` waits for running effects; `settle({ deliver: false })` waits without
   forcing deliveries.
 - Approval decisions can arrive as messages: `ctx.approve(effect, key)` and `ctx.deny(effect, key, reason)`

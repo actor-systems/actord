@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "actord",
-      "source": "./plugin",
+      "source": "./plugins/claude",
       "description": "Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.",
       "category": "development"
     }

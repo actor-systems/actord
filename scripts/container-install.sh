@@ -27,7 +27,7 @@ claude plugin marketplace add /work
 claude plugin install actord@actord
 claude plugin list --json | node -e "const l=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\")); const p=l.find(x=>x.id===\"actord@actord\"); if(!p||!p.enabled) process.exit(1); console.log(p.id, p.version, \"enabled\")"
 claude plugin details actord@actord | sed -n "1,12p"
-launcher=/work/plugin/bin/actord
+launcher=/work/plugins/claude/bin/actord
 step "launcher and doctor (no project, no credentials)"
 "$launcher" --version
 cd /tmp && "$launcher" doctor || true

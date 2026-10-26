@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { renderMermaid } from "../src/model/mermaid.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actord.mjs");
+const cli = join(repo, "plugins/claude/dist/actord.mjs");
 const radar = join(repo, "examples/release-radar");
 
 function run(cwd: string, args: string[]) {

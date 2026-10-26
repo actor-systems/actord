@@ -5,10 +5,11 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**v0.1.0 tagged; every gate passes** (G0–G7, `npm run verify`). The local tag `actord--v0.1.0` marks
-`623c6ac` (never pushed without authorization; there's no remote). Release runs L and M are the eval record
-(`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds). Room acceptance A10 passed in
-the Desktop app, and the owner re-checked the topology fixes it prompted. Report:
+**One repository (decision 0014); the next release is 0.2.0.** `actord--v0.1.0` marks `623c6ac`, the last commit
+of the old layout. Since then: `plugin/` is `plugins/claude/`, `packages/cli` is `packages/toolkit`, the toolkit
+and both plugins share version 0.2.0, and `plugins/codex/` waits for the Codex plugin, which its own agent
+moves in (with `.agents/plugins/marketplace.json`, relicensed Apache-2.0). Release runs L and M are the eval
+record (`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds). Report:
 `docs/implementation-report.md`.
 
 ## Done
@@ -17,14 +18,14 @@ the Desktop app, and the owner re-checked the topology fixes it prompted. Report
   (types, typecheck, workerd runtime), sandbox spike reproduced with srt. Decisions 0002–0005.
 
 - **G1 offline-complete** (verify 2026-10-24): `@actord/toolkit` CLI (`doctor`, effect pattern table) bundled
-  to `plugin/dist/actord.mjs`; `bin/actord` launcher (prefers project pin); `start` skill; marketplace
+  to `plugins/claude/dist/actord.mjs`; `bin/actord` launcher (prefers project pin); `start` skill; marketplace
   `@actord/toolkit`; README trust section + test; strict validation; isolated install/uninstall smoke;
   always-on ~66 tok. `g1.start-session` = eval case `start-orients` (blocked until evals approved).
 
 - **G2 passed** (verify 2026-10-24): `@actord/toolkit/system` (`defineSystem`, `message`; compile-time route,
   effect, schedule, payload contracts), normalized `actord.manifest.json`, `check` (stable codes),
   `graph`, `diff` + deploy plan; DO lifecycle via wrangler `exports` (decision 0006); fixtures 2 valid +
-  12 negative; tests run the shipped `plugin/dist/actord.mjs`.
+  12 negative; tests run the shipped `plugins/claude/dist/actord.mjs`.
 
 - **G3 passed** (verify 2026-10-24): `@actord/toolkit/runtime` (transactional handlers, outbox, effects after
   commit w/ idempotency/in-doubt/approval/result messages), `/testing`, `/vitest`; Release Radar (3 actors,
@@ -33,13 +34,13 @@ the Desktop app, and the owner re-checked the topology fixes it prompted. Report
 - **G4 passed** (verify 2026-10-24): Briefing Desk (Intake, model-assisted Analyst w/ budget + validated
   output + stale-after-cancel, Desk; approval; in-doubt gateway; optional live Anthropic adapter, SDK 1.3.0);
   runtime: background effects (fixed head-of-line blocking), orphan recovery, ctx.approve/deny;
-  `packages/cli/test-runtime` probe tests; `actord.claims.json` per example drives required test tags.
+  `packages/toolkit/test-runtime` probe tests; `actord.claims.json` per example drives required test tags.
 
 - **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok at G5; ~740 after the eval fixes), 2 read-only critics, hooks
   (check-on-edit, evidence-gate), userConfig, `actord init/verify/test/hook`, claims classification,
   examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke, verify-blocked.
 
-- **G6 offline-complete** (verify 2026-10-24): the Room (`plugin/hooks/room.tsx`, `types/index.d.ts`):
+- **G6 offline-complete** (verify 2026-10-24): the Room (`plugins/claude/hooks/room.tsx`, `types/index.d.ts`):
   `/actord-room` pane (Topology text/SVG, Mailboxes + trace, Contracts, Evidence; hotkeys 1–4, r), status
   line, effect guard (prefilter on a generated copy of the pattern table, `actord guard` decides, Refuse
   default, every failure denies). CLI `actord room [--follow]`, `actord guard`, `events --exclusive`,
@@ -53,8 +54,8 @@ the Desktop app, and the owner re-checked the topology fixes it prompted. Report
   (CLI file mode), absolute path in a snapshot, skipped checks counted as passing, machine paths in reports.
 
 ## Next
-- ASK OWNER before any further model-backed eval run, before pushing or moving the tag, and before merging
-  `shared-core-and-compat` into `main`.
+- After the Codex plugin moves in: one `npm run verify` covering both plugins, then ASK OWNER before tagging
+  0.2.0, before any further model-backed eval run, and before pushing anything.
 - A later release: consider Pele (obsidianmd/pele) to draw the Room's topology from `actord graph --format
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 

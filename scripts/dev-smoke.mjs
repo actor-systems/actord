@@ -65,9 +65,9 @@ async function until(what, test, ms = 20_000) {
 function trace(id) {
   const file = join(temp, "events.ndjson");
   writeFileSync(file, events().map((e) => JSON.stringify(e)).join("\n") + "\n");
-  const text = spawnSync(process.execPath, [join(root, "plugin/dist/actord.mjs"), "trace", id, "--file", file], { cwd, encoding: "utf8" }).stdout;
+  const text = spawnSync(process.execPath, [join(root, "plugins/claude/dist/actord.mjs"), "trace", id, "--file", file], { cwd, encoding: "utf8" }).stdout;
   console.log(text.trimEnd().replace(/coverage: \S*events\.ndjson/, "coverage: the dev server's events"));
-  const r = spawnSync(process.execPath, [join(root, "plugin/dist/actord.mjs"), "trace", id, "--file", file, "--json"], { cwd, encoding: "utf8" });
+  const r = spawnSync(process.execPath, [join(root, "plugins/claude/dist/actord.mjs"), "trace", id, "--file", file, "--json"], { cwd, encoding: "utf8" });
   return JSON.parse(r.stdout);
 }
 const walk = (n) => (n ? [n, ...n.children.flatMap(walk), ...n.effects.flatMap((e) => walk(e.result))] : []);

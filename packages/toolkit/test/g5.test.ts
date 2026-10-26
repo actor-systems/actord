@@ -8,7 +8,7 @@ import { classifyClaims } from "../src/model/claims.ts";
 import { askRules } from "../src/patterns.ts";
 
 const repo = join(import.meta.dirname, "..", "..", "..");
-const cli = join(repo, "plugin/dist/actord.mjs");
+const cli = join(repo, "plugins/claude/dist/actord.mjs");
 const tmp = mkdtempSync(join(tmpdir(), "actord-g5-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -19,7 +19,7 @@ function run(cwd: string, args: string[], input?: string, env: Record<string, st
 
 describe("actord init", () => {
   it("creates a complete starter with the verify skill, ask rules, and a short CLAUDE.md", () => {
-    const r = run(tmp, ["init", "fresh", "--name", "Fresh App", "--json", "--toolkit", "0.1.0"]);
+    const r = run(tmp, ["init", "fresh", "--name", "Fresh App", "--json", "--toolkit", "0.2.0"]);
     expect(r.code).toBe(0);
     const doc = JSON.parse(r.out);
     expect(doc.mode).toBe("create");
@@ -37,7 +37,7 @@ describe("actord init", () => {
     mkdirSync(join(dir, ".git"), { recursive: true });
     mkdirSync(join(dir, "node_modules"), { recursive: true });
     mkdirSync(join(dir, ".claude/.cc-writes"), { recursive: true });
-    const r = run(tmp, ["init", "with-state", "--json", "--toolkit", "0.1.0"]);
+    const r = run(tmp, ["init", "with-state", "--json", "--toolkit", "0.2.0"]);
     expect(r.code).toBe(0);
     expect(JSON.parse(r.out).created).toContain(".claude/settings.json");
     // A .claude directory with real configuration still counts.
@@ -49,7 +49,7 @@ describe("actord init", () => {
 
   it("verify records a type check the sandbox blocked as blocked, and a real type error as fail", () => {
     const dir = join(tmp, "sandboxed");
-    run(tmp, ["init", "sandboxed", "--toolkit", "0.1.0"]);
+    run(tmp, ["init", "sandboxed", "--toolkit", "0.2.0"]);
     const pkgPath = join(dir, "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
     const step = (script: string) => {
@@ -128,7 +128,7 @@ describe("hooks", () => {
     const heredoc = "cat >> tests/faults.test.ts <<'EOF'\nit(\"[duplicate-input] …\", async () => {});\nEOF";
     const bash = (command: string, mode = "dontAsk", cwd = valid) =>
       JSON.stringify({ hook_event_name: "PreToolUse", cwd, permission_mode: mode, tool_name: "Bash", tool_input: { command } });
-    const script = join(repo, "plugin/hooks/heredoc-note.sh");
+    const script = join(repo, "plugins/claude/hooks/heredoc-note.sh");
     const viaScript = (input: string) => spawnSync(script, [], { cwd: valid, input, encoding: "utf8" });
 
     it("adds a note, and no decision, beside a heredoc in don't-ask mode inside an actor project", () => {
