@@ -6,7 +6,7 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-26T01:37:59.384Z): **61 pass · 0 fail · 0 blocked.** G0 through G7 passed.
+`npm run verify` (2026-10-26T02:08:49.491Z): **61 pass · 0 fail · 0 blocked.** G0 through G7 passed.
 
 Since the 51-check release candidate: a review from the Codex implementation of the same charter found
 unsafe payload classifications, now corrected (decision 0011); Codex consolidated its adapter onto this
@@ -40,8 +40,8 @@ model-backed evaluations yet, so the eval results below are the Claude plugin's.
   Claude Code 2.1.308). The run showed the topology unreadable on the dark theme and a misleading reply; both
   are fixed (`1a80691`), and the owner re-checked the fixed diagram in the Desktop app.
 
-Release tags (annotated, made with `claude plugin tag`): `actord--v0.2.0` marks the commit that records this
-report, and `actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. Both are local only: the
+Release tags (annotated, made with `claude plugin tag`): `actord--v0.2.0` marks the 0.2.0 release, and
+`actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. Both are local only: the
 repository has no remote, and no tag is pushed without your authorization. Nothing was deployed, published, or run against a
 Cloudflare account. Model-backed spend, all approved: $145.02 ($41.56 of $50, $21.44 of $25, $10.35 of
 about $10, $10.74 of about $20, $20.34 of about $22, $20.54 of about $21, $10.00 and $10.05 of about $10
@@ -210,7 +210,7 @@ Per-component (rounded)
 
 ## Failing and blocked checks
 
-None: every check passes (`npm run verify`, 2026-10-26T01:37:59.384Z).
+None: every check passes (`npm run verify`, 2026-10-26T02:08:49.491Z).
 
 ## Limitations and unverified claims
 

@@ -6,7 +6,7 @@
   "costUsd": 10.144456100000001,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actors-plugin/plugin",
+    "root": "<repo>/plugin",
     "ablation": "with-without",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -16,7 +16,7 @@
       {
         "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actors-plugin/plugin"
+        "path": "<repo>/plugin"
       }
     ]
   },

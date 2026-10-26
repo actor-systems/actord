@@ -6,7 +6,7 @@
   "costUsd": 9.973813900000001,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actord-plugin/plugin",
+    "root": "<repo>/plugin",
     "ablation": "with-without",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -16,7 +16,7 @@
       {
         "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actord-plugin/plugin"
+        "path": "<repo>/plugin"
       }
     ]
   },
@@ -4533,7 +4533,7 @@
                   false,
                   false
                 ],
-                "evidence": "I can't tell you what the actord toolkit plugin does, and I can't check whether your environment is ready for it. I couldn't find the plugin from inside this session.\n\n- **What I checked:** The working directory has only an empty `.claude/` folder. `~/.claude` has no `plugins` directory. Searching the session's home directory for \"actord\" found only unrelated Node.js files.\n- **What I couldn't reach:** This session's sandbox blocks reads of the Claude config directory, where installed plugins are normally stored. I also can't read `/Users/jaredmcfarland/...`. Even if the plugin is installed, I can't see its manifest, skills, or prerequisites. I'd rather not guess at its features.\n\n**Next step:** Run `/plugin` in Claude Code and open the actord toolkit entry. It shows the plugin's description, commands, skills and hooks, and any load errors. If you paste that here, or its README, I can check your environment against its requirements."
+                "evidence": "I can't tell you what the actord toolkit plugin does, and I can't check whether your environment is ready for it. I couldn't find the plugin from inside this session.\n\n- **What I checked:** The working directory has only an empty `.claude/` folder. `~/.claude` has no `plugins` directory. Searching the session's home directory for \"actord\" found only unrelated Node.js files.\n- **What I couldn't reach:** This session's sandbox blocks reads of the Claude config directory, where installed plugins are normally stored. I also can't read `~/...`. Even if the plugin is installed, I can't see its manifest, skills, or prerequisites. I'd rather not guess at its features.\n\n**Next step:** Run `/plugin` in Claude Code and open the actord toolkit entry. It shows the plugin's description, commands, skills and hooks, and any load errors. If you paste that here, or its README, I can check your environment against its requirements."
               }
             ]
           },

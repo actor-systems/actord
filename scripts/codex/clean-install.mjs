@@ -23,6 +23,9 @@ const installMode = process.argv.includes("--online")
   ? "--prefer-offline"
   : "--offline";
 const steps = [];
+// Recorded evidence is published: name the node binary and the home folder portably.
+const portable = (text) =>
+  text.replaceAll(process.execPath, "node").replaceAll(os.homedir(), "~");
 function run(cmd, args, cwd = temp, expect = 0) {
   const r = spawnSync(cmd, args, {
     cwd,
@@ -31,16 +34,15 @@ function run(cmd, args, cwd = temp, expect = 0) {
     timeout: 180000,
     maxBuffer: 6 * 1024 * 1024,
   });
-  const output = ((r.stdout ?? "") + (r.stderr ?? "")).replaceAll(
-    temp,
-    "<temp>",
+  const output = portable(
+    ((r.stdout ?? "") + (r.stderr ?? "")).replaceAll(temp, "<temp>"),
   );
   const passed =
     expect === "nonzero"
       ? r.status !== null && r.status !== 0
       : r.status === expect;
   steps.push({
-    command: [cmd, ...args].join(" ").replaceAll(temp, "<temp>"),
+    command: portable([cmd, ...args].join(" ").replaceAll(temp, "<temp>")),
     status: passed ? "passed" : "failed",
     exitCode: r.status,
     expected: expect,

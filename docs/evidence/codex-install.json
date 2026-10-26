@@ -13,7 +13,7 @@
       "output": "{\n  \"pluginId\": \"actord@actord\",\n  \"name\": \"actord\",\n  \"marketplaceName\": \"actord\",\n  \"version\": \"0.2.0\",\n  \"installedPath\": \"/private<temp>/codex/plugins/cache/actord/actord/0.2.0\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\n"
     },
     {
-      "command": "/Users/jaredmcfarland/.local/share/vite-plus/js_runtime/node/24.22.1/bin/node /private<temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version",
+      "command": "node /private<temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version",
       "status": "passed",
       "output": "0.2.0\n"
     },

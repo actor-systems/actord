@@ -6,7 +6,7 @@
   "costUsd": 0.4770074,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actord-plugin/plugin",
+    "root": "<repo>/plugin",
     "ablation": "with-without",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -17,7 +17,7 @@
       {
         "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actord-plugin/plugin"
+        "path": "<repo>/plugin"
       }
     ]
   },

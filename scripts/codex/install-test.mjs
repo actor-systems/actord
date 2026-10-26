@@ -10,6 +10,9 @@ const home = path.join(temp, "codex");
 fs.mkdirSync(home);
 const env = { PATH: process.env.PATH, HOME: temp, CODEX_HOME: home };
 const steps = [];
+// Recorded evidence is published: name the node binary and the home folder portably.
+const portable = (text) =>
+  text.replaceAll(process.execPath, "node").replaceAll(os.homedir(), "~");
 function run(command, args) {
   const r = spawnSync(command, args, {
     cwd: temp,
@@ -18,14 +21,18 @@ function run(command, args) {
     timeout: 30000,
   });
   steps.push({
-    command: [command, ...args]
-      .join(" ")
-      .replaceAll(root, "<repo>")
-      .replaceAll(temp, "<temp>"),
+    command: portable(
+      [command, ...args]
+        .join(" ")
+        .replaceAll(root, "<repo>")
+        .replaceAll(temp, "<temp>"),
+    ),
     status: r.status === 0 ? "passed" : "failed",
-    output: ((r.stdout ?? "") + (r.stderr ?? ""))
-      .replaceAll(temp, "<temp>")
-      .replaceAll(root, "<repo>"),
+    output: portable(
+      ((r.stdout ?? "") + (r.stderr ?? ""))
+        .replaceAll(temp, "<temp>")
+        .replaceAll(root, "<repo>"),
+    ),
   });
   if (r.status !== 0)
     throw Error(

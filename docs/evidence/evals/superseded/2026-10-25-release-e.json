@@ -6,7 +6,7 @@
   "costUsd": 10.0084451,
   "partial": false,
   "suite": {
-    "root": "/Users/jaredmcfarland/Developer/actord-plugin/plugin",
+    "root": "<repo>/plugin",
     "ablation": "with-without",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-haiku-5-5",
@@ -16,7 +16,7 @@
       {
         "name": "actord",
         "version": "0.1.0",
-        "path": "/Users/jaredmcfarland/Developer/actord-plugin/plugin"
+        "path": "<repo>/plugin"
       }
     ]
   },
@@ -4497,7 +4497,7 @@
                   false,
                   false
                 ],
-                "evidence": "I can't tell you what the actord toolkit does or whether your environment is ready for it. I couldn't find anything to base an answer on.\n\n- **Plugin not visible:** This session has no skill, agent, or command from an \"actord toolkit\" plugin. The working directory (`/private/tmp/e-1nL3kv/home/cwd`) is empty apart from an empty `.claude/` folder, and a search for \"actord\" files found nothing.\n- **Install location is off-limits:** The sandbox blocks reading the plugin install directory (`/private/tmp/e-1nL3kv/config/plugins`). It also blocks the `actord-plugin` source folder under `/Users/jaredmcfarland/Developer`. I didn't try to get around that, so I can't read its manifest or README.\n- **Possible install problem:** The plugin may have installed after this session started, or it may not have loaded.\n- **Git:** `git` isn't usable in this sandbox. It failed with an xcode-select error, so I couldn't check the repo history.\n- **No requirements to check:** Without the plugin's manifest or README, I don't know what it needs, so I can't say whether your setup meets it.\n\n**Next step:** Run `/plugin` in Claude Code and check that the actord toolkit is listed as installed and enabled. If it is, restart the session so it loads. Then ask me again, or paste its README or `plugin.json` here, and I'll check your environment against its requirements."
+                "evidence": "I can't tell you what the actord toolkit does or whether your environment is ready for it. I couldn't find anything to base an answer on.\n\n- **Plugin not visible:** This session has no skill, agent, or command from an \"actord toolkit\" plugin. The working directory (`/private/tmp/e-1nL3kv/home/cwd`) is empty apart from an empty `.claude/` folder, and a search for \"actord\" files found nothing.\n- **Install location is off-limits:** The sandbox blocks reading the plugin install directory (`/private/tmp/e-1nL3kv/config/plugins`). It also blocks the `actord-plugin` source folder under `~/Developer`. I didn't try to get around that, so I can't read its manifest or README.\n- **Possible install problem:** The plugin may have installed after this session started, or it may not have loaded.\n- **Git:** `git` isn't usable in this sandbox. It failed with an xcode-select error, so I couldn't check the repo history.\n- **No requirements to check:** Without the plugin's manifest or README, I don't know what it needs, so I can't say whether your setup meets it.\n\n**Next step:** Run `/plugin` in Claude Code and check that the actord toolkit is listed as installed and enabled. If it is, restart the session so it loads. Then ask me again, or paste its README or `plugin.json` here, and I'll check your environment against its requirements."
               }
             ]
           },

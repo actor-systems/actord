@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-26T01:36:59.311Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-26T02:07:49.859Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -91,7 +91,7 @@ Generated 2026-10-26T01:36:59.311Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g6.acceptance` Manual acceptance script for the Room recorded with versions | G6 | pass | recorded-acceptance | `docs/acceptance/room.md → docs/evidence/room-acceptance.md` | 11/11 steps recorded passing |
 | `g7.docs` README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
 | `g7.release-evidence` Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded | G7 | pass | host | `claude plugin validate plugins/claude > docs/evidence/mod-listing.txt` | docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt |
-| `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugins/claude --dry-run --force` | actord--v0.2.0, not yet tagged |
+| `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugins/claude --dry-run --force` | actord--v0.2.0, tagged at e665123 |
 | `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds both plugin distributions byte-for-byte, and passes npm run verify | G7 | skipped | host | `scripts/clean-checkout.sh` | inside a clean-checkout run |
 | `g7.container` Clean-container install from the marketplace: install, starter verifies in workerd, uninstall | G7 | skipped | host | `scripts/container-install.sh` | inside a clean-checkout run |
 
