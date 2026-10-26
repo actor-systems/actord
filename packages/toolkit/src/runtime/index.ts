@@ -1149,12 +1149,12 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   /**
    * Deliver one due timer to this instance, if it is still set: an earlier timer's handler, or a message
-   * handled meanwhile, may have cancelled or replaced it. The id is derived from the key and due time, so a
-   * redelivery is a duplicate.
+   * handled meanwhile, may have cancelled or replaced it. The id is derived from the key, the due time and the
+   * message that set it, so a redelivery of the same row is a duplicate, and a timer set again is a new firing.
    */
   async function fireTimer(t: TimerRow): Promise<void> {
     if (!timerSet(sql, t)) return;
-    const id = deriveId(self, "timer", t.key, t.due_at);
+    const id = deriveId(self, "timer", t.key, t.due_at, t.causation_id ?? "");
     const envelope: Envelope = {
       v: 1,
       id,

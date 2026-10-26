@@ -150,13 +150,15 @@ it("[timer-survives-restart] a pending timer fires after the object restarts", a
 
 it("[timer-duplicate-fire] a timer delivered twice is handled once", async () => {
   await setTimer("tm3", "t3", 60_000);
+  const [row] = await runInDurableObject(probe("tm3"), (_i, s) => s.storage.sql.exec<Record<string, string>>("SELECT key, type, payload, causation_id, correlation_id FROM _actors_timers").toArray());
   expect(await fireTimers(env, system, "Probe", "tm3")).toBe(1);
-  // Same key and due_at, so the same derived id: the inbox must absorb it.
+  // The same row again: same key, due time and cause, so the same derived id, and the inbox must absorb it.
   await runInDurableObject(probe("tm3"), (_i, s) => {
-    s.storage.sql.exec("INSERT INTO _actors_timers (key, type, payload, due_at, attempts, causation_id, correlation_id) VALUES ('t3', 'probe.timer.fired', '{\"key\":\"t3\"}', 0, 0, NULL, 'c')");
+    s.storage.sql.exec("INSERT INTO _actors_timers (key, type, payload, due_at, attempts, causation_id, correlation_id) VALUES (?, ?, ?, 0, 0, ?, ?)", row!.key, row!.type, row!.payload, row!.causation_id, row!.correlation_id);
   });
   expect(await fireTimers(env, system, "Probe", "tm3")).toBe(1);
   expect(await probe("tm3").fired()).toEqual(["t3"]);
+  expect(await timerRows("tm3")).toEqual([]);
 });
 
 it("[timer-cancel] a cancelled timer never fires", async () => {
@@ -194,6 +196,16 @@ it("[timer-replaced-by-earlier-timer] a timer replaced by the handler of a timer
   expect(await timerRows("tm10")).toMatchObject([{ key: "zz", attempts: 0 }]);
   expect(await fireTimers(env, system, "Probe", "tm10")).toBe(1);
   expect(await probe("tm10").fired()).toEqual(["reset-zz", "zz-new"]);
+});
+
+it("[timer-rearm] a timer that sets itself again fires again, even at the same due time", async () => {
+  await setTimer("tm11", "rearm", 60_000);
+  expect(await fireTimers(env, system, "Probe", "tm11")).toBe(1);
+  expect(await timerRows("tm11")).toMatchObject([{ key: "rearm", attempts: 0 }]);
+  // fireTimers makes both firings due at 0: only the cause (the message that set each) tells them apart.
+  expect(await fireTimers(env, system, "Probe", "tm11")).toBe(1);
+  expect(await probe("tm11").fired()).toEqual(["rearm", "rearm"]);
+  expect(await timerRows("tm11")).toEqual([]);
 });
 
 it("[timer-atomic] a handler that sets a timer and then throws leaves no timer", async () => {

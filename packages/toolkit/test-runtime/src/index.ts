@@ -116,12 +116,15 @@ export class Probe extends DurableObject<Env> {
     "probe.timer.fired": ({ payload }, ctx) => {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
-      // Timers that act on other timers when they fire: kill-<k> cancels timer k, and reset-<k> sets k again
-      // to deliver "<k>-new".
+      // Timers that act on other timers when they fire: kill-<k> cancels timer k, reset-<k> sets k again to
+      // deliver "<k>-new", and rearm<…> sets itself again once.
       if (payload.key.startsWith("kill-")) ctx.cancelTimer(payload.key.slice("kill-".length));
       if (payload.key.startsWith("reset-")) {
         const k = payload.key.slice("reset-".length);
         ctx.after(60_000, "probe.timer.fired", { key: `${k}-new` }, { key: k });
+      }
+      if (payload.key.startsWith("rearm") && ctx.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM fired WHERE key = ?", payload.key).one().n < 2) {
+        ctx.after(60_000, "probe.timer.fired", { key: payload.key }, { key: payload.key });
       }
     },
     "probe.tick.hourly": ({ payload }, ctx) => {
