@@ -14,6 +14,12 @@ its distribution) and was merged by the owner. Release runs L and M are the Clau
 (`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds); the Codex plugin has none yet.
 Report: `docs/implementation-report.md`.
 
+**Plan 1 (actord on Lifecycle) is built on `plan1/lifecycle-foundation`, not yet released.** actord is now a
+Lifecycle capability (decision 0016): timers, cron `schedules`, per-effect budgets and usage, job effects
+(decision 0018), a heartbeat with crash-loop parking, reused effect keys recorded as `effect.duplicate`
+(fixes issue #2), and approvals that expire and record who approved. The plugin skills still teach the old
+style; plan 2 is next (verified approver sources, the skills).
+
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
 - **G0 passed** (verify run 2026-10-24): versions, guardrail rules test, DO messaging spike
