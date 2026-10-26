@@ -160,11 +160,11 @@ This design changes charter §4, which says to favour the Agents SDK "when neede
 
 ### 5.1 How actord joins Lifecycle (designer's call: adapter first)
 
-`actorRuntime(...)` becomes a `LifecycleCapability` with the id `"actord"`. The runtime already takes a structural `DurableObjectStateLike` (`packages/toolkit/src/runtime/index.ts:46-55`). The capability passes it a shim:
+`actorRuntime(...)` registers a `LifecycleCapability` with the id `"actord"` on a `Lifecycle` the actor class installs. It does this the way the SDK documents capabilities, not through a shim on `ctx.storage` (refined while planning):
 
-- `storage.setAlarm(when)` pushes the job `{ id: "actord", time: when }` onto `lifecycle.jobs`.
-- `storage.getAlarm()` reads that job's time.
-- `onJob("actord")` runs the existing `alarm()` body (orphan recovery, schedule ticks, inbox GC, drain) and returns.
+- Wherever actord used to call `setAlarm(when)`, it now pushes or reschedules the single job `{ id: "actord", fn: "drive", time: when }` through `this.lifecycle.jobs`.
+- `onJob` runs the existing `alarm()` body (orphan recovery, schedule ticks, inbox GC, drain) and returns.
+- `onStart` runs orphan recovery and arms schedules.
 
 Actor classes stop defining `alarm()`. Templates and both reference apps change to match.
 
@@ -201,7 +201,7 @@ These stay unchanged:
 5. **A heartbeat while effects are in flight.** While any effect is `running`, the capability keeps a job due every 30 s. An orphaned effect is then found without waiting for the next message. Today `armAlarm` doesn't arm for running rows (`index.ts:671`).
 6. **Crash-loop parking.**
    - An effect interrupted N times without settling (default 5) is parked.
-   - Parking is recorded as an event, and the actor gets a `effect.parked` message so it can escalate.
+   - Parking is recorded as an `effect.parked` event. The actor gets the effect's own result message with status `in_doubt` and a reason starting with "parked", so it can escalate without declaring a new message (refined while planning).
 7. **Reused effect keys made visible** (issue #2).
    - Requesting an effect whose key already exists records `effect.duplicate`, carrying the existing row's status, instead of `effect.requested`.
    - `trace` shows "already requested by message X".
@@ -220,7 +220,7 @@ effects: {
   "ci.run": {
     kind: "job",
     idempotency: "key",
-    completes: { from: "@github", message: "ci.finished", match: (msg, job) => msg.runId === job.handle.runId },
+    completes: { message: "ci.finished" },   // its handler calls ctx.settleJob("ci.run", key, outcome)
     deadline: "2h",
     result: "ci.settled",
   },
@@ -229,7 +229,7 @@ effects: {
 
 - The adapter's `start(input, { key })` returns quickly with a JSON handle. The handle is stored on the outbox row, whose status becomes `awaiting_job`.
 - Completion arrives in one of two ways:
-  - **By message.** The named source or actor message is matched to the waiting job. It is routed to the requesting actor by key, as in §6.2, and the runtime resolves the job inside that message's transaction.
+  - **By message.** The completion message is routed to the requesting actor by key, as in §6.2. Its handler calls `ctx.settleJob(effect, key, outcome)`, which resolves the job inside that message's transaction. `completes: { message }` names that message for `actord check` and the graph. A matching function would make `system.ts` impossible to serialize, so there isn't one (refined while planning; decision 0018).
   - **By probe.** `probe: { every, adapter }` sets a timer that calls the adapter's `probe(handle)`.
 - If the deadline passes first, the outcome is `in_doubt`.
 - A cancel request calls the adapter's `cancel(handle)` if it has one. It is still reported honestly: `failed` if the cancel was confirmed, `in_doubt` if not.
