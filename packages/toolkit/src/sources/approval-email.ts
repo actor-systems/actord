@@ -78,7 +78,13 @@ export interface ApprovalDecided {
   reason: string | null;
   /** Who decided: for email, the verified sender address. */
   by: string;
-  /** "pass": the reply passed DMARC. "unknown": the reply carried no authentication result. */
+  /**
+   * "pass": the topmost Authentication-Results header comes from the source's trusted authserv-id and every
+   * dmarc result in it is pass, for the owner's domain (header.from). "unknown" covers everything else: no
+   * authentication result; one from an authserv-id that isn't trusted, or with no authserv configured; or a
+   * trusted header that fails those checks, with no dmarc result, any dmarc result other than pass, or a
+   * header.from that isn't the owner's domain. (A dmarc=fail anywhere refuses the reply before this is set.)
+   */
   authenticated: "pass" | "unknown";
 }
 

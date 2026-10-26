@@ -584,6 +584,14 @@ it("[email-forged-auth] only the topmost Authentication-Results, from the truste
     ["em-forged-c", ['mx.probe.example; spf=pass (dmarc=pass) smtp.mailfrom=probe.example; dkim=none header.s="x;dmarc=pass"; dmarc=none'], {}],
     // a real pass, but this Worker trusts no authserv-id
     ["em-forged-d", [PASS], { PROBE_AUTHSERV: undefined }],
+    // the trusted header has a dmarc=pass, but also a dmarc=none: every dmarc result must pass
+    ["em-forged-e", ["mx.probe.example; dmarc=none header.from=probe.example; dmarc=pass header.from=probe.example"], {}],
+    // a pass for a domain that isn't the owner's
+    ["em-forged-f", ["mx.probe.example; dkim=pass header.d=evil.example; dmarc=pass header.from=evil.example"], {}],
+    // a pass that names no domain, or two
+    ["em-forged-g", ["mx.probe.example; dmarc=pass", "mx.probe.example; dmarc=pass header.from=probe.example header.from=evil.example"], {}],
+    // a trusted header with no dmarc result at all
+    ["em-forged-h", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example"], {}],
   ];
   for (const [key, results, overrides] of cases) {
     const { request, fx } = await asked(key, "gateway.publish");
@@ -599,6 +607,22 @@ it("[email-forged-auth] only the topmost Authentication-Results, from the truste
     await settle(env, system);
     expect(await probe(key).decisions()).toMatchObject([{ decision: "deny", authenticated: "unknown" }]);
   }
+  // The authserv-id and the domain compare case-insensitively (RFC 8601), so these pass and approve.
+  const passes: Array<[string, string, Record<string, unknown>]> = [
+    ["em-auth-case", "MX.Probe.Example; dmarc=pass header.from=Probe.EXAMPLE", {}],
+    ["em-auth-trusted-case", "mx.probe.example; dmarc=pass header.from=probe.example", { PROBE_AUTHSERV: "MX.PROBE.EXAMPLE" }],
+    // The shape Cloudflare Email Routing wrote for a real Gmail reply (spike 6), unfolded, for the owner's domain.
+    ["em-auth-spike", 'mx.cloudflare.net; dkim=pass header.d=probe.example header.s=20251104 header.b=abc; dmarc=pass header.from=probe.example policy.dmarc=none; spf=none (mx.cloudflare.net: no SPF records found for postmaster@mail.probe.example) smtp.helo=mail.probe.example; spf=pass (mx.cloudflare.net: domain of owner@probe.example designates 2001:db8::1 as permitted sender) smtp.mailfrom=owner@probe.example; arc=pass smtp.remote-ip="2001:db8::1"', { PROBE_AUTHSERV: "mx.cloudflare.net" }],
+  ];
+  for (const [key, result, overrides] of passes) {
+    const { request, fx } = await asked(key, "gateway.publish");
+    const { replies, env: e } = answering(overrides);
+    await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": result } }), e, system);
+    await settle(env, system);
+    expect(await probe(key).decisions()).toMatchObject([{ decision: "approve", authenticated: "pass" }]);
+    expect(fx.runs).toBe(1);
+    expect(replies.map((r) => r.text)).toEqual([received("approve", key, "gateway.publish")]);
+  }
 });
 
 it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply is marked as one", async () => {
@@ -606,12 +630,24 @@ it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply i
   const { request, fx } = await asked("em-away");
   const { replies, env: e } = answering();
   const subject = `Re: ${request.subject}`;
-  for (const value of ["auto-replied", "auto-generated; owner-email=owner@probe.example"])
-    await handleEmail(reply({ from: OWNER, subject, text: "I'm away until Monday.", headers: { "Authentication-Results": PASS, "Auto-Submitted": value } }), e, system);
+  const automatic: Array<Record<string, string>> = [
+    { "Auto-Submitted": "auto-replied" },
+    { "Auto-Submitted": "auto-generated; owner-email=owner@probe.example" },
+    // Older auto-responders say so with Precedence, or a header of their own, instead.
+    { Precedence: "bulk" },
+    { Precedence: "junk" },
+    { Precedence: "List" },
+    { Precedence: "auto_reply" },
+    { "X-Autoreply": "yes" },
+    { "X-Autorespond": "Out of office" },
+  ];
+  // Each says "approve" on its first line, which would count if a person had written it.
+  for (const extra of automatic) await handleEmail(reply({ from: OWNER, subject, text: "approve\n\nI'm away until Monday.", headers: { "Authentication-Results": PASS, ...extra } }), e, system);
   await settle(env, system);
   expect(replies).toEqual([]);
   expect(await probe("em-away").approvals()).toEqual([]);
-  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual(Array(2).fill(["source.ignored", "auto_submitted"]));
+  expect(fx.runs).toBe(0);
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual(Array(automatic.length).fill(["source.ignored", "auto_submitted"]));
   // Every reply this source sends says it was sent automatically, so the owner's responder won't answer it.
   const asking = reply({ from: OWNER, subject, text: "hmm", headers: { "Authentication-Results": PASS, "Auto-Submitted": "no" } });
   await handleEmail(asking, e, system);
@@ -621,8 +657,8 @@ it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply i
   expect(replies.map((r) => r.text)).toEqual([ASK_AGAIN, "this address only accepts replies to actord approval requests", "this effect publishes; approve it in GitHub"]);
   expect(replies.map((r) => r.headers?.["Auto-Submitted"])).toEqual(Array(3).fill("auto-replied"));
   expect(replies[0]!.headers).toEqual({ "Auto-Submitted": "auto-replied", "In-Reply-To": asking.headers.get("message-id") });
-  // "Auto-Submitted: no" is a person writing: that approve counts.
-  await handleEmail(reply({ from: OWNER, subject, text: "approve", headers: { "Authentication-Results": PASS, "Auto-Submitted": "no" } }), e, system);
+  // "Auto-Submitted: no", or a Precedence an auto-responder doesn't use, is a person writing: that approve counts.
+  await handleEmail(reply({ from: OWNER, subject, text: "approve", headers: { "Authentication-Results": PASS, "Auto-Submitted": "no", Precedence: "first-class" } }), e, system);
   await settle(env, system);
   expect(fx.runs).toBe(1);
 });
@@ -732,4 +768,35 @@ it("[email-receiver-rejected] an answer the actor refuses isn't tried again, and
     },
   ]);
   expect(sourceEvents(events)).toMatchObject([{ kind: "source.invalid", actor: "@mail", reason: "unauthorized_route", messageId: id, effectKey: "em-rej" }]);
+});
+
+it("[email-spliced-headers] a reply with a second Subject or Message-ID isn't understood: nothing is approved, and the reply asks again", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-splice");
+  const { replies, env: e } = answering();
+  const text = below(request, "approve");
+  // A Subject carrying the token, added above the one the owner's provider signed, which is about something else.
+  await handleEmail(reply({ from: OWNER, subject: "Lunch on Friday?", text, headers: { "Authentication-Results": PASS, Subject: `Re: ${request.subject}` } }), e, system);
+  // A second Message-ID above the signed one, which would choose the envelope id.
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text, headers: { "Authentication-Results": PASS, "Message-ID": "<spliced@mail.probe.example>" } }), e, system);
+  // No Subject at all.
+  const bare = reply({ from: OWNER, subject: "", text, headers: { "Authentication-Results": PASS } });
+  const raw = new TextDecoder().decode(await new Response(bare.raw).arrayBuffer()).replace(/^Subject: \r\n/m, "");
+  await handleEmail({ ...bare, raw: new Response(raw).body!, rawSize: raw.length }, e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(0);
+  expect(await probe("em-splice").approvals()).toEqual([]);
+  expect(await fxStatus("em-splice")).toBe("awaiting_approval");
+  expect(replies.map((r) => r.text)).toEqual(Array(3).fill(ASK_AGAIN));
+  // With two Message-IDs, the reply doesn't say which one it answers.
+  expect(replies[1]!.headers).toEqual({ "Auto-Submitted": "auto-replied" });
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason, ev.detail?.subjects, ev.detail?.messageIds])).toEqual([
+    ["source.ignored", "ambiguous_headers", 2, 1],
+    ["source.ignored", "ambiguous_headers", 1, 2],
+    ["source.ignored", "ambiguous_headers", 0, 1],
+  ]);
+  // One of each is understood.
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text, headers: { "Authentication-Results": PASS } }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
 });

@@ -6,13 +6,17 @@
 // 1. Sender. The envelope sender and the one From address are both the owner's (env[owner]), compared
 //    case-insensitively, and no Authentication-Results header says dmarc=fail. Mail that fails this gets no
 //    reply at all, so nobody but the owner can make the Worker send mail or learn whether a token is good.
-//    That is why the sender is checked before the token. Mail an auto-responder sent (Auto-Submitted, other
-//    than "no") is then ignored without a reply, so an out-of-office answer and a re-ask can't loop.
-// 2. Token. The subject's "[actord:<token>]" verifies against env[secret] and hasn't expired. A missing,
+//    That is why the sender is checked before the token. Mail an auto-responder sent is then ignored without a
+//    reply, so an out-of-office answer and a reply to it can't loop: Auto-Submitted other than "no" (RFC 3834),
+//    Precedence bulk, junk, list or auto_reply, or an X-Autoreply or X-Autorespond header.
+// 2. Headers. There is exactly one Subject and at most one Message-ID. The parser reads the first of each but
+//    DKIM signs the last, so a header added above a signed one could change what the reply says. A reply with
+//    more is not understood, and the reply asks again.
+// 3. Token. The subject's "[actord:<token>]" verifies against env[secret] and hasn't expired. A missing,
 //    edited or expired token gets a reply saying so.
-// 3. Decision. The first non-empty line the owner wrote, above any quoted text, is "approve", or "deny" and
+// 4. Decision. The first non-empty line the owner wrote, above any quoted text, is "approve", or "deny" and
 //    an optional reason. Anything else gets a reply asking again.
-// 4. Publishes guard. Without dmarc=pass, an effect declared publishes: true can't be approved by email, and
+// 5. Publishes guard. Without dmarc=pass, an effect declared publishes: true can't be approved by email, and
 //    the reply says to approve it in GitHub. A deny still goes through.
 // Then the source's message (approval.decided) goes to the actor and instance the token names, under the
 // sender "@<source>", with an envelope id derived from the reply's Message-ID, so the same email handled twice
@@ -27,8 +31,9 @@
 // env[send], from env[from], marked Auto-Submitted: auto-replied, with In-Reply-To set to the reply's Message-ID.
 // Authentication: a sender can write Authentication-Results headers of their own, below the one the receiving
 // server adds on top. So a reply is "pass" only when the topmost header comes from the trusted authserv-id
-// (env[authserv]) and its dmarc result, read outside comments, is pass. Anything else is "unknown", including
-// a source with no authserv configured. A dmarc=fail anywhere refuses the reply.
+// (env[authserv], compared case-insensitively), it has at least one dmarc result, and every dmarc result, read
+// outside comments, is pass with a header.from of the owner's domain. Anything else is "unknown", including a
+// source with no authserv configured. A dmarc=fail anywhere refuses the reply.
 import PostalMime, { addressParser, type Email } from "postal-mime";
 import { type ActorEvent, type EventKind, type Receipt, deliverExternal, deriveId, emit } from "../runtime/index.ts";
 import type { EmailSourceSpec, System } from "../system.ts";
@@ -56,6 +61,8 @@ const NOT_RECORDED = (a: Answer) => `Your ${what(a)} couldn't be recorded. Pleas
 const NOT_APPLIED = (a: Answer, why: string) => `Your ${what(a)} couldn't be applied: ${why}. Nothing was approved or denied.`;
 /** The first delivery and up to two retries, all under one envelope id. */
 const ATTEMPTS = 3;
+/** Precedence values (RFC 2076, and older auto-responders) that mean nobody wrote the message. */
+const AUTOMATIC_PRECEDENCE = new Set(["bulk", "junk", "list", "auto_reply"]);
 
 const DMARC_FAIL = /\bdmarc\s*=\s*fail\b/i;
 /** A resinfo's method and result, such as "dmarc=pass" or "dmarc/1 = pass" (RFC 8601). */
@@ -97,12 +104,18 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
   if (!sameAddress(message.from, owner) || !sameAddress(author, owner)) return record("source.rejected", "not_owner", {}, { ...seen, from: untrusted(message.from), author: untrusted(author) });
   const results = email.headers.filter((h) => h.key === "authentication-results").map((h) => h.value);
   if (results.some((r) => DMARC_FAIL.test(r))) return record("source.rejected", "dmarc_fail", {}, seen);
-  const authenticated = authenticationOf(results, source.authserv === undefined ? undefined : vars[source.authserv]);
-  const auto = email.headers.filter((h) => h.key === "auto-submitted").map((h) => fields(h.value)[0]!.trim().toLowerCase());
-  if (auto.some((v) => v !== "no")) return record("source.ignored", "auto_submitted", {}, { ...seen, autoSubmitted: untrusted(auto.join(", ")) });
+  const authenticated = authenticationOf(results, source.authserv === undefined ? undefined : vars[source.authserv], owner);
+  const valuesOf = (key: string) => email.headers.filter((h) => h.key === key).map((h) => fields(h.value)[0]!.trim().toLowerCase());
+  const auto = valuesOf("auto-submitted");
+  const precedence = valuesOf("precedence");
+  const autoreply = email.headers.filter((h) => h.key === "x-autoreply" || h.key === "x-autorespond").map((h) => h.key);
+  if (auto.some((v) => v !== "no") || precedence.some((v) => AUTOMATIC_PRECEDENCE.has(v)) || autoreply.length > 0)
+    return record("source.ignored", "auto_submitted", {}, { ...seen, autoSubmitted: untrusted(auto.join(", ")), precedence: untrusted(precedence.join(", ")), autoreply });
 
   // Decoded, a subject can hold line breaks; the reply repeats it in a header, so they become spaces.
   const subject = (email.subject ?? "").replace(/[\r\n]+/g, " ");
+  const counts = { subjects: email.headers.filter((h) => h.key === "subject").length, messageIds: email.headers.filter((h) => h.key === "message-id").length };
+  const inReplyTo = counts.messageIds === 1 && messageId !== null && MESSAGE_ID.test(messageId) ? messageId : null;
   const reply = async (text: string) => {
     const send = vars[source.send] as Partial<SendEmailLike> | undefined;
     const from = vars[source.from];
@@ -110,14 +123,20 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
       if (typeof send?.send !== "function") throw new Error(`no send_email binding ${source.send}`);
       if (typeof from !== "string" || from === "") throw new Error(`no from address in ${source.from}`);
       // Auto-Submitted (RFC 3834) tells the owner's own auto-responder not to answer this one.
-      const headers: Record<string, string> = { "Auto-Submitted": "auto-replied", ...(messageId !== null && MESSAGE_ID.test(messageId) ? { "In-Reply-To": messageId } : {}) };
+      const headers: Record<string, string> = { "Auto-Submitted": "auto-replied", ...(inReplyTo !== null ? { "In-Reply-To": inReplyTo } : {}) };
       await send.send({ from, to: owner, subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`, text, headers });
     } catch (err) {
       record("source.failed", "reply_failed", {}, { ...seen, error: messageOf(err) });
     }
   };
 
-  // 2. Token.
+  // 2. Headers: postal-mime reads the first Subject and Message-ID, and DKIM signs the last.
+  if (counts.subjects !== 1 || counts.messageIds > 1) {
+    record("source.ignored", "ambiguous_headers", {}, { ...seen, ...counts });
+    return reply(ASK_AGAIN);
+  }
+
+  // 3. Token.
   const token = SUBJECT_TAG.exec(subject)?.[1];
   if (!token) {
     record("source.ignored", "no_token", {}, seen);
@@ -137,14 +156,14 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
   const { claims } = verified;
   const about = { effect: claims.effect, effectKey: claims.effectKey };
 
-  // 3. Decision.
+  // 4. Decision.
   const decided = firstLineDecision(email.text);
   if (!decided) {
     record("source.ignored", "unparsed", about, seen);
     return reply(ASK_AGAIN);
   }
 
-  // 4. Publishes guard. An effect this system no longer declares is treated as one that publishes.
+  // 5. Publishes guard. An effect this system no longer declares is treated as one that publishes.
   const effects = system.effects ?? {};
   const effect = Object.hasOwn(effects, claims.effect) ? effects[claims.effect] : undefined;
   if (decided.decision === "approve" && authenticated !== "pass" && (effect === undefined || effect.publishes === true)) {
@@ -209,15 +228,41 @@ function firstLineDecision(text: string | undefined): { decision: "approve" | "d
 
 /**
  * "pass" only when the topmost Authentication-Results header (results[0], the receiving server's) names the
- * trusted authserv-id as its first token and has a dmarc result of pass outside comments. A header lower down
- * may have come from the sender, so it never counts; with no trusted id configured, nothing does.
+ * trusted authserv-id as its first token (case-insensitively, RFC 8601), has at least one dmarc result outside
+ * comments, and every one is pass with a header.from equal to the owner's domain. A header lower down may have
+ * come from the sender, so it never counts; with no trusted id configured, nothing does.
  */
-function authenticationOf(results: string[], trusted: unknown): ApprovalDecided["authenticated"] {
+function authenticationOf(results: string[], trusted: unknown, owner: string): ApprovalDecided["authenticated"] {
   const top = results[0];
-  if (top === undefined || typeof trusted !== "string" || trusted === "") return "unknown";
+  if (top === undefined || typeof trusted !== "string" || trusted.trim() === "") return "unknown";
   const [id, ...resinfo] = fields(top);
-  if (resinfo.length === 0 || id!.trim().split(/\s+/)[0] !== trusted) return "unknown";
-  return resinfo.some((r) => DMARC_RESULT.exec(r.trim())?.[1]?.toLowerCase() === "pass") ? "pass" : "unknown";
+  if (resinfo.length === 0 || id!.trim().split(/\s+/)[0]!.toLowerCase() !== trusted.trim().toLowerCase()) return "unknown";
+  const domain = owner.trim().toLowerCase().split("@").pop();
+  const dmarc = resinfo.map((r) => dmarcOf(r.trim())).filter((d) => d !== null);
+  return dmarc.length > 0 && dmarc.every((d) => d.result === "pass" && d.from === domain) ? "pass" : "unknown";
+}
+
+/**
+ * A dmarc resinfo's result and its one header.from domain, both lower-cased; null for another method. The
+ * properties after the result are read in order, a quoted value whole, so text inside one can't pose as a
+ * property; anything that doesn't read as a property, or a second header.from, leaves the domain null.
+ */
+function dmarcOf(resinfo: string): { result: string; from: string | null } | null {
+  const m = DMARC_RESULT.exec(resinfo);
+  if (!m) return null;
+  const result = m[1]!.toLowerCase();
+  const rest = resinfo.slice(m[0].length);
+  const property = /\s*([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)\s*=\s*("(?:[^"\\]|\\.)*"|[^\s"]+)/y;
+  const froms: string[] = [];
+  while (rest.slice(property.lastIndex).trim() !== "") {
+    const p = property.exec(rest);
+    if (!p) return { result, from: null };
+    if (p[1]!.toLowerCase() === "header.from") {
+      const value = p[2]!.startsWith('"') ? p[2]!.slice(1, -1).replace(/\\(.)/g, "$1") : p[2]!;
+      froms.push(value.trim().toLowerCase().split("@").pop()!);
+    }
+  }
+  return { result, from: froms.length === 1 ? froms[0]! : null };
 }
 
 /**
