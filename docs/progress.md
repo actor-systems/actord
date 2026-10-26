@@ -56,7 +56,7 @@ Report: `docs/implementation-report.md`.
 
 ## Next
 - ASK OWNER before any model-backed eval run (either plugin), before pushing or moving a tag, and before
-  publishing (GitHub `actord/actord`, npm `@actord/toolkit`, either plugin directory).
+  publishing (GitHub `actor-systems/actord`, npm `@actord/toolkit`, either plugin directory).
 - A later release: consider Pele (obsidianmd/pele) to draw the Room's topology from `actord graph --format
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 

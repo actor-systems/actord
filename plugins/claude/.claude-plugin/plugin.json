@@ -7,6 +7,8 @@
     "name": "Actor-Native Cloudflare Toolkit contributors"
   },
   "license": "Apache-2.0",
+  "homepage": "https://github.com/actor-systems/actord",
+  "repository": "https://github.com/actor-systems/actord",
   "keywords": [
     "cloudflare",
     "durable-objects",

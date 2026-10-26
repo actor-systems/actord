@@ -24,11 +24,11 @@ run in workerd (Cloudflare's runtime) decide what holds.
 From your shell:
 
 ```sh
-claude plugin marketplace add actord/actord     # or a local clone: claude plugin marketplace add ./actord
+claude plugin marketplace add actor-systems/actord     # or a local clone: claude plugin marketplace add ./actord
 claude plugin install actord@actord
 ```
 
-Or inside a Claude Code session: `/plugin marketplace add actord/actord`, then `/plugin install actord@actord`.
+Or inside a Claude Code session: `/plugin marketplace add actor-systems/actord`, then `/plugin install actord@actord`.
 
 Requirements: Claude Code 2.1.287+ (2.1.269+ without the Room) and Node.js 22.18+. Works in the terminal,
 the Desktop app's Code tab, and the VS Code extension. claude.ai and Cowork don't install plugins that
@@ -57,7 +57,7 @@ bundles a different version than the project pins.
 ### Codex
 
 ```sh
-codex plugin marketplace add actord/actord  # or an absolute local checkout path
+codex plugin marketplace add actor-systems/actord  # or an absolute local checkout path
 codex plugin add actord@actord
 ```
 
@@ -70,7 +70,7 @@ six workflow skills and its launcher without hooks or MCP. See [adapter details]
 ```sh
 codex plugin remove actord@actord
 codex plugin marketplace remove actord
-codex plugin marketplace add actord/actord
+codex plugin marketplace add actor-systems/actord
 codex plugin add actord@actord
 ```
 

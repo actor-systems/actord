@@ -4,6 +4,8 @@
   "version": "0.2.0",
   "description": "Codex workflows for the shared native Cloudflare actor core.",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/actor-systems/actord",
+  "repository": "https://github.com/actor-systems/actord",
   "extensions": {
     "com.openai": {
       "onboardingSkill": "./skills/setup-actor-project/SKILL.md",

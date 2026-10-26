@@ -4,6 +4,15 @@
   "description": "Conventions, checks, and inspection for small systems of communicating actors on Cloudflare Durable Objects",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/actor-systems/actord.git",
+    "directory": "packages/toolkit"
+  },
+  "homepage": "https://github.com/actor-systems/actord#readme",
+  "bugs": {
+    "url": "https://github.com/actor-systems/actord/issues"
+  },
   "bin": {
     "actord": "./dist/cli.mjs"
   },

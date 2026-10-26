@@ -7,7 +7,7 @@ The Codex adapter shares `packages/toolkit` and the root `examples/` with the Cl
 ## Install and use
 
 ```sh
-codex plugin marketplace add actord/actord
+codex plugin marketplace add actor-systems/actord
 codex plugin add actord@actord
 codex plugin list --json
 ```
@@ -57,7 +57,7 @@ To update, remove the plugin, refresh its marketplace source, and install it aga
 ```sh
 codex plugin remove actord@actord
 codex plugin marketplace remove actord
-codex plugin marketplace add actord/actord
+codex plugin marketplace add actor-systems/actord
 codex plugin add actord@actord
 ```
 

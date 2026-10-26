@@ -233,7 +233,7 @@ None: every check passes (`npm run verify`, 2026-10-26T01:37:59.384Z).
 ## Setup
 
 ```sh
-claude plugin marketplace add <org>/<repo>   # or a local clone path
+claude plugin marketplace add actor-systems/actord   # or a local clone path
 claude plugin install actord@actord
 ```
 
