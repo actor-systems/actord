@@ -129,7 +129,7 @@ it("derived message ids are deterministic and position-sensitive", () => {
   expect(deriveId("m-1", "send", 0, "a.b", "X", "main")).not.toBe(deriveId("m-1", "send", 1, "a.b", "X", "main"));
 });
 
-const setTimer = (key: string, tk: string, delayMs: number, fail = false, extra: { label?: string } = {}) =>
+const setTimer = (key: string, tk: string, delayMs: number, fail = false, extra: { label?: string; at?: "infinity" | "nan" | "negative" } = {}) =>
   ingress(env, system, "Probe", "probe.timer.set", { key: tk, delayMs, ...(fail ? { fail } : {}), ...extra }, { key });
 
 it("[timer-fires] a timer set in a handler arrives later as a message from @timer, and not before its delay", async () => {
@@ -208,6 +208,19 @@ it("[timer-rearm] a timer that sets itself again fires again, even at the same d
   expect(await fireTimers(env, system, "Probe", "tm11")).toBe(1);
   expect(await probe("tm11").fired()).toEqual(["rearm", "rearm"]);
   expect(await timerRows("tm11")).toEqual([]);
+});
+
+it("[timer-invalid-time] a timer set at a time that isn't a finite epoch at or after 0 fails the handler, and leaves the wake intact", async () => {
+  for (const at of ["infinity", "nan", "negative"] as const) {
+    const r = await setTimer("tm12", `t12-${at}`, 0, false, { at });
+    expect(r).toMatchObject({ status: "failed" });
+    expect((r as { error: string }).error).toMatch(/invalid time/);
+  }
+  expect(await timerRows("tm12")).toEqual([]);
+  await setTimer("tm12", "t12-ok", 60_000);
+  const time = await runInDurableObject(probe("tm12"), (_i, s) => Number(s.storage.sql.exec("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").one().time));
+  expect(Number.isFinite(time)).toBe(true);
+  expect(time).toBeGreaterThan(Date.now());
 });
 
 it("[timer-atomic] a handler that sets a timer and then throws leaves no timer", async () => {
@@ -1036,6 +1049,20 @@ it("[decide-cold] decide() on a freshly aborted instance recovers orphans first"
   // Before anything else drives the instance: decide() itself recovered the orphan and its drain re-ran it.
   expect(runs).toBe(1);
   expect(keyedRuns).toBe(1);
+});
+
+it("[deny-before-alarm] a late denial is refused even before the alarm expires the request, and the actor still hears it expired", async () => {
+  let runs = 0;
+  overrideEffect("gateway.approval", { run: async () => ++runs });
+  await send("early-deny", "gateway.approval");
+  await settle(env, system);
+  await runInDurableObject(probe("early-deny"), (_i, s) => { s.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", Date.now() - 1000); });
+  await ingress(env, system, "Probe", "probe.deny", { key: "early-deny", by: "owner@example.com" }, { key: "early-deny" });
+  expect(await probe("early-deny").approvals()).toEqual([{ key: "early-deny", ok: false }]);
+  await expireApprovals(env, system, "Probe", "early-deny");
+  await settle(env, system);
+  expect(runs).toBe(0);
+  expect(await probe("early-deny").outcomes()).toMatchObject([{ key: "early-deny", status: "failed", error: "approval expired" }]);
 });
 
 it("[approve-before-alarm] a late approval or decision is refused even before the alarm expires the request", async () => {

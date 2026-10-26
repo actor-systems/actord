@@ -29,8 +29,12 @@ overwrite each other's wakes, so actord has to become one of `Lifecycle`'s capab
    function, `earliestWake()`, takes the minimum over every source of a wake (pending outbox rows and the
    schedule), and one method, `arm(when)`, points the job there, or cancels it when nothing is due.
 3. **`onStart` recovers orphaned effects, arms the schedule and arms the job; `onJob` runs `drive()`**, the
-   old `alarm()` body: the schedule's tick, inbox retention, then the outbox. It stays bounded because
-   effects already run in the background.
+   old `alarm()` body: the schedule's tick, inbox retention, then the outbox. It is only partly bounded.
+   Effect attempts, job probes and cancels run in the background, but `drive()` awaits each schedule tick,
+   each due timer and each outbox delivery, including deliveries to other actors, and the shared alarm's
+   dispatch waits for it. A slow receiver therefore delays the other capabilities' jobs on the object, and
+   Lifecycle warns once a dispatch runs past 30 s. Returning from `onJob` at once, with `drive()` running as
+   tracked alarm work (`trackAlarmWork`), is left for plan 3, when a harness shares the alarm.
 4. **`receive()` and `drive()` await `ready()` first**, since RPC and the test helpers reach the object
    without a platform event.
 5. **A drain releases its guard before it arms the job.** Arming now always awaits storage, and a row

@@ -17,7 +17,10 @@ export class ActordCapability extends LifecycleCapability {
     return this.#hooks.start();
   }
 
-  /** Bounded: drive() starts effects in the background and returns. */
+  /**
+   * Partly bounded: effects, probes and cancels run in the background, but drive() awaits ticks, timers and
+   * deliveries (to other actors too) while the shared alarm's dispatch waits. Decision 0016 §3.
+   */
   async onJob(ctx: LifecycleJobContext): Promise<void> {
     // drive() re-arms the job through arm(); a same-id push made during dispatch supersedes this
     // dispatch's result, so returning nothing doesn't delete the job it just re-armed.

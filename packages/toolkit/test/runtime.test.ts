@@ -84,3 +84,8 @@ it("[duplicate-delivery] copies that pass the inbox check while the first copy's
   expect(receipts.map((r) => r.status).sort()).toEqual(["handled", ...Array(9).fill("duplicate")].sort());
   expect(ctx.storage.sql.exec<{ n: number }>("SELECT n FROM count").one().n).toBe(1);
 });
+
+it("[undeclared-actor] actorRuntime for an actor the system doesn't declare names it, rather than failing on its schedules", () => {
+  const { ctx, lifecycle } = slowStartObject();
+  expect(() => actorRuntime({ lifecycle, ctx, env: {} }, system, "Nobody" as "Counter", {} as never)).toThrow("actord: Nobody is not declared in system inbox-race");
+});

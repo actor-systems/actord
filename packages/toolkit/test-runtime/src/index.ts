@@ -13,7 +13,7 @@ export const system = defineSystem({
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
-    "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional() }) }),
+    "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional(), at: z.enum(["infinity", "nan", "negative"]).optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
     "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
     "probe.tick.hourly": message({ version: 1, description: "The hourly schedule ticked", payload: z.object({ at: z.number() }) }),
@@ -107,7 +107,8 @@ export class Probe extends DurableObject<Env> {
     "probe.timer.set": ({ payload }, ctx) => {
       // `label` is what the timer delivers (and fired() records); it defaults to the timer's key.
       const fired = { key: payload.label ?? payload.key };
-      ctx.after(payload.delayMs, "probe.timer.fired", fired, { key: payload.key });
+      if (payload.at) ctx.at({ infinity: Infinity, nan: NaN, negative: -1 }[payload.at], "probe.timer.fired", fired, { key: payload.key });
+      else ctx.after(payload.delayMs, "probe.timer.fired", fired, { key: payload.key });
       if (payload.fail) throw new Error("set then fail");
     },
     "probe.timer.cancel": ({ payload }, ctx) => {

@@ -398,8 +398,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const { ctx } = host;
   const env = host.env as Record<string, NamespaceLike>;
   const spec = system.actors[actorName] as ActorSpec | undefined as ActorSpec;
-  const schedules = spec.schedules ?? [];
   if (!spec) throw new Error(`actord: ${actorName} is not declared in system ${system.name}`);
+  const schedules = spec.schedules ?? [];
   const now = options.now ?? (() => Date.now());
   const maxAttempts = options.maxAttempts ?? 6;
   const parkAfterInterruptions = options.parkAfterInterruptions ?? 5;
@@ -553,6 +553,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const schedule = (dueAt: number, type: string, payload: unknown, timerKey: string) => {
       // A timer is a self-delivery from @timer, so the route @timer → type → this actor must exist.
       if (!system.routes.some((r) => r.from === "@timer" && r.message === type && r.to === actorName)) throw new Error(`${actorName} has no route @timer → ${type} → ${actorName}; declare it in system.ts`);
+      // The wake is set from the earliest timer, and Lifecycle refuses a time that isn't a finite number at or after 0.
+      if (!Number.isFinite(dueAt) || dueAt < 0) throw new Error(`${actorName} set timer ${timerKey} at an invalid time: ${String(dueAt)}; use epoch milliseconds, or a delay`);
       setTimer(sql, { key: timerKey, type, payload: JSON.stringify(payload), due_at: dueAt, causation_id: current.id, correlation_id: current.correlationId });
       notes.push({ kind: "timer.set", at: now(), actor: self, messageId: current.id, type, correlationId: current.correlationId, detail: { key: timerKey, dueAt } });
     };
