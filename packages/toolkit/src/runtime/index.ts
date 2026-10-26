@@ -687,6 +687,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       if (kept && fx?.idempotency !== "key") {
         // The start's own outcome is unknown, but the job's completion already arrived: that settles it.
         settleByMessage({ id: row.id, attempts: row.attempts + 1 }, JSON.parse(row.body) as JobBody, kept);
+      } else if (kept && row.interruptions + 1 >= parkAfterInterruptions) {
+        // About to be parked, but the job's completion is known: that outcome wins over a start in doubt.
+        settleByMessage({ id: row.id, attempts: row.attempts + 1 }, JSON.parse(row.body) as JobBody, kept);
       } else if (fx?.idempotency === "key" && row.interruptions + 1 >= parkAfterInterruptions) {
         // Interrupted again and again without ever settling: stop retrying, and say so honestly.
         const parked = `parked: interrupted ${row.interruptions + 1} times without settling`;

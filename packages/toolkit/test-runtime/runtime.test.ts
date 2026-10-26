@@ -92,6 +92,19 @@ it("[crash-loop-parked] a keyed effect interrupted 5 times is parked in doubt an
   for (let i = 0; i < 5; i++) { await abortAllDurableObjects(); await settle(env, system, { rounds: 2 }); }
   expect(await probe("park").outcomes()).toMatchObject([{ key: "park", status: "in_doubt", error: "parked: interrupted 5 times without settling" }]);
   expect(runs).toBe(5);
+  await abortAllDurableObjects(); // parked is final: another restart does not run it again
+  await settle(env, system, { rounds: 2 });
+  expect(runs).toBe(5);
+  expect(await probe("park").outcomes()).toMatchObject([{ key: "park", status: "in_doubt", error: "parked: interrupted 5 times without settling" }]);
+});
+
+it("[job-parked-with-early-outcome] a job start interrupted 5 times settles by the completion kept for it, not parked", async () => {
+  overrideEffect("gateway.job", { start: (_i, c) => (c.key === "jpe" ? new Promise(() => {}) : Promise.resolve({ runId: "other" })) });
+  await ingress(env, system, "Probe", "probe.job.start", { key: "jpe" }, { key: "jpe" });
+  await ingress(env, system, "Probe", "probe.job.done", { key: "jpe", ok: true }, { key: "jpe" });
+  for (let i = 0; i < 5; i++) { await abortAllDurableObjects(); await settle(env, system, { rounds: 2 }); }
+  expect(await probe("jpe").outcomes()).toMatchObject([{ key: "jpe", status: "confirmed" }]);
+  expect(await jobRow("jpe")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
 });
 
 it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the object's one alarm", async () => {
