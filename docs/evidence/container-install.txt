@@ -1,13 +1,13 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 8adfffd Room acceptance A10: the owner re-checked the topology fixes in the Desktop app
+== repository at d4103b5 One repository: plugins/claude, packages/toolkit, version 0.2.0 (decision 0014)
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
 Adding marketplace…✔ Successfully added marketplace: actord (declared in user settings)
 Installing plugin "actord@actord"...✔ Successfully installed plugin: actord@actord (scope: user)
 3 userConfig options not yet set — run /plugin configure actord@actord in Claude Code, or pass --config KEY=VALUE.
-actord@actord 0.1.0 enabled
-Actor-Native Cloudflare Toolkit (actord) 0.1.0
+actord@actord 0.2.0 enabled
+Actor-Native Cloudflare Toolkit (actord) 0.2.0
   Description: Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.
   Source: actord@actord
 
@@ -20,9 +20,9 @@ Component inventory
 
 Projected token cost
 == launcher and doctor (no project, no credentials)
-0.1.0
+0.2.0
 ✓ Node.js 24.22.1
-✓ @actord/toolkit 0.1.0 (plugin bundle)
+✓ @actord/toolkit 0.2.0 (plugin bundle)
 ✓ Claude Code 2.1.310 (the Room and plugin evals are available)
 · Cloudflare credentials not checked: actord never reads them; wrangler owns authentication and deploys
 · No actor project here (no system.ts with a package.json in this directory or above)

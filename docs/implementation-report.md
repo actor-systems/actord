@@ -6,7 +6,7 @@ Versions: Claude Code 2.1.310, Node 24.22.1, npm 11.19.1, wrangler 4.152.0, work
 
 ## Result at a glance
 
-`npm run verify` (2026-10-26T00:40:26.202Z): **55 pass · 0 fail · 0 blocked.** G0 through G7 passed.
+`npm run verify` (2026-10-26T01:01:50.068Z): **55 pass · 0 fail · 0 blocked.** G0 through G7 passed.
 
 Since the 51-check release candidate: a review from the Codex implementation of the same charter found
 unsafe payload classifications, now corrected (decision 0011); Codex consolidated its adapter onto this
@@ -153,7 +153,7 @@ as `failed` instead of `duplicate` when it raced the first copy into its transac
 ## `claude plugin details`
 
 ```
-Actor-Native Cloudflare Toolkit (actord) 0.1.0
+Actor-Native Cloudflare Toolkit (actord) 0.2.0
   Description: Design, build, test, inspect, and safely evolve small systems of communicating Durable Object actors on Cloudflare.
   Source: actord@actord
 
@@ -203,7 +203,7 @@ Per-component (rounded)
 
 ## Failing and blocked checks
 
-None: every check passes (`npm run verify`, 2026-10-26T00:40:26.202Z).
+None: every check passes (`npm run verify`, 2026-10-26T01:01:50.068Z).
 
 ## Limitations and unverified claims
 
