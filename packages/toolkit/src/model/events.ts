@@ -84,8 +84,8 @@ export interface TraceEffect {
   attempts: number;
   reason: string | null;
   result: TraceNode | null;
-  /** For a job effect that started: its handle, and what settled it (null while it waits). */
-  job?: { handle: unknown; settledBy: "message" | "probe" | "deadline" | "cancel" | null };
+  /** For a job effect that started: its handle, what settled it, and how long after starting (both null while it waits). */
+  job?: { handle: unknown; settledBy: "message" | "probe" | "deadline" | "cancel" | null; waitedMs: number | null };
 }
 
 export interface TraceNode {
@@ -178,7 +178,15 @@ export function buildTrace(log: EventLog, id: string): Trace {
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
         result: rid && !visited.has(rid) ? node(rid) : null,
-        ...(started ? { job: { handle: started.detail?.handle ?? null, settledBy: typeof settledBy === "string" ? (settledBy as NonNullable<NonNullable<TraceEffect["job"]>["settledBy"]>) : null } } : {}),
+        ...(started
+          ? {
+              job: {
+                handle: started.detail?.handle ?? null,
+                settledBy: typeof settledBy === "string" ? (settledBy as NonNullable<NonNullable<TraceEffect["job"]>["settledBy"]>) : null,
+                waitedMs: last && last.at >= started.at ? last.at - started.at : null,
+              },
+            }
+          : {}),
       });
     }
     const kids = [...(children.get(mid) ?? [])].filter((c) => !visited.has(c) && !resultIds.has(c));
@@ -204,6 +212,15 @@ export function buildTrace(log: EventLog, id: string): Trace {
     rootCauseUnknown,
     root,
   };
+}
+
+/** "340ms", "12s", "3m 25s", "2h 5m": how long a job waited, for the trace. */
+export function formatWait(ms: number): string {
+  if (ms < 1_000) return `${ms}ms`;
+  const s = Math.round(ms / 1_000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 export function renderTrace(t: Trace, source: string): string {
@@ -232,7 +249,10 @@ export function renderTrace(t: Trace, source: string): string {
         const e = it.e;
         const mark = e.outcome === "confirmed" ? "✓" : ["pending", "awaiting_approval", "awaiting_job", "cancelling"].includes(e.outcome) ? "…" : "✗";
         lines.push(`${inner}${isLast ? "└─ " : "├─ "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
-        if (e.job) lines.push(`${inner}${isLast ? "   " : "│  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}` : "not settled yet"}`);
+        if (e.job) {
+          const waited = e.job.waitedMs !== null ? ` after ${formatWait(e.job.waitedMs)}` : "";
+          lines.push(`${inner}${isLast ? "   " : "│  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}${waited}` : "not settled yet"}`);
+        }
         if (e.result) walk(e.result, inner + (isLast ? "   " : "│  "), true, false);
       }
     });

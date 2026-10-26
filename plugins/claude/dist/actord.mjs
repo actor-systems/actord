@@ -510,7 +510,13 @@ function buildTrace(log, id2) {
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
         result: rid && !visited.has(rid) ? node(rid) : null,
-        ...started ? { job: { handle: started.detail?.handle ?? null, settledBy: typeof settledBy === "string" ? settledBy : null } } : {}
+        ...started ? {
+          job: {
+            handle: started.detail?.handle ?? null,
+            settledBy: typeof settledBy === "string" ? settledBy : null,
+            waitedMs: last && last.at >= started.at ? last.at - started.at : null
+          }
+        } : {}
       });
     }
     const kids = [...children.get(mid) ?? []].filter((c) => !visited.has(c) && !resultIds.has(c));
@@ -536,6 +542,13 @@ function buildTrace(log, id2) {
     rootCauseUnknown,
     root
   };
+}
+function formatWait(ms) {
+  if (ms < 1e3) return `${ms}ms`;
+  const s = Math.round(ms / 1e3);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 function renderTrace(t, source) {
   if (!t.found || !t.root) {
@@ -564,7 +577,10 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
         const e = it.e;
         const mark = e.outcome === "confirmed" ? "\u2713" : ["pending", "awaiting_approval", "awaiting_job", "cancelling"].includes(e.outcome) ? "\u2026" : "\u2717";
         lines.push(`${inner}${isLast ? "\u2514\u2500 " : "\u251C\u2500 "}effect ${e.effect} [${e.key}]  ${mark} ${e.outcome}${e.attempts > 1 ? ` after ${e.attempts} attempts` : ""}${e.reason ? `: ${e.reason}` : ""}`);
-        if (e.job) lines.push(`${inner}${isLast ? "   " : "\u2502  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}` : "not settled yet"}`);
+        if (e.job) {
+          const waited = e.job.waitedMs !== null ? ` after ${formatWait(e.job.waitedMs)}` : "";
+          lines.push(`${inner}${isLast ? "   " : "\u2502  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}${waited}` : "not settled yet"}`);
+        }
         if (e.result) walk(e.result, inner + (isLast ? "   " : "\u2502  "), true, false);
       }
     });

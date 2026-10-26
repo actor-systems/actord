@@ -568,3 +568,129 @@ it("[job-probe-in-flight] a look that comes due while a probe still runs books t
   expect((await jobRow("jpf"))!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
   await settle(env, system); // let the hung probe reach its timeout
 });
+
+it("[job-cancel-during-probe] a cancel asked for while a probe runs is still issued", async () => {
+  overrideEffectBudget("gateway.job", { timeoutMs: 150 });
+  let cancels = 0;
+  overrideEffect("gateway.job", { start: async () => ({ runId: "cp" }), probe: () => new Promise(() => {}), cancel: async () => { cancels++; return true; } });
+  await startJob("jcp");
+  await settle(env, system);
+  await probeDue("jcp");
+  await settle(env, system, { rounds: 1 }); // the probe starts, and hangs
+  await cancelJob("jcp");
+  await settle(env, system);
+  expect(cancels).toBe(1);
+  expect(await probe("jcp").outcomes()).toMatchObject([{ key: "jcp", status: "failed", error: "cancelled" }]);
+});
+
+/** Hold a failed attempt's retry back until settle() releases it: the real alarm would otherwise retry in 40 ms. */
+const holdRetries = () => {
+  (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs = 3_600_000;
+  return () => void delete (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs;
+};
+const resultRows = (key: string) =>
+  runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE kind = 'message' AND body LIKE '%probe.outcome%'").one().n);
+
+it("[job-early-completion] a completion that arrives while the start waits to be retried settles the job once it starts", async () => {
+  const release = holdRetries();
+  try {
+    let starts = 0;
+    let probes = 0;
+    overrideEffect("gateway.job", {
+      start: async () => {
+        if (++starts === 1) throw new Error("acknowledgment lost");
+        return { runId: "early" };
+      },
+      probe: async () => {
+        probes++;
+        return { done: false };
+      },
+    });
+    await startJob("je");
+    await settle(env, system, { deliver: false }); // the first start fails; the key makes a retry safe, later
+    expect(await jobRow("je")).toMatchObject({ status: "pending" });
+    await jobDone("je");
+    await jobDone("je", false); // a second completion: the first one recorded wins
+    expect(await probe("je").settled()).toEqual([{ key: "je", ok: true }, { key: "je", ok: false }]);
+    expect(await probe("je").outcomes()).toEqual([]);
+    await settle(env, system); // the retried start succeeds, and the recorded completion settles the job at once
+    expect(starts).toBe(2);
+    expect(probes).toBe(0);
+    expect(await probe("je").outcomes()).toMatchObject([{ key: "je", status: "confirmed" }]);
+    expect(await jobRow("je")).toMatchObject({ status: "confirmed", body: { settledBy: "message", handle: { runId: "early" }, outcome: { finished: true } } });
+    expect(await resultRows("je")).toBe(1);
+  } finally {
+    release();
+  }
+});
+
+it("[job-early-completion-wins] a completion recorded while the start runs wins over that start failing, or being retried", async () => {
+  const release = holdRetries();
+  try {
+    let openA!: () => void;
+    let openB!: () => void;
+    const gateA = new Promise<void>((r) => (openA = r));
+    const gateB = new Promise<void>((r) => (openB = r));
+    let startsB = 0;
+    overrideEffect("gateway.job", {
+      start: async (input, c) => {
+        if ((input as { key: string }).key === "jea") {
+          await gateA;
+          throw new EffectRejected("refused after all");
+        }
+        if (++startsB === 1) {
+          c.reportUsage({ inputTokens: 4 }); // so the retry rewrites the row body
+          await gateB;
+          throw new Error("acknowledgment lost");
+        }
+        return { runId: "b" };
+      },
+    });
+    await startJob("jea");
+    await startJob("jeb");
+    await jobDone("jea");
+    await jobDone("jeb");
+    expect(await probe("jea").settled()).toEqual([{ key: "jea", ok: true }]);
+    expect(await probe("jeb").settled()).toEqual([{ key: "jeb", ok: true }]);
+    openA();
+    openB();
+    await settle(env, system);
+    // A: the start was refused, but the completion message is direct evidence the work ran.
+    expect(await probe("jea").outcomes()).toMatchObject([{ key: "jea", status: "confirmed" }]);
+    expect(await jobRow("jea")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
+    // B: the recorded completion survived the retry and settled the job when the second start succeeded.
+    expect(startsB).toBe(2);
+    expect(await probe("jeb").outcomes()).toMatchObject([{ key: "jeb", status: "confirmed", usage: { inputTokens: 4 } }]);
+    expect(await resultRows("jeb")).toBe(1);
+  } finally {
+    release();
+  }
+});
+
+it("[job-settle-while-cancelling] a completion that arrives while a cancel is pending settles the job, and the cancel's answer is dropped", async () => {
+  let answer!: (confirmed: boolean) => void;
+  overrideEffect("gateway.job", { start: async () => ({ runId: "sc" }), cancel: () => new Promise<boolean>((r) => (answer = r)) });
+  await startJob("jsc");
+  await settle(env, system);
+  await cancelJob("jsc");
+  await jobDone("jsc");
+  expect(await probe("jsc").settled()).toEqual([{ key: "jsc", ok: true }]);
+  answer(true);
+  await settle(env, system);
+  expect(await probe("jsc").outcomes()).toMatchObject([{ key: "jsc", status: "confirmed" }]);
+  expect(await jobRow("jsc")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
+  expect(await resultRows("jsc")).toBe(1);
+});
+
+it("[job-early-completion-orphan] an unkeyed start cut off by a restart settles by the completion kept for it, not in doubt", async () => {
+  let starts = 0;
+  overrideEffect("gateway.job-plain", { start: () => { starts++; return new Promise(() => {}); } }); // hangs until the crash below
+  await send("jeo", "gateway.job-plain");
+  await ingress(env, system, "Probe", "probe.job.done", { key: "jeo", ok: true, effect: "gateway.job-plain" }, { key: "jeo" });
+  expect(await probe("jeo").settled()).toEqual([{ key: "jeo", ok: true }]);
+  await abortAllDurableObjects();
+  await settle(env, system); // the new instance recovers the orphaned start
+  expect(starts).toBe(1);
+  expect(await probe("jeo").outcomes()).toMatchObject([{ key: "jeo", status: "confirmed" }]);
+  expect(await jobRow("jeo", "gateway.job-plain")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
+});

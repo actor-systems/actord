@@ -19,7 +19,7 @@ export const system = defineSystem({
     "probe.tick.hourly": message({ version: 1, description: "The hourly schedule ticked", payload: z.object({ at: z.number() }) }),
     "probe.tick.daily": message({ version: 1, description: "The daily schedule ticked", payload: z.object({ at: z.number() }) }),
     "probe.job.start": message({ version: 1, description: "Start a job", payload: z.object({ key: z.string() }) }),
-    "probe.job.done": message({ version: 1, description: "A job reports it finished", payload: z.object({ key: z.string(), ok: z.boolean() }) }),
+    "probe.job.done": message({ version: 1, description: "A job reports it finished", payload: z.object({ key: z.string(), ok: z.boolean(), effect: z.enum(["gateway.job", "gateway.job-plain"]).optional() }) }),
     "probe.job.cancel": message({ version: 1, description: "Cancel a job", payload: z.object({ key: z.string() }) }),
   },
   actors: {
@@ -118,13 +118,13 @@ export class Probe extends DurableObject<Env> {
     },
     "probe.job.done": ({ payload }, ctx) => {
       // Record what settleJob answered, not what the message claimed: false means the job was already settled.
-      const settled = ctx.settleJob("gateway.job", payload.key, payload.ok ? { status: "confirmed", value: { finished: true } } : { status: "failed", error: "the job reported failure" });
+      const settled = ctx.settleJob(payload.effect ?? "gateway.job", payload.key, payload.ok ? { status: "confirmed", value: { finished: true } } : { status: "failed", error: "the job reported failure" });
       ctx.sql.exec("INSERT INTO settled (key, ok) VALUES (?, ?)", payload.key, settled ? 1 : 0);
     },
     "probe.job.cancel": ({ payload }, ctx) => {
       ctx.cancelJob("gateway.job", payload.key);
     },
-  }, { backoffMs: () => 40 });
+  }, { backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40 }); // a test can hold a retry back
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);

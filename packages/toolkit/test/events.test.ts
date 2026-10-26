@@ -81,16 +81,17 @@ describe("actord trace", () => {
       ev({ kind: "received", messageId: "m-start", ...msg }),
       ev({ kind: "handled", messageId: "m-start", ...msg }),
       ev({ kind: "effect.requested", ...fx }),
-      ev({ kind: "job.started", ...fx, attempt: 1, detail: { handle: { runId: "r-1" }, deadlineAt: 2, nextAt: 2 } }),
+      ev({ kind: "job.started", ...fx, at: 1_000, attempt: 1, detail: { handle: { runId: "r-1" }, deadlineAt: 7_201_000, nextAt: 61_000 } }),
     ];
     const waiting = join(tmp, "job-waiting.ndjson");
     writeFileSync(waiting, `${started.join("\n")}\n`);
-    expect(JSON.parse(run("trace", "m-start", "--file", waiting, "--json").out).root.effects).toMatchObject([{ effect: "gateway.job", outcome: "awaiting_job", job: { handle: { runId: "r-1" }, settledBy: null } }]);
+    expect(JSON.parse(run("trace", "m-start", "--file", waiting, "--json").out).root.effects).toMatchObject([{ effect: "gateway.job", outcome: "awaiting_job", job: { handle: { runId: "r-1" }, settledBy: null, waitedMs: null } }]);
     expect(run("trace", "m-start", "--file", waiting).out).toContain('job {"runId":"r-1"} not settled yet');
     const settled = join(tmp, "job-settled.ndjson");
-    writeFileSync(settled, `${[...started, ev({ kind: "effect.confirmed", ...fx, attempt: 1, detail: { settledBy: "message" } })].join("\n")}\n`);
-    expect(JSON.parse(run("trace", "m-start", "--file", settled, "--json").out).root.effects).toMatchObject([{ outcome: "confirmed", job: { handle: { runId: "r-1" }, settledBy: "message" } }]);
-    expect(run("trace", "m-start", "--file", settled).out).toContain('job {"runId":"r-1"} settled by message');
+    // Settled 3m 25s after it started.
+    writeFileSync(settled, `${[...started, ev({ kind: "effect.confirmed", ...fx, at: 206_000, attempt: 1, detail: { settledBy: "message" } })].join("\n")}\n`);
+    expect(JSON.parse(run("trace", "m-start", "--file", settled, "--json").out).root.effects).toMatchObject([{ outcome: "confirmed", job: { handle: { runId: "r-1" }, settledBy: "message", waitedMs: 205_000 } }]);
+    expect(run("trace", "m-start", "--file", settled).out).toContain('job {"runId":"r-1"} settled by message after 3m 25s');
   });
 
   it("marks a dead-lettered message as retry.exhausted", () => {

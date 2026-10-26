@@ -3,6 +3,8 @@
 // its deadline (in_doubt) or a cancel reported honestly. A job stays one outbox row:
 //   pending → running (start) → awaiting_job (handle stored) → confirmed | failed | in_doubt
 //                                awaiting_job → cancelling (cancelJob) → failed "cancelled" | in_doubt
+// A completion message that arrives before the row is waiting is kept on it (body.earlyOutcome) and
+// settles the job as soon as its start attempt finishes, whatever that attempt's own result.
 // The row's next_at is when actord must look at it next: the nearer of its next probe and its deadline.
 import type { Duration, EffectSpec } from "../system.ts";
 import { durationMs } from "../system.ts";
@@ -22,6 +24,9 @@ export type JobProbe<O = unknown> = { done: false } | { done: true; status: "con
 /** What settled a job, recorded on the row body and on the settling event. */
 export type SettledBy = "message" | "probe" | "deadline" | "cancel";
 
+/** The outcome a completion message reports, as passed to ctx.settleJob. */
+export type CompletionOutcome = { status: "confirmed"; value?: unknown } | { status: "failed"; error: string };
+
 /** The outbox row body of an effect request, with the fields a job adds once it has started. */
 export interface JobBody {
   name: string;
@@ -33,6 +38,8 @@ export interface JobBody {
   handle?: unknown;
   deadlineAt?: number;
   settledBy?: SettledBy;
+  /** A completion that arrived before the job was waiting; the first one recorded wins. */
+  earlyOutcome?: CompletionOutcome;
 }
 
 export interface JobRow {
@@ -40,6 +47,9 @@ export interface JobRow {
   attempts: number;
   body: JobBody;
 }
+
+/** Statuses of a job row whose start hasn't yet returned a handle: a completion for it is kept for later. */
+export const NOT_STARTED = new Set(["pending", "running", "awaiting_approval"]);
 
 /** A job's deadline and probe period in milliseconds; deadline is null when it is missing or doesn't parse. */
 export function jobTiming(fx: Pick<EffectSpec, "deadline" | "probe">): { deadlineMs: number | null; everyMs: number | null } {
@@ -62,6 +72,25 @@ export function awaitJob(sql: SqlStorageLike, id: string, attempts: number, body
 export function awaitingJob(sql: SqlStorageLike, id: string): JobRow | null {
   const r = sql.exec<{ id: string; attempts: number; body: string }>("SELECT id, attempts, body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_job'", id).toArray()[0];
   return r ? parse(r) : null;
+}
+
+/** The job row under `id` in any status, or null when there is none. */
+export function jobRowAt(sql: SqlStorageLike, id: string): (JobRow & { status: string }) | null {
+  const r = sql.exec<{ id: string; attempts: number; body: string; status: string }>("SELECT id, attempts, body, status FROM _actors_outbox WHERE id = ? AND kind = 'effect'", id).toArray()[0];
+  return r ? { ...parse(r), status: r.status } : null;
+}
+
+/** The completion recorded on a row before its job was waiting, read fresh: a handler may have written it mid-attempt. */
+export function earlyOutcome(sql: SqlStorageLike, id: string): CompletionOutcome | undefined {
+  return jobRowAt(sql, id)?.body.earlyOutcome;
+}
+
+/** Keep a completion on a row whose start hasn't returned. False if one is already kept (the first wins). */
+export function recordEarlyOutcome(sql: SqlStorageLike, id: string, outcome: CompletionOutcome): boolean {
+  const row = jobRowAt(sql, id);
+  if (!row || row.body.earlyOutcome) return false;
+  sql.exec("UPDATE _actors_outbox SET body = ? WHERE id = ?", JSON.stringify({ ...row.body, earlyOutcome: outcome }), id);
+  return true;
 }
 
 /** Waiting jobs due a look: a probe, or a deadline that has passed. */

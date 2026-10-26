@@ -40,6 +40,7 @@ import type { Lifecycle } from "agents/lifecycle";
 import { ActordCapability } from "./capability.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "./schedules.ts";
 import {
+  type CompletionOutcome,
   type JobAdapter,
   type JobBody,
   type JobProbe,
@@ -51,9 +52,13 @@ import {
   cancellingJobs,
   dueJobs,
   earliestJob,
+  earlyOutcome,
+  jobRowAt,
   jobTiming,
   markCancelling,
+  NOT_STARTED,
   nextLookAt,
+  recordEarlyOutcome,
   rescheduleJob,
 } from "./jobs.ts";
 export type { JobAdapter, JobProbe } from "./jobs.ts";
@@ -255,10 +260,12 @@ export interface HandlerContext<S extends AnySystem, A extends ActorName<S>> {
   /** Cancel a pending timer. False if none is pending under that key. */
   cancelTimer(key: string): boolean;
   /**
-   * Settle a job effect that is waiting for its work to finish, as part of this handler's transaction: its
-   * result message is queued, and nothing changes if the handler throws. Call it from the handler of the
-   * effect's `completes` message. False, and nothing changes, unless the job is waiting (already settled,
-   * past its deadline, being cancelled, or not yet started).
+   * Settle a job effect with the outcome its completion message reports, as part of this handler's
+   * transaction (nothing changes if the handler throws). Call it from the handler of the effect's
+   * `completes` message. A waiting job, or one being cancelled, settles now and its result message is
+   * queued. A job whose start hasn't returned yet keeps the outcome and settles with it as soon as the start
+   * attempt finishes, whatever that attempt's result. False, and nothing changes, when the job is already
+   * settled (including past its deadline), already has a kept outcome, or there is no such job.
    */
   settleJob(name: EffectsOf<S, A>, key: string, outcome: { status: "confirmed"; value?: unknown } | { status: "failed"; error: string }): boolean;
   /**
@@ -575,12 +582,18 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       settleJob(name, effectKey, outcome) {
         const status = (outcome as { status?: unknown } | undefined)?.status;
         if (status !== "confirmed" && status !== "failed") throw new Error(`${actorName} settled job ${name as string} with status ${String(status)}; use "confirmed" or "failed"`);
-        const row = awaitingJob(sql, `fx:${name as string}:${effectKey}`);
+        if (system.effects?.[name as string]?.kind !== "job") return false;
+        const row = jobRowAt(sql, `fx:${name as string}:${effectKey}`);
         if (!row) return false;
         // Inside the transaction: the events wait for the commit, like the handler's own.
         const defer = (e: Omit<ActorEvent, "$actord">) => void notes.push(e);
-        if (outcome.status === "confirmed") finishEffect(row, row.body, "confirmed", outcome.value, null, { settledBy: "message" }, defer);
-        else finishEffect(row, row.body, "failed", null, outcome.error, { settledBy: "message" }, defer);
+        // The completion is direct evidence the work ran, so it wins over a cancel still waiting for its answer.
+        if (row.status === "awaiting_job" || row.status === "cancelling") {
+          settleByMessage(row, row.body, outcome, defer);
+          return true;
+        }
+        if (!NOT_STARTED.has(row.status) || !recordEarlyOutcome(sql, row.id, outcome)) return false;
+        notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: row.body.name, effectKey, reason: "completion kept: the job settles with it when its start returns" });
         return true;
       },
       cancelJob(name, effectKey) {
@@ -659,7 +672,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       const req = JSON.parse(row.body) as { name: string; key: string; causationId: string; correlationId: string };
       const fx = system.effects?.[req.name];
       const reason = "interrupted: the actor restarted while the attempt was in flight";
-      if (fx?.idempotency === "key") {
+      const kept = fx?.kind === "job" ? earlyOutcome(sql, row.id) : undefined;
+      if (kept && fx?.idempotency !== "key") {
+        // The start's own outcome is unknown, but the job's completion already arrived: that settles it.
+        settleByMessage({ id: row.id, attempts: row.attempts + 1 }, JSON.parse(row.body) as JobBody, kept);
+      } else if (fx?.idempotency === "key") {
         sql.exec("UPDATE _actors_outbox SET status = 'pending', attempts = ?, next_at = ?, last_error = ? WHERE id = ?", row.attempts + 1, now(), reason, row.id);
         emit({ kind: "retry.scheduled", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, attempt: row.attempts + 2, reason });
       } else {
@@ -746,6 +763,12 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (result) enqueueResult(result, row.id, req, { key: req.key, status, ...(status === "confirmed" ? { value } : { error: error ?? "" }), ...usage }, out);
   }
 
+  /** Settle a job with the outcome its completion message reported. */
+  function settleByMessage(row: { id: string; attempts: number }, req: JobBody, outcome: CompletionOutcome, out: (e: Omit<ActorEvent, "$actord">) => void = emit): void {
+    if (outcome.status === "confirmed") finishEffect(row, req, "confirmed", outcome.value, null, { settledBy: "message" }, out);
+    else finishEffect(row, req, "failed", null, outcome.error, { settledBy: "message" }, out);
+  }
+
   async function runEffect(row: { id: string; target: string; body: string; attempts: number }): Promise<void> {
     const req = JSON.parse(row.body) as JobBody & { approved?: boolean };
     const fx = system.effects?.[req.name];
@@ -764,9 +787,14 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const reportUsage = (u: EffectUsage) => {
       if (attemptOpen) addUsage(usage, u);
     };
+    // A job's completion message may arrive while this attempt runs; it is kept on the row, so read it fresh.
+    const kept = () => (job ? earlyOutcome(sql, row.id) : undefined);
     const finish = (status: "confirmed" | "failed" | "in_doubt", value: unknown, error: string | null) => {
       attemptOpen = false;
-      finishEffect({ id: row.id, attempts: attempt }, { ...req, usage }, status, value, error);
+      const outcome = kept();
+      // A kept completion is direct evidence the work ran: it wins over the start's own failure or doubt.
+      if (outcome) settleByMessage({ id: row.id, attempts: attempt }, { ...req, usage, earlyOutcome: outcome }, outcome);
+      else finishEffect({ id: row.id, attempts: attempt }, { ...req, usage }, status, value, error);
     };
     if (!adapter) {
       finish("failed", null, `no adapter registered for effect ${req.name}`);
@@ -791,7 +819,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       const value = await Promise.race([begin.call(adapter, req.input, { key: req.key, attempt, signal: controller.signal, reportUsage }), aborted(controller.signal)]);
       if (timing) {
         attemptOpen = false;
-        jobStarted(row.id, attempt, { ...req, usage }, value, timing.deadlineMs!, timing.everyMs);
+        jobStarted(row.id, attempt, { ...req, usage, earlyOutcome: kept() }, value, timing.deadlineMs!, timing.everyMs);
       } else finish("confirmed", value, null);
     } catch (err) {
       const e = err as { message?: string; notDelivered?: boolean; rejected?: boolean };
@@ -804,7 +832,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           else finish("in_doubt", null, error);
         } else {
           attemptOpen = false;
-          if (hasUsage(usage)) sql.exec("UPDATE _actors_outbox SET body = ? WHERE id = ?", JSON.stringify(withUsage(req, usage)), row.id);
+          if (hasUsage(usage)) sql.exec("UPDATE _actors_outbox SET body = ? WHERE id = ?", JSON.stringify({ ...withUsage(req, usage), earlyOutcome: kept() }), row.id);
           retryOrExhaust(row, error, base, false, budgetAttempts);
         }
       } else if (!job && fx?.reconcile && (adapter as EffectAdapter).reconcile) {
@@ -820,12 +848,22 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     }
   }
 
-  /** running → awaiting_job: store the handle and the deadline, and book the first look (a probe or the deadline). */
+  /**
+   * running → awaiting_job: store the handle and the deadline, and book the first look (a probe or the
+   * deadline). A completion kept while the start ran settles the job at once instead, with no look.
+   */
   function jobStarted(id: string, attempts: number, req: JobBody, handle: unknown, deadlineMs: number, everyMs: number | null): void {
     const deadlineAt = now() + deadlineMs;
     const nextAt = nextLookAt(now(), everyMs, deadlineAt);
+    const started = (detail: Record<string, unknown>) =>
+      emit({ kind: "job.started", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, attempt: attempts, detail: { handle, ...detail } });
+    if (req.earlyOutcome) {
+      started({});
+      settleByMessage({ id, attempts }, { ...req, handle }, req.earlyOutcome);
+      return;
+    }
     if (!awaitJob(sql, id, attempts, { ...withUsage(req, req.usage), handle, deadlineAt }, nextAt)) return;
-    emit({ kind: "job.started", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, attempt: attempts, detail: { handle, deadlineAt, nextAt } });
+    started({ deadlineAt, nextAt });
   }
 
   /**
@@ -837,7 +875,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const { everyMs } = jobTiming(system.effects?.[job.body.name] ?? {});
     const deadlineAt = job.body.deadlineAt ?? now();
     rescheduleJob(sql, job.id, nextLookAt(now(), everyMs, deadlineAt), job.body);
-    if (everyMs === null || inflight.has(job.id)) return; // no probe declared (the next look is the deadline), or one is running
+    // A probe is keyed apart from the row's id, which a cancel requested meanwhile uses: the cancel must still start.
+    const probeKey = `probe:${job.id}`;
+    if (everyMs === null || inflight.has(probeKey)) return; // no probe declared (the next look is the deadline), or one is running
     const adapter = adapterFor(job.body.name) as JobAdapter | undefined;
     const { timeoutMs } = resolveBudget(job.body.name);
     const controller = new AbortController();
@@ -863,10 +903,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     })()
       .catch((err) => emit({ kind: "note", at: now(), actor: self, effect: job.body.name, effectKey: job.body.key, reason: `probe runner failed: ${messageOf(err)}` }))
       .finally(() => {
-        inflight.delete(job.id);
+        inflight.delete(probeKey);
         drain().catch((err) => emit({ kind: "note", at: now(), actor: self, reason: `drain after probe failed: ${String(err)}` }));
       });
-    inflight.set(job.id, run);
+    inflight.set(probeKey, run);
     ctx.waitUntil?.(run);
   }
 

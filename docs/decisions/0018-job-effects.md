@@ -16,12 +16,15 @@ started quickly, remembered durably, and settled later, by whichever of several 
    `start(input)`, which returns a JSON handle quickly, and optionally `probe(handle)` and `cancel(handle)`.
 2. **The row's lifecycle:** `pending → running` (start) → `awaiting_job`, with `body.handle` and
    `body.deadlineAt` stored, then settled once as `confirmed`, `failed` or `in_doubt`. A start that fails
-   follows the call rules: retried with an idempotency key, in doubt without one.
+   follows the call rules: retried with an idempotency key, in doubt without one, unless a completion was
+   already kept for it (decision 5).
 3. **Four ways to settle, one result path.** Each records `body.settledBy` and goes through the same
    `finishEffect` → `enqueueResult` path as a call, so the actor receives exactly one result message with the
    usual payload (`key`, `status`, `value` or `error`, `usage`):
    - **its completion message:** the handler of the message named by `completes: { message }` calls
-     `ctx.settleJob(effect, key, outcome)`, inside that message's transaction;
+     `ctx.settleJob(effect, key, outcome)`, inside that message's transaction. A completion is direct evidence
+     the work ran, so it also settles a job that is being cancelled, and one whose start hasn't returned yet
+     (decision 5);
    - **its probe:** `probe: { every }` books a look every period; `probe(handle)` runs in the background, like
      an effect attempt, bounded by the effect's timeout, and `done` settles the job;
    - **its deadline:** `deadline` is required; once it passes, the job is `in_doubt` with "deadline passed";
@@ -34,9 +37,19 @@ started quickly, remembered durably, and settled later, by whichever of several 
    impossible to serialize into the manifest, so `check`, `diff` and the graph couldn't see it. The handler does
    that matching in ordinary code; `completes: { message }` only names the message, so `actord check` can
    require a route that delivers it to every actor that requests the job (`JOB_COMPLETES_ROUTE_MISSING`).
-5. **`settleJob` and `cancelJob` act only on a waiting job.** Anything else (already settled, past its
-   deadline, being cancelled, not yet started) returns `false` and changes nothing. A completion that arrives
-   late is therefore visible to the handler and never produces a second result.
+5. **`settleJob` returns `false` only when the job is already settled, or there is no such job** (refined in
+   review: the plan's narrower rule lost real outcomes). It returns `true` in every other case:
+   - **waiting** (`awaiting_job`) **or being cancelled** (`cancelling`): the job settles now, with the reported
+     outcome, and a cancel's later answer is dropped;
+   - **not started yet** (`pending`, `running`, `awaiting_approval`; for example a keyed start whose
+     acknowledgment was lost, waiting out its backoff): the outcome is kept on the row (`body.earlyOutcome`, in
+     the handler's transaction). When the start attempt finishes, the job settles with it at once, with
+     `settledBy: "message"` and no probe. That holds whatever the attempt's own result: if `start` fails, ends in
+     doubt, or is cut off by a restart, the kept outcome still wins;
+   - **a second completion** while one is already kept returns `false`: the first one kept wins.
+
+   A completion that arrives after the job settled (after its deadline, say) is visible to the handler as
+   `false` and never produces a second result. `cancelJob` acts only on a waiting job.
 6. **A waiting job has nothing in flight, so it isn't an orphan.** A restart neither starts it again nor loses
    it. A probe in flight when the instance stops is simply tried again at the next booked look, since its
    next look is booked before it runs. A `cancelling` row found at startup asks for the cancel again.
@@ -54,7 +67,8 @@ started quickly, remembered durably, and settled later, by whichever of several 
 | The deadline passed first | `in_doubt`, "deadline passed" | `deadline` |
 | A cancel was confirmed | `failed`, "cancelled" | `cancel` |
 | A cancel wasn't confirmed (false, a throw, a timeout, no `cancel`) | `in_doubt`, "cancel not confirmed" | `cancel` |
-| `start` failed | the call rules: retried with a key, else `in_doubt` | none |
+| A completion arrived before the start returned | as reported, as soon as the start attempt finishes | `message` |
+| `start` failed, and no completion arrived | the call rules: retried with a key, else `in_doubt` | none |
 
 ## Rejected alternatives
 - **A declarative matcher on the effect** (`completes: { message, match: (payload) => ... }`). It isn't
@@ -65,9 +79,9 @@ started quickly, remembered durably, and settled later, by whichever of several 
   second table would need a second copy of each.
 
 ## Consequences
-- `trace` shows a job's handle and what settled it (`job <handle> settled by <how>`).
+- `trace` shows a job's handle, what settled it, and how long it waited after starting
+  (`job <handle> settled by <how> after <wait>`).
 - `@actord/toolkit/testing` gains `expireJobs()`, and `settle()` also waits for probes and cancels in flight.
   `settle()` doesn't make probes or deadlines due: a test does that itself, or calls `expireJobs()`.
-- Not guaranteed: a completion message that arrives before `start` has returned finds the job not yet waiting,
-  so `settleJob` returns `false`; the probe or the deadline settles it instead. Usage a probe reports after its
-  job has settled is dropped.
+- Not guaranteed: usage a probe reports after its job has settled is dropped. A job denied while it waits for
+  approval stays denied, even if a completion was kept for it.
