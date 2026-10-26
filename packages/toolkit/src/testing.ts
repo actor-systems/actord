@@ -9,6 +9,7 @@ interface Seams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter>;
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  effectBudgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   runtimes: Map<string, ActorRuntime>;
   names: Map<string, string>;
 }
@@ -45,10 +46,16 @@ export function overrideBudget(actor: string, budget: { maxAttempts?: number; ti
   seams().budgets = { ...seams().budgets, [actor]: budget };
 }
 
+/** Override one effect's budget for a test; it wins over the effect's own and its actor's. */
+export function overrideEffectBudget(effect: string, budget: { maxAttempts?: number; timeoutMs?: number }): void {
+  seams().effectBudgets = { ...seams().effectBudgets, [effect]: budget };
+}
+
 export function resetSeams(): void {
   seams().faults = [];
   seams().effects = {};
   seams().budgets = {};
+  seams().effectBudgets = {};
 }
 
 type Env = Record<string, { get(id: unknown): unknown; getByName(name: string): unknown }>;

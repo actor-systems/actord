@@ -162,8 +162,18 @@ export class EffectRejected extends Error {
   readonly rejected = true;
 }
 
+/** What an attempt consumed. Every field is optional; reports are summed field by field. */
+export interface EffectUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  containerSeconds?: number;
+}
+
+const USAGE_FIELDS = ["inputTokens", "outputTokens", "costUsd", "containerSeconds"] as const;
+
 export interface EffectAdapter<I = unknown, O = unknown> {
-  run(input: I, ctx: { key: string; attempt: number; signal: AbortSignal }): Promise<O>;
+  run(input: I, ctx: { key: string; attempt: number; signal: AbortSignal; reportUsage(usage: EffectUsage): void }): Promise<O>;
   /** Look up the outcome of an unacknowledged attempt; return undefined when it can't be determined. */
   reconcile?(key: string): Promise<{ delivered: true; value: O } | { delivered: false } | undefined>;
 }
@@ -248,6 +258,7 @@ interface TestSeams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter>;
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  effectBudgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   /** Each instance's runtime by ctx.id.toString(), so test helpers can drive it without the alarm. */
   runtimes?: Map<string, ActorRuntime>;
   /** Each instance's name by ctx.id.toString(): listDurableObjectIds returns ids without names, and a Lifecycle object can't start without one. */
@@ -623,8 +634,17 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     }
   }
 
+  /** An effect's bounds, narrowest first: the test override for the effect, the effect, the test override for the actor, the actor, the defaults. */
+  function resolveBudget(effect: string): { timeoutMs: number; maxAttempts: number } {
+    const layers = [seams()?.effectBudgets?.[effect], system.effects?.[effect]?.budget, seams()?.budgets?.[actorName], spec.budget];
+    return {
+      timeoutMs: layers.find((l) => l?.timeoutMs !== undefined)?.timeoutMs ?? 30_000,
+      maxAttempts: layers.find((l) => l?.maxAttempts !== undefined)?.maxAttempts ?? maxAttempts,
+    };
+  }
+
   async function runEffect(row: { id: string; target: string; body: string; attempts: number }): Promise<void> {
-    const req = JSON.parse(row.body) as { name: string; key: string; input: unknown; causationId: string; correlationId: string; approved?: boolean };
+    const req = JSON.parse(row.body) as { name: string; key: string; input: unknown; causationId: string; correlationId: string; approved?: boolean; usage?: EffectUsage };
     const fx = system.effects?.[req.name];
     const base = { effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId };
     if (fx?.approval === "human" && !req.approved) {
@@ -634,23 +654,30 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     }
     const adapter = seams()?.effects[req.name] ?? (options.effects as Record<string, EffectAdapter> | undefined)?.[req.name];
     const attempt = row.attempts + 1;
+    // Usage accumulates on the row body so it survives retries; reports after the attempt ends are dropped.
+    const usage: EffectUsage = { ...req.usage };
+    let attemptOpen = true;
+    const reportUsage = (u: EffectUsage) => {
+      if (!attemptOpen) return;
+      for (const f of USAGE_FIELDS) if (typeof u[f] === "number") usage[f] = (usage[f] ?? 0) + u[f];
+    };
+    const withUsage = () => (USAGE_FIELDS.some((f) => usage[f] !== undefined) ? { usage: { ...usage } } : {});
     const finish = (status: "confirmed" | "failed" | "in_doubt", value: unknown, error: string | null, kind: EventKind) => {
-      sql.exec("UPDATE _actors_outbox SET status = ?, attempts = ?, last_error = ?, body = ? WHERE id = ?", status, attempt, error, JSON.stringify({ ...req, outcome: value }), row.id);
-      emit({ kind, at: now(), actor: self, ...base, attempt, ...(error ? { reason: error } : {}) });
-      if (fx?.result) enqueueResult(fx.result, row.id, req, { key: req.key, status, ...(status === "confirmed" ? { value } : { error: error ?? "" }) });
+      attemptOpen = false;
+      sql.exec("UPDATE _actors_outbox SET status = ?, attempts = ?, last_error = ?, body = ? WHERE id = ?", status, attempt, error, JSON.stringify({ ...req, ...withUsage(), outcome: value }), row.id);
+      emit({ kind, at: now(), actor: self, ...base, attempt, ...(error ? { reason: error } : {}), ...(withUsage().usage ? { detail: { usage: withUsage().usage } } : {}) });
+      if (fx?.result) enqueueResult(fx.result, row.id, req, { key: req.key, status, ...(status === "confirmed" ? { value } : { error: error ?? "" }), ...withUsage() });
     };
     if (!adapter) {
       finish("failed", null, `no adapter registered for effect ${req.name}`, "effect.failed");
       return;
     }
-    const budget = { ...spec.budget, ...seams()?.budgets?.[actorName] };
-    const timeoutMs = budget.timeoutMs ?? 30_000;
-    const budgetAttempts = budget.maxAttempts ?? maxAttempts;
+    const { timeoutMs, maxAttempts: budgetAttempts } = resolveBudget(req.name);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`effect timed out after ${timeoutMs}ms`)), timeoutMs);
     try {
       const value = await Promise.race([
-        adapter.run(req.input, { key: req.key, attempt, signal: controller.signal }),
+        adapter.run(req.input, { key: req.key, attempt, signal: controller.signal, reportUsage }),
         new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(controller.signal.reason))),
       ]);
       finish("confirmed", value, null, "effect.confirmed");
@@ -663,7 +690,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           // Retries exhausted. Without proof the request never arrived, the outcome is unknown.
           if (e.notDelivered) finish("failed", null, error, "effect.failed");
           else finish("in_doubt", null, error, "effect.in_doubt");
-        } else retryOrExhaust(row, error, base);
+        } else {
+          attemptOpen = false;
+          if (withUsage().usage) sql.exec("UPDATE _actors_outbox SET body = ? WHERE id = ?", JSON.stringify({ ...req, ...withUsage() }), row.id);
+          retryOrExhaust(row, error, base);
+        }
       } else if (fx?.reconcile && adapter.reconcile) {
         const r = await adapter.reconcile(req.key).catch(() => undefined);
         if (r?.delivered) finish("confirmed", r.value, null, "effect.confirmed");

@@ -1089,7 +1089,8 @@ function normalize(system) {
     idempotency: e.idempotency,
     reconcile: e.reconcile ?? false,
     approval: e.approval ?? "none",
-    result: e.result ?? null
+    result: e.result ?? null,
+    ...e.budget ? { budget: { ...e.budget.maxAttempts !== void 0 ? { maxAttempts: e.budget.maxAttempts } : {}, ...e.budget.timeoutMs !== void 0 ? { timeoutMs: e.budget.timeoutMs } : {} } } : {}
   })).sort(byName);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
@@ -1184,6 +1185,8 @@ function checkProject(project) {
       add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label2, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
   }
   for (const e of m.effects) {
+    for (const [field, v] of Object.entries(e.budget ?? {}))
+      if (!Number.isInteger(v) || v < 1) add("error", "EFFECT_BUDGET_INVALID", e.name, `${e.name} declares budget.${field} ${String(v)}, which isn't a positive whole number`, "Use a positive integer, or remove the field to inherit the actor's budget.");
     if (e.result) {
       if (!messages.has(e.result)) add("error", "EFFECT_RESULT_UNKNOWN_MESSAGE", e.name, `${e.name} delivers its outcome as ${e.result}, which isn't a declared message`);
       for (const a of m.actors.filter((a2) => a2.effects.includes(e.name)))

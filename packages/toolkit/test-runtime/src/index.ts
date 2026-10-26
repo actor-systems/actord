@@ -5,7 +5,7 @@ import { z } from "zod";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
 import { defineSystem, message } from "../../src/system.ts";
 
-const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional() });
+const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
 export const system = defineSystem({
   name: "runtime-probe",
@@ -70,7 +70,7 @@ export class Probe extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.lifecycle.use(this.pinger);
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS outcomes (key TEXT PRIMARY KEY, status TEXT NOT NULL, error TEXT)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS outcomes (key TEXT PRIMARY KEY, status TEXT NOT NULL, error TEXT, usage TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS ticks (message TEXT NOT NULL, at INTEGER)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL)");
@@ -84,7 +84,7 @@ export class Probe extends DurableObject<Env> {
       ctx.effect(payload.effect, { key: payload.key }, { key: payload.key });
     },
     "probe.outcome": ({ payload }, ctx) => {
-      ctx.sql.exec("INSERT INTO outcomes (key, status, error) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET status = excluded.status, error = excluded.error", payload.key, payload.status, payload.error ?? null);
+      ctx.sql.exec("INSERT INTO outcomes (key, status, error, usage) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET status = excluded.status, error = excluded.error, usage = excluded.usage", payload.key, payload.status, payload.error ?? null, payload.usage ? JSON.stringify(payload.usage) : null);
     },
     "probe.timer.set": ({ payload }, ctx) => {
       ctx.after(payload.delayMs, "probe.timer.fired", { key: payload.key }, { key: payload.key });
@@ -112,7 +112,10 @@ export class Probe extends DurableObject<Env> {
     return this.actor.decide(key, decision);
   }
   outcomes() {
-    return this.ctx.storage.sql.exec<{ key: string; status: string; error: string | null }>("SELECT key, status, error FROM outcomes ORDER BY key").toArray();
+    return this.ctx.storage.sql
+      .exec<{ key: string; status: string; error: string | null; usage: string | null }>("SELECT key, status, error, usage FROM outcomes ORDER BY key")
+      .toArray()
+      .map(({ usage, ...r }) => ({ ...r, ...(usage ? { usage: JSON.parse(usage) as Record<string, number> } : {}) }));
   }
   fired(): string[] {
     return this.ctx.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key);

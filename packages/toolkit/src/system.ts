@@ -80,6 +80,8 @@ export interface EffectSpec {
    * on a route from the actor to itself. This makes the external wait an explicit message boundary.
    */
   readonly result?: string;
+  /** Bounds for one run of this effect. They take precedence over the requesting actor's budget. */
+  readonly budget?: { readonly maxAttempts?: number; readonly timeoutMs?: number };
 }
 
 /** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron); "@timer" delivers timers an actor set for itself. */

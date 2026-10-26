@@ -52,6 +52,8 @@ export interface ManifestEffect {
   reconcile: boolean;
   approval: string;
   result: string | null;
+  /** Present only when the effect declares one. */
+  budget?: { maxAttempts?: number; timeoutMs?: number };
 }
 
 export interface Manifest {
@@ -101,6 +103,7 @@ export function normalize(system: System): Manifest {
       reconcile: e.reconcile ?? false,
       approval: e.approval ?? "none",
       result: e.result ?? null,
+      ...(e.budget ? { budget: { ...(e.budget.maxAttempts !== undefined ? { maxAttempts: e.budget.maxAttempts } : {}), ...(e.budget.timeoutMs !== undefined ? { timeoutMs: e.budget.timeoutMs } : {}) } } : {}),
     }))
     .sort(byName);
   return {

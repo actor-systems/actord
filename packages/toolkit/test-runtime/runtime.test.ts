@@ -3,7 +3,7 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { afterEach, expect, it } from "vitest";
 import { deriveId, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
-import { fireTimers, overrideEffect, resetSeams, settle, tick } from "../src/testing.ts";
+import { fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
@@ -221,4 +221,35 @@ it("[schedule-legacy-migrated] a single schedule inherits the old schedule.next 
   migrateLegacy((k) => store.get(k) ?? null, (k, v) => void store.set(k, v), [spec], (k) => void store.delete(k));
   expect(store.get(scheduleKey("m"))).toBe("12345");
   expect(store.has("schedule.next")).toBe(false);
+});
+
+it("[effect-budget] an effect's own timeout overrides its actor's", async () => {
+  overrideBudget("Probe", { timeoutMs: 5_000 });
+  overrideEffectBudget("gateway.plain", { timeoutMs: 20 });
+  overrideEffect("gateway.plain", { run: () => new Promise(() => {}) });
+  await send("eb", "gateway.plain");
+  await settle(env, system);
+  expect(await probe("eb").outcomes()).toMatchObject([{ key: "eb", status: "in_doubt", error: "effect timed out after 20ms" }]);
+});
+
+it("[effect-usage] usage reported by an adapter arrives with the result", async () => {
+  overrideEffect("gateway.keyed", { run: async (_i, c) => { c.reportUsage({ inputTokens: 10, costUsd: 0.01 }); c.reportUsage({ inputTokens: 5, outputTokens: 2 }); return "ok"; } });
+  await send("eu", "gateway.keyed");
+  await settle(env, system);
+  expect((await probe("eu").outcomes())[0]).toMatchObject({ status: "confirmed", usage: { inputTokens: 15, outputTokens: 2, costUsd: 0.01 } });
+});
+
+it("[effect-usage-attempts] usage is summed across retried attempts", async () => {
+  let n = 0;
+  overrideEffect("gateway.keyed", { run: async (_i, c) => { c.reportUsage({ inputTokens: 10 }); if (++n < 2) throw new Error("flaky"); return "ok"; } });
+  await send("eua", "gateway.keyed");
+  await settle(env, system);
+  expect((await probe("eua").outcomes())[0]).toMatchObject({ status: "confirmed", usage: { inputTokens: 20 } });
+});
+
+it("[effect-usage-absent] no usage field when an adapter reported none", async () => {
+  overrideEffect("gateway.keyed", { run: async () => "ok" });
+  await send("eun", "gateway.keyed");
+  await settle(env, system);
+  expect((await probe("eun").outcomes())[0]).not.toHaveProperty("usage");
 });
