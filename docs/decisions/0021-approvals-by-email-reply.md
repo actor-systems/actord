@@ -51,11 +51,31 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
    an id derived from the reply's `Message-ID`; the same email handled twice is delivered once. A second, different
    reply is delivered too, and `ctx.approve`/`ctx.deny` answers `false` because nothing is waiting.
 
-## Not yet verified (spike 6)
-Before any app sets `authserv`, spike 6 must confirm against real Gmail and Cloudflare Email Routing: the authserv-id
-Cloudflare writes; that its `Authentication-Results` header is topmost; that Cloudflare removes inbound headers
-claiming its id (RFC 8601 §5); that the subject token survives a Gmail reply; and that the envelope sender of a Gmail
-message equals the owner's address. While apps leave `authserv` unset, every email reply is `"unknown"`.
+## Spike 6 (2026-10-26, `docs/evidence/spike-6-email.md`)
+A real Gmail reply through Cloudflare Email Routing approved a parked effect.
+- **Confirmed:**
+  - Cloudflare writes `Authentication-Results: mx.cloudflare.net; …` above the message's own headers, so it is the
+    topmost header, and the only one in that message.
+  - The owner's Gmail reply carried `dmarc=pass header.from=gmail.com` in it.
+  - The subject token survived the reply byte for byte.
+  - The envelope sender was the owner's address.
+  - The `send_email` binding can't set `Message-ID` (the send is refused), so replies thread on the id Cloudflare
+    assigns.
+- **So an app may set `authserv`** to an env entry holding `mx.cloudflare.net`. A reply that passes is then
+  `authenticated: "pass"`, and email can approve an effect declared `publishes: true`. Without `authserv`, every reply
+  stays `"unknown"`.
+- **`gmail.com` publishes `p=none`.** So Cloudflare doesn't reject mail at SMTP time that forges the owner's Gmail
+  address. Such mail arrives with Cloudflare's `dmarc=fail`, and rule 4.2 refuses it.
+- **Still unverified:** whether Cloudflare always adds its own header, and whether it strips an inbound one claiming
+  `mx.cloudflare.net` (RFC 8601 §5). Only the topmost header is read, and Cloudflare's sat above everything inbound,
+  so a forged header could win only on a path where Cloudflare adds none. That rests on one sample.
+- **Hardening first.** Before the factory turns `authserv` on, three checks land:
+  - every `dmarc` result in the trusted header must be `pass`;
+  - `header.from` must equal the owner's domain;
+  - the authserv-id is compared case-insensitively.
+
+  They are deferred to plan 2's final fix wave. Whether the factory turns `authserv` on is the owner's decision at
+  factory design time.
 
 ## Known edges
 - Old auto-responders that set only `Precedence` or `X-Autoreply` are not detected; they get one re-ask.

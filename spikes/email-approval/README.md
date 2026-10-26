@@ -58,7 +58,8 @@ records and a DMARC record, and it needs Workers Paid. The binding path needs ne
   Worker can email nobody else.
 - The binding's `send()` takes the structured form that `approvalEmail` uses, and it returns `{ messageId }`.
 - **Message-ID can't be set.** Email Service documents `Message-ID` as platform-controlled. A send that sets it fails
-  as a whole with `E_HEADER_NOT_ALLOWED`. The probe endpoint checks this once.
+  as a whole. The docs name the error `E_HEADER_NOT_ALLOWED`, but the deployed probe was refused with
+  `E_VALIDATION_ERROR` ("custom header 'Message-ID' is not allowed…").
 - `In-Reply-To`, `Auto-Submitted` and `X-*` headers are allowed.
 
 ## The owner's commands, in order
@@ -189,5 +190,9 @@ Under `wrangler dev`, with simulated sending and a hand-made reply posted to `/c
 - `handleEmail` delivered `approval.decided` with `authenticated: "unknown"`;
 - the effect ran and was `confirmed`.
 
-The local simulator also accepted a `Message-ID` header that production is documented to refuse, so only the deployed
-probe answers that question.
+The local simulator also accepted a `Message-ID` header that production refused, so only the deployed probe answers
+that question.
+
+## Results
+
+The real round trip passed on 2026-10-26. The results are in `docs/evidence/spike-6-email.md`.

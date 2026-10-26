@@ -15,12 +15,24 @@
   from the slash menu; it runs anyway and is listed after that.
 - **Approver identity is whatever the approving sender supplies** over RPC. By email it is the verified sender
   address, but the record is evidence, not proof.
-- **Email authentication may be unknown until spike 6.** Only the topmost `Authentication-Results` header from a
-  configured `authserv` can make a reply `"pass"`; until spike 6 confirms what Cloudflare writes, apps leave
-  `authserv` unset and every reply is `"unknown"`. Then an email can approve mid-run tool calls but never an
-  effect declared `publishes: true`; approve those in GitHub. Strict envelope-sender equality also refuses an
-  owner whose provider rewrites MAIL FROM (VERP, SRS); it fails closed. Old auto-responders that set only
-  `Precedence` or `X-Autoreply` aren't detected and get one re-ask.
+- **Email authentication is `"unknown"` unless the app sets `authserv`.**
+  - **What spike 6 showed:** Cloudflare Email Routing writes one `Authentication-Results` header, the topmost one, with
+    authserv-id `mx.cloudflare.net`. A Gmail reply carried `dmarc=pass` there.
+  - **Setting it:** an app may set `authserv` to an env entry holding `mx.cloudflare.net`. Then an authenticated reply
+    can approve an effect declared `publishes: true`.
+  - **Leaving it unset:** every reply is `"unknown"`. An email can then approve mid-run tool calls but never a
+    `publishes: true` effect; approve those in GitHub.
+  - **Not verified:** whether Cloudflare always adds its header, or strips an inbound one claiming `mx.cloudflare.net`.
+    One sample showed Cloudflare's header above everything inbound.
+  - **Before the factory turns it on,** three checks are due:
+    - every `dmarc` result must be `pass`;
+    - `header.from` must be the owner's domain;
+    - the authserv-id must compare case-insensitively.
+
+    Whether the factory turns it on is the owner's call at factory design time.
+
+  - **Other edges:** strict envelope-sender equality refuses an owner whose provider rewrites MAIL FROM (VERP, SRS); it
+    fails closed. Old auto-responders that set only `Precedence` or `X-Autoreply` aren't detected and get one re-ask.
 - **GitHub doesn't redeliver failures automatically.** Failed deliveries can be redelivered manually (UI or API) for a limited period; a timeout counts as a failure, as do a `4xx` and `5xx`. `source.invalid` and `source.failed`
   records (with the delivery id) are how a missed event is found. A captured signed delivery can be replayed
   under a new `X-GitHub-Delivery` and is then a new event: keep the secret, use HTTPS, make handlers idempotent

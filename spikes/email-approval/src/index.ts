@@ -215,7 +215,7 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/spike/message-id-probe") {
-      // Email Service documents Message-ID as platform-controlled (E_HEADER_NOT_ALLOWED). This checks it once.
+      // Email Service documents Message-ID as platform-controlled. Deployed, this was refused with E_VALIDATION_ERROR.
       const send = recording(env.EMAIL, async (r) => desk.recordOutbound(r), "probe");
       const messageId = `<spike6-probe-${Date.now()}@actord.dev>`;
       try {

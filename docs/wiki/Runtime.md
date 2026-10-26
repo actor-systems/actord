@@ -36,8 +36,9 @@ a route sender (`@github`), and routes deliver its messages like any other. Acto
   `handleWebhook(request, env, system)` first in `fetch()`; it returns `null` for other paths.
 - **`inboundEmail({ secret, owner, from, send, authserv?, message })`** names `env` entries. Call
   `handleEmail(message, env, system)` from `email()`. It accepts only the owner's reply to an approval request.
-  `authserv` is optional: the name of the entry holding the trusted authserv-id. Without it every reply is
-  `"unknown"` and an effect that publishes must be approved in GitHub.
+  `authserv` is optional: the name of the entry holding the trusted authserv-id. Cloudflare Email Routing's is
+  `mx.cloudflare.net` (spike 6; see Limitations before setting it). Without it every reply is `"unknown"` and an
+  effect that publishes must be approved in GitHub.
 - **Approval emails.** Declare `approvals: { notify: "<effect>" }` and give that effect the `approvalEmail`
   adapter, with `idempotency: "none"`. The default email includes the effect's input as JSON; supply `describe()`
   if inputs are sensitive.
