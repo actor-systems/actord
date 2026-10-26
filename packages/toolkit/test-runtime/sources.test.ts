@@ -260,15 +260,15 @@ it("[approval-notify-fails] a notification that fails or ends in doubt leaves th
 // ---- Answering by email (plan 2, Task 6) ----
 
 const OWNER = "owner@probe.example";
-/** What a receiving server that checked the reply writes above it. */
-const PASS = "mx.cloudflare.net; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example; dmarc=pass (p=reject dis=none) header.from=probe.example";
+/** What the trusted receiving server (PROBE_AUTHSERV) writes above a reply it checked. */
+const PASS = "mx.probe.example; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example; dmarc=pass (p=reject dis=none) header.from=probe.example";
 type Answer = { from: unknown; to: unknown; subject: string; text: string; headers?: Record<string, string> };
 
 /** The env the Worker's email handler sees: the probe's, plus a fake send binding that keeps every reply it sends. */
-function answering(): { replies: Answer[]; env: unknown } {
+function answering(overrides: Record<string, unknown> = {}): { replies: Answer[]; env: unknown } {
   const replies: Answer[] = [];
   const e = env as unknown as Record<string, unknown>;
-  return { replies, env: { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_OWNER: e.PROBE_OWNER, PROBE_FROM: e.PROBE_FROM, PROBE_SEND: { send: async (m: Answer) => void replies.push(m) } } };
+  return { replies, env: { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_OWNER: e.PROBE_OWNER, PROBE_FROM: e.PROBE_FROM, PROBE_AUTHSERV: e.PROBE_AUTHSERV, PROBE_SEND: { send: async (m: Answer) => void replies.push(m) }, ...overrides } };
 }
 
 let replyCount = 0;
@@ -484,9 +484,9 @@ it("[email-dmarc-fail] a reply whose Authentication-Results says dmarc=fail is r
   const { replies, env: e } = answering();
   const subject = `Re: ${request.subject}`;
   const text = below(request, "approve");
-  await handleEmail(reply({ from: OWNER, subject, text, headers: { "Authentication-Results": "mx.cloudflare.net; spf=fail smtp.mailfrom=probe.example; dkim=none; dmarc=fail (p=reject) header.from=probe.example" } }), e, system);
+  await handleEmail(reply({ from: OWNER, subject, text, headers: { "Authentication-Results": "mx.probe.example; spf=fail smtp.mailfrom=probe.example; dkim=none; dmarc=fail (p=reject) header.from=probe.example" } }), e, system);
   // A pass in one header doesn't outweigh a fail in another.
-  await handleEmail(reply({ from: OWNER, subject, text, headers: { "Authentication-Results": [PASS, "mx.cloudflare.net; dmarc=FAIL header.from=probe.example"] } }), e, system);
+  await handleEmail(reply({ from: OWNER, subject, text, headers: { "Authentication-Results": [PASS, "mx.probe.example; dmarc=FAIL header.from=probe.example"] } }), e, system);
   await settle(env, system);
   expect(replies).toEqual([]);
   expect(fx.runs).toBe(0);
@@ -564,4 +564,57 @@ it("[email-misconfigured] without a secret or an owner nothing is accepted, and 
     ["source.ignored", "unparsed"],
     ["source.failed", "reply_failed"],
   ]);
+});
+
+it("[email-forged-auth] only the topmost Authentication-Results, from the trusted authserv-id, can make a reply 'pass'", async () => {
+  const cases: Array<[string, string[], Record<string, unknown>]> = [
+    // (a) a pass under an authserv-id nobody trusts, as a sender would write it
+    ["em-forged-a", ["mx.forger.example; dmarc=pass header.from=probe.example"], {}],
+    // (b) a forged pass below the trusted server's own header, which found no DMARC policy
+    ["em-forged-b", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dmarc=none header.from=probe.example", "mx.probe.example; dmarc=pass header.from=probe.example"], {}],
+    // the trusted header's only "dmarc=pass" is in a comment, or in a quoted value a sender chose
+    ["em-forged-c", ['mx.probe.example; spf=pass (dmarc=pass) smtp.mailfrom=probe.example; dkim=none header.s="x;dmarc=pass"; dmarc=none'], {}],
+    // a real pass, but this Worker trusts no authserv-id
+    ["em-forged-d", [PASS], { PROBE_AUTHSERV: undefined }],
+  ];
+  for (const [key, results, overrides] of cases) {
+    const { request, fx } = await asked(key, "gateway.publish");
+    const { replies, env: e } = answering(overrides);
+    const headers = { "Authentication-Results": results };
+    await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers }), e, system);
+    await settle(env, system);
+    expect(replies.map((r) => r.text)).toEqual(["this effect publishes; approve it in GitHub"]);
+    expect(fx.runs).toBe(0);
+    expect(await fxStatus(key, "gateway.publish")).toBe("awaiting_approval");
+    // The same headers on a denial, which goes through, show what the reply counted as.
+    await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "deny"), headers }), e, system);
+    await settle(env, system);
+    expect(await probe(key).decisions()).toMatchObject([{ decision: "deny", authenticated: "unknown" }]);
+  }
+});
+
+it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply is marked as one", async () => {
+  const events = captureEvents();
+  const { request, fx } = await asked("em-away");
+  const { replies, env: e } = answering();
+  const subject = `Re: ${request.subject}`;
+  for (const value of ["auto-replied", "auto-generated; owner-email=owner@probe.example"])
+    await handleEmail(reply({ from: OWNER, subject, text: "I'm away until Monday.", headers: { "Authentication-Results": PASS, "Auto-Submitted": value } }), e, system);
+  await settle(env, system);
+  expect(replies).toEqual([]);
+  expect(await probe("em-away").approvals()).toEqual([]);
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual(Array(2).fill(["source.ignored", "auto_submitted"]));
+  // Every reply this source sends says it was sent automatically, so the owner's responder won't answer it.
+  const asking = reply({ from: OWNER, subject, text: "hmm", headers: { "Authentication-Results": PASS, "Auto-Submitted": "no" } });
+  await handleEmail(asking, e, system);
+  await handleEmail(reply({ from: OWNER, subject: "hello", text: "approve", headers: { "Authentication-Results": PASS } }), e, system);
+  const pub = await asked("em-away-pub", "gateway.publish");
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${pub.request.subject}`, text: "approve" }), e, system);
+  expect(replies.map((r) => r.text)).toEqual(["reply with approve, or deny followed by a reason, on the first line", "this address only accepts replies to actord approval requests", "this effect publishes; approve it in GitHub"]);
+  expect(replies.map((r) => r.headers?.["Auto-Submitted"])).toEqual(Array(3).fill("auto-replied"));
+  expect(replies[0]!.headers).toEqual({ "Auto-Submitted": "auto-replied", "In-Reply-To": asking.headers.get("message-id") });
+  // "Auto-Submitted: no" is a person writing: that approve counts.
+  await handleEmail(reply({ from: OWNER, subject, text: "approve", headers: { "Authentication-Results": PASS, "Auto-Submitted": "no" } }), e, system);
+  await settle(env, system);
+  expect(fx.runs).toBe(1);
 });

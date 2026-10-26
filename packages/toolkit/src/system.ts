@@ -119,13 +119,19 @@ export interface WebhookSourceSpec {
   readonly events: Readonly<Record<string, WebhookEventSpec>>;
 }
 
-/** An email source for approvals by reply. `secret`, `owner`, `from` and `send` name `env` entries (a secret, two variables and a send_email binding). */
+/** An email source for approvals by reply. `secret`, `owner`, `from`, `send` and `authserv` name `env` entries (a secret, three variables and a send_email binding). */
 export interface EmailSourceSpec {
   readonly kind: "email";
   readonly secret: string;
   readonly owner: string;
   readonly from: string;
   readonly send: string;
+  /**
+   * Names the env entry holding the authserv-id of the receiving server, whose topmost Authentication-Results
+   * header alone can make a reply authenticated: "pass". Without it every reply is "unknown", so an effect
+   * that publishes can't be approved by email.
+   */
+  readonly authserv?: string;
   readonly message: string;
 }
 

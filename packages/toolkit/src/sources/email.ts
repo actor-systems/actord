@@ -6,7 +6,8 @@
 // 1. Sender. The envelope sender and the one From address are both the owner's (env[owner]), compared
 //    case-insensitively, and no Authentication-Results header says dmarc=fail. Mail that fails this gets no
 //    reply at all, so nobody but the owner can make the Worker send mail or learn whether a token is good.
-//    That is why the sender is checked before the token.
+//    That is why the sender is checked before the token. Mail an auto-responder sent (Auto-Submitted, other
+//    than "no") is then ignored without a reply, so an out-of-office answer and a re-ask can't loop.
 // 2. Token. The subject's "[actord:<token>]" verifies against env[secret] and hasn't expired. A missing,
 //    edited or expired token gets a reply saying so.
 // 3. Decision. The first non-empty line the owner wrote, above any quoted text, is "approve", or "deny" and
@@ -18,9 +19,11 @@
 // is delivered once. A second, different reply is delivered too; the actor's ctx.approve or ctx.deny then
 // answers false, because nothing is waiting any more.
 // Every outcome other than a delivery is recorded as a source.* event. Every reply goes to the owner through
-// env[send], from env[from], with In-Reply-To set to the reply's Message-ID.
-// Not guaranteed: until spike 6 shows which Authentication-Results reach the Worker, dmarc=pass is read from
-// any such header, whoever wrote it. Only a dmarc=fail in any of them is decisive.
+// env[send], from env[from], marked Auto-Submitted: auto-replied, with In-Reply-To set to the reply's Message-ID.
+// Authentication: a sender can write Authentication-Results headers of their own, below the one the receiving
+// server adds on top. So a reply is "pass" only when the topmost header comes from the trusted authserv-id
+// (env[authserv]) and its dmarc result, read outside comments, is pass. Anything else is "unknown", including
+// a source with no authserv configured. A dmarc=fail anywhere refuses the reply.
 import PostalMime, { addressParser, type Email } from "postal-mime";
 import { type ActorEvent, type EventKind, type Receipt, deliverExternal, deriveId, emit } from "../runtime/index.ts";
 import type { EmailSourceSpec, System } from "../system.ts";
@@ -43,7 +46,8 @@ const APPROVE_IN_GITHUB = "this effect publishes; approve it in GitHub";
 const expiredAt = (exp: number) => `this request expired at ${new Date(exp).toISOString()}; nothing was approved`;
 
 const DMARC_FAIL = /\bdmarc\s*=\s*fail\b/i;
-const DMARC_PASS = /\bdmarc\s*=\s*pass\b/i;
+/** A resinfo's method and result, such as "dmarc=pass" or "dmarc/1 = pass" (RFC 8601). */
+const DMARC_RESULT = /^dmarc\s*(?:\/\s*\d+\s*)?=\s*([A-Za-z0-9_-]+)/i;
 const QUOTE_INTRO = /^On .+wrote:$/;
 const APPROVE = /^approve$/i;
 const DENY = /^deny\b\s*(.*)$/i;
@@ -81,7 +85,9 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
   if (!sameAddress(message.from, owner) || !sameAddress(author, owner)) return record("source.rejected", "not_owner", {}, { ...seen, from: untrusted(message.from), author: untrusted(author) });
   const results = email.headers.filter((h) => h.key === "authentication-results").map((h) => h.value);
   if (results.some((r) => DMARC_FAIL.test(r))) return record("source.rejected", "dmarc_fail", {}, seen);
-  const authenticated: ApprovalDecided["authenticated"] = results.some((r) => DMARC_PASS.test(r)) ? "pass" : "unknown";
+  const authenticated = authenticationOf(results, source.authserv === undefined ? undefined : vars[source.authserv]);
+  const auto = email.headers.filter((h) => h.key === "auto-submitted").map((h) => fields(h.value)[0]!.trim().toLowerCase());
+  if (auto.some((v) => v !== "no")) return record("source.ignored", "auto_submitted", {}, { ...seen, autoSubmitted: untrusted(auto.join(", ")) });
 
   // Decoded, a subject can hold line breaks; the reply repeats it in a header, so they become spaces.
   const subject = (email.subject ?? "").replace(/[\r\n]+/g, " ");
@@ -91,8 +97,9 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
     try {
       if (typeof send?.send !== "function") throw new Error(`no send_email binding ${source.send}`);
       if (typeof from !== "string" || from === "") throw new Error(`no from address in ${source.from}`);
-      const inReplyTo = messageId !== null && MESSAGE_ID.test(messageId) ? { headers: { "In-Reply-To": messageId } } : {};
-      await send.send({ from, to: owner, subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`, text, ...inReplyTo });
+      // Auto-Submitted (RFC 3834) tells the owner's own auto-responder not to answer this one.
+      const headers: Record<string, string> = { "Auto-Submitted": "auto-replied", ...(messageId !== null && MESSAGE_ID.test(messageId) ? { "In-Reply-To": messageId } : {}) };
+      await send.send({ from, to: owner, subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`, text, headers });
     } catch (err) {
       record("source.failed", "reply_failed", {}, { ...seen, error: messageOf(err) });
     }
@@ -165,11 +172,60 @@ function firstLineDecision(text: string | undefined): { decision: "approve" | "d
   return null;
 }
 
+/**
+ * "pass" only when the topmost Authentication-Results header (results[0], the receiving server's) names the
+ * trusted authserv-id as its first token and has a dmarc result of pass outside comments. A header lower down
+ * may have come from the sender, so it never counts; with no trusted id configured, nothing does.
+ */
+function authenticationOf(results: string[], trusted: unknown): ApprovalDecided["authenticated"] {
+  const top = results[0];
+  if (top === undefined || typeof trusted !== "string" || trusted === "") return "unknown";
+  const [id, ...resinfo] = fields(top);
+  if (resinfo.length === 0 || id!.trim().split(/\s+/)[0] !== trusted) return "unknown";
+  return resinfo.some((r) => DMARC_RESULT.exec(r.trim())?.[1]?.toLowerCase() === "pass") ? "pass" : "unknown";
+}
+
+/**
+ * A structured header value's ";"-separated parts, with comments taken out (RFC 5322: nested, with quoted
+ * pairs). A ";" or "(" inside a quoted string doesn't count, so text a sender chose, quoted by the server that
+ * wrote the header, can't add a part. An unclosed comment or quote swallows the rest of the value.
+ */
+function fields(value: string): string[] {
+  const out: string[] = [];
+  let part = "";
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]!;
+    if (ch === "\\") {
+      if (depth === 0) part += ch + (value[i + 1] ?? "");
+      i++;
+    } else if (depth > 0) {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+    } else if (quoted) {
+      part += ch;
+      if (ch === '"') quoted = false;
+    } else if (ch === '"') {
+      part += ch;
+      quoted = true;
+    } else if (ch === "(") {
+      depth = 1;
+      part += " ";
+    } else if (ch === ";") {
+      out.push(part);
+      part = "";
+    } else part += ch;
+  }
+  out.push(part);
+  return out;
+}
+
 /** The one address in the one From header; null when there are several headers, several addresses, or a group. */
 function authorOf(email: Email): string | null {
-  const fields = email.headers.filter((h) => h.key === "from");
-  if (fields.length !== 1) return null;
-  const list = addressParser(fields[0]!.value);
+  const froms = email.headers.filter((h) => h.key === "from");
+  if (froms.length !== 1) return null;
+  const list = addressParser(froms[0]!.value);
   return list.length === 1 && typeof list[0]!.address === "string" ? list[0]!.address : null;
 }
 

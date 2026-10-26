@@ -29,7 +29,7 @@ export const system = defineSystem({
   },
   sources: {
     hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
-    mail: inboundEmail({ secret: "PROBE_APPROVAL_SECRET", owner: "PROBE_OWNER", from: "PROBE_FROM", send: "PROBE_SEND", message: "approval.decided" }),
+    mail: inboundEmail({ secret: "PROBE_APPROVAL_SECRET", owner: "PROBE_OWNER", from: "PROBE_FROM", send: "PROBE_SEND", authserv: "PROBE_AUTHSERV", message: "approval.decided" }),
   },
   approvals: { notify: "notify.approval" },
   actors: {
