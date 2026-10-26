@@ -410,7 +410,7 @@ import { dirname as dirname3, join as join8, relative as relative3, resolve as r
 // src/model/events.ts
 import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
 var EVENTS_FILE = ".actord/events.ndjson";
-var NOTABLE = /* @__PURE__ */ new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"]);
+var NOTABLE = /* @__PURE__ */ new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed", "source.rejected", "source.invalid", "source.failed"]);
 function readEvents(file) {
   if (!existsSync4(file)) return null;
   return parseEvents(readFileSync4(file, "utf8"));

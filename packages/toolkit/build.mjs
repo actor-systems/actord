@@ -31,6 +31,8 @@ const library = { outdir: join(here, "dist"), outExtension: { ".js": ".mjs" }, b
 // The Agents SDK is a peer dependency: the runtime composes the project's own copy of Lifecycle.
 await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), runtime: join(here, "src/runtime/index.ts") }, platform: "neutral", external: ["agents", "agents/*"] });
 await build({ ...library, entryPoints: { testing: join(here, "src/testing.ts") }, platform: "neutral", external: ["cloudflare:test", "agents", "agents/*"] });
+// The Worker's source handlers deliver through the runtime, so the same packages stay the project's own.
+await build({ ...library, entryPoints: { sources: join(here, "src/sources/index.ts") }, platform: "neutral", external: ["agents", "agents/*", "cloudflare:workers"] });
 await build({ ...library, entryPoints: { vitest: join(here, "src/vitest.ts") }, platform: "node" });
 execFileSync("npx", ["--no-install", "tsc", "-p", join(here, "tsconfig.build.json")], { cwd: here, stdio: "inherit" });
 // Declarations keep the source's relative ".ts" specifiers; projects resolve ".js" to ".d.ts" reliably.

@@ -4,6 +4,7 @@ import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents
 import { z } from "zod";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
 import { defineSystem, message, webhook } from "../../src/system.ts";
+import { handleWebhook } from "../../src/sources/index.ts";
 
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
@@ -151,8 +152,8 @@ export class Probe extends DurableObject<Env> {
     "probe.job.cancel": ({ payload }, ctx) => {
       ctx.cancelJob("gateway.job", payload.key);
     },
-    "probe.poked": ({ payload, correlationId }, ctx) => {
-      ctx.sql.exec("INSERT INTO pokes (id, cid) VALUES (?, ?)", payload.key, correlationId);
+    "probe.poked": ({ id, correlationId }, ctx) => {
+      ctx.sql.exec("INSERT INTO pokes (id, cid) VALUES (?, ?)", id, correlationId);
     },
     "probe.approve": ({ payload }, ctx) => {
       const ok = ctx.approve("gateway.approval", payload.key, { by: payload.by });
@@ -205,4 +206,10 @@ export class Probe extends DurableObject<Env> {
   }
 }
 
-export default { fetch: () => new Response("runtime probe") } satisfies ExportedHandler<Env>;
+export default {
+  async fetch(request, env) {
+    const hooked = await handleWebhook(request, env, system);
+    if (hooked !== null) return hooked;
+    return new Response("runtime probe");
+  },
+} satisfies ExportedHandler<Env>;

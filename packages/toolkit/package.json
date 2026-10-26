@@ -25,6 +25,10 @@
       "types": "./dist/types/runtime/index.d.ts",
       "default": "./dist/runtime.mjs"
     },
+    "./sources": {
+      "types": "./dist/types/sources/index.d.ts",
+      "default": "./dist/sources.mjs"
+    },
     "./testing": {
       "types": "./dist/types/testing.d.ts",
       "default": "./dist/testing.mjs"

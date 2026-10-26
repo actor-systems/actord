@@ -149,6 +149,10 @@ export type EventKind =
   | "job.started"
   | "job.probed"
   | "job.cancel_requested"
+  | "source.rejected"
+  | "source.ignored"
+  | "source.invalid"
+  | "source.failed"
   | "note";
 
 /** One structured event, written as a single JSON console line (Workers Logs in production). */
@@ -172,7 +176,7 @@ export interface ActorEvent {
 }
 
 /** Kinds that the monitor and `actord events --notable` surface. */
-export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.parked", "effect.denied", "effect.failed"];
+export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.parked", "effect.denied", "effect.failed", "source.rejected", "source.invalid", "source.failed"];
 
 // ---- Effects ----
 

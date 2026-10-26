@@ -1095,7 +1095,7 @@ it("[approve-before-alarm] a late approval or decision is refused even before th
 it("[external-sender] a message from a declared source's sender is accepted on its route", async () => {
   const r = await deliverExternal(env, system, "@hooks", "Probe", "probe.poked", { key: "ext" }, { key: "ext", id: "d-1" });
   expect(r).toMatchObject({ status: "handled", messageId: "d-1" });
-  expect(await probe("ext").poked()).toEqual(["ext"]);
+  expect(await probe("ext").poked()).toEqual(["d-1"]);
 });
 it("[external-sender-route] the same message from a sender with no route is refused", async () => {
   const r = await deliverExternal(env, system, "@other", "Probe", "probe.poked", { key: "ext2" }, { key: "ext2" });
