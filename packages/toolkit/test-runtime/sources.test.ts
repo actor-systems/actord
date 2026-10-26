@@ -574,55 +574,57 @@ it("[email-misconfigured] without a secret or an owner nothing is accepted, and 
   ]);
 });
 
-it("[email-forged-auth] only the topmost Authentication-Results, from the trusted authserv-id, can make a reply 'pass'", async () => {
-  const cases: Array<[string, string[], Record<string, unknown>]> = [
-    // (a) a pass under an authserv-id nobody trusts, as a sender would write it
-    ["em-forged-a", ["mx.forger.example; dmarc=pass header.from=probe.example"], {}],
-    // (b) a forged pass below the trusted server's own header, which found no DMARC policy
-    ["em-forged-b", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dmarc=none header.from=probe.example", "mx.probe.example; dmarc=pass header.from=probe.example"], {}],
-    // the trusted header's only "dmarc=pass" is in a comment, or in a quoted value a sender chose
-    ["em-forged-c", ['mx.probe.example; spf=pass (dmarc=pass) smtp.mailfrom=probe.example; dkim=none header.s="x;dmarc=pass"; dmarc=none'], {}],
-    // a real pass, but this Worker trusts no authserv-id
-    ["em-forged-d", [PASS], { PROBE_AUTHSERV: undefined }],
-    // the trusted header has a dmarc=pass, but also a dmarc=none: every dmarc result must pass
-    ["em-forged-e", ["mx.probe.example; dmarc=none header.from=probe.example; dmarc=pass header.from=probe.example"], {}],
-    // a pass for a domain that isn't the owner's
-    ["em-forged-f", ["mx.probe.example; dkim=pass header.d=evil.example; dmarc=pass header.from=evil.example"], {}],
-    // a pass that names no domain, or two
-    ["em-forged-g", ["mx.probe.example; dmarc=pass", "mx.probe.example; dmarc=pass header.from=probe.example header.from=evil.example"], {}],
-    // a trusted header with no dmarc result at all
-    ["em-forged-h", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example"], {}],
-  ];
-  for (const [key, results, overrides] of cases) {
-    const { request, fx } = await asked(key, "gateway.publish");
-    const { replies, env: e } = answering(overrides);
-    const headers = { "Authentication-Results": results };
-    await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers }), e, system);
-    await settle(env, system);
-    expect(replies.map((r) => r.text)).toEqual(["this effect publishes; approve it in GitHub"]);
-    expect(fx.runs).toBe(0);
-    expect(await fxStatus(key, "gateway.publish")).toBe("awaiting_approval");
-    // The same headers on a denial, which goes through, show what the reply counted as.
-    await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "deny"), headers }), e, system);
-    await settle(env, system);
-    expect(await probe(key).decisions()).toMatchObject([{ decision: "deny", authenticated: "unknown" }]);
-  }
-  // The authserv-id and the domain compare case-insensitively (RFC 8601), so these pass and approve.
-  const passes: Array<[string, string, Record<string, unknown>]> = [
-    ["em-auth-case", "MX.Probe.Example; dmarc=pass header.from=Probe.EXAMPLE", {}],
-    ["em-auth-trusted-case", "mx.probe.example; dmarc=pass header.from=probe.example", { PROBE_AUTHSERV: "MX.PROBE.EXAMPLE" }],
-    // The shape Cloudflare Email Routing wrote for a real Gmail reply (spike 6), unfolded, for the owner's domain.
-    ["em-auth-spike", 'mx.cloudflare.net; dkim=pass header.d=probe.example header.s=20251104 header.b=abc; dmarc=pass header.from=probe.example policy.dmarc=none; spf=none (mx.cloudflare.net: no SPF records found for postmaster@mail.probe.example) smtp.helo=mail.probe.example; spf=pass (mx.cloudflare.net: domain of owner@probe.example designates 2001:db8::1 as permitted sender) smtp.mailfrom=owner@probe.example; arc=pass smtp.remote-ip="2001:db8::1"', { PROBE_AUTHSERV: "mx.cloudflare.net" }],
-  ];
-  for (const [key, result, overrides] of passes) {
-    const { request, fx } = await asked(key, "gateway.publish");
-    const { replies, env: e } = answering(overrides);
-    await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": result } }), e, system);
-    await settle(env, system);
-    expect(await probe(key).decisions()).toMatchObject([{ decision: "approve", authenticated: "pass" }]);
-    expect(fx.runs).toBe(1);
-    expect(replies.map((r) => r.text)).toEqual([received("approve", key, "gateway.publish")]);
-  }
+// One test per case, so each has its own time budget and a failure names its case.
+const FORGED: Array<[string, string[], Record<string, unknown>]> = [
+  // (a) a pass under an authserv-id nobody trusts, as a sender would write it
+  ["em-forged-a", ["mx.forger.example; dmarc=pass header.from=probe.example"], {}],
+  // (b) a forged pass below the trusted server's own header, which found no DMARC policy
+  ["em-forged-b", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dmarc=none header.from=probe.example", "mx.probe.example; dmarc=pass header.from=probe.example"], {}],
+  // the trusted header's only "dmarc=pass" is in a comment, or in a quoted value a sender chose
+  ["em-forged-c", ['mx.probe.example; spf=pass (dmarc=pass) smtp.mailfrom=probe.example; dkim=none header.s="x;dmarc=pass"; dmarc=none'], {}],
+  // a real pass, but this Worker trusts no authserv-id
+  ["em-forged-d", [PASS], { PROBE_AUTHSERV: undefined }],
+  // the trusted header has a dmarc=pass, but also a dmarc=none: every dmarc result must pass
+  ["em-forged-e", ["mx.probe.example; dmarc=none header.from=probe.example; dmarc=pass header.from=probe.example"], {}],
+  // a pass for a domain that isn't the owner's
+  ["em-forged-f", ["mx.probe.example; dkim=pass header.d=evil.example; dmarc=pass header.from=evil.example"], {}],
+  // a pass that names no domain, or two
+  ["em-forged-g", ["mx.probe.example; dmarc=pass", "mx.probe.example; dmarc=pass header.from=probe.example header.from=evil.example"], {}],
+  // a trusted header with no dmarc result at all
+  ["em-forged-h", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example"], {}],
+];
+
+it.each(FORGED)("[email-forged-auth] only the topmost Authentication-Results, from the trusted authserv-id, can make a reply 'pass' (%s)", async (key, results, overrides) => {
+  const { request, fx } = await asked(key, "gateway.publish");
+  const { replies, env: e } = answering(overrides);
+  const headers = { "Authentication-Results": results };
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers }), e, system);
+  await settle(env, system);
+  expect(replies.map((r) => r.text)).toEqual(["this effect publishes; approve it in GitHub"]);
+  expect(fx.runs).toBe(0);
+  expect(await fxStatus(key, "gateway.publish")).toBe("awaiting_approval");
+  // The same headers on a denial, which goes through, show what the reply counted as.
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "deny"), headers }), e, system);
+  await settle(env, system);
+  expect(await probe(key).decisions()).toMatchObject([{ decision: "deny", authenticated: "unknown" }]);
+});
+
+// The authserv-id and the domain compare case-insensitively (RFC 8601), so these pass and approve.
+const PASSES: Array<[string, string, Record<string, unknown>]> = [
+  ["em-auth-case", "MX.Probe.Example; dmarc=pass header.from=Probe.EXAMPLE", {}],
+  ["em-auth-trusted-case", "mx.probe.example; dmarc=pass header.from=probe.example", { PROBE_AUTHSERV: "MX.PROBE.EXAMPLE" }],
+  // The shape Cloudflare Email Routing wrote for a real Gmail reply (spike 6), unfolded, for the owner's domain.
+  ["em-auth-spike", 'mx.cloudflare.net; dkim=pass header.d=probe.example header.s=20251104 header.b=abc; dmarc=pass header.from=probe.example policy.dmarc=none; spf=none (mx.cloudflare.net: no SPF records found for postmaster@mail.probe.example) smtp.helo=mail.probe.example; spf=pass (mx.cloudflare.net: domain of owner@probe.example designates 2001:db8::1 as permitted sender) smtp.mailfrom=owner@probe.example; arc=pass smtp.remote-ip="2001:db8::1"', { PROBE_AUTHSERV: "mx.cloudflare.net" }],
+];
+
+it.each(PASSES)("[email-forged-auth] only the topmost Authentication-Results, from the trusted authserv-id, can make a reply 'pass' (%s)", async (key, result, overrides) => {
+  const { request, fx } = await asked(key, "gateway.publish");
+  const { replies, env: e } = answering(overrides);
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers: { "Authentication-Results": result } }), e, system);
+  await settle(env, system);
+  expect(await probe(key).decisions()).toMatchObject([{ decision: "approve", authenticated: "pass" }]);
+  expect(fx.runs).toBe(1);
+  expect(replies.map((r) => r.text)).toEqual([received("approve", key, "gateway.publish")]);
 });
 
 it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply is marked as one", async () => {
