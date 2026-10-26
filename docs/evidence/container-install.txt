@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at d8f28f0 Repository: github.com/actor-systems/actord
+== repository at 00a72c0 @actord/toolkit README for npm
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -122,6 +122,7 @@ not installed
     "package/dist/LICENSE",
     "package/dist/NOTICE",
     "package/package.json",
+    "package/README.md",
     "package/dist/cli.mjs",
     "package/dist/runtime.mjs",
     "package/dist/system.mjs",
@@ -148,7 +149,7 @@ not installed
       "output": "{\n  \"pluginId\": \"actord@actord\",\n  \"name\": \"actord\",\n  \"marketplaceName\": \"actord\",\n  \"version\": \"0.2.0\",\n  \"installedPath\": \"<temp>/codex/plugins/cache/actord/actord/0.2.0\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<temp>/codex\"))\n"
     },
     {
-      "command": "/usr/local/bin/node <temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version",
+      "command": "node <temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version",
       "status": "passed",
       "output": "0.2.0\n"
     },
