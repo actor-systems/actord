@@ -58,8 +58,8 @@ Report: `docs/implementation-report.md`.
 ## Next
 - ASK OWNER before any model-backed eval run (either plugin), before moving a pushed tag, before publishing
   a new npm version, and before submitting to either plugin directory.
-- Next version: `actord init` still vendors the plugin's toolkit tarball (offline installs, an exact pin);
-  its comments in `init.ts` and `build.mjs` still say "until it's on npm".
+- `init.ts` line 22: its comment still says the vendored tarball lasts "until @actord/toolkit is on npm"
+  ([#1](https://github.com/actor-systems/actord/issues/1)). esbuild strips it, so fixing it changes no shipped file.
 - A later release: consider Pele (obsidianmd/pele) to draw the Room's topology from `actord graph --format
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 
