@@ -1,0 +1,89 @@
+{
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "source-path-duplicate",
+    "description": "Two webhook sources listen on one path"
+  },
+  "actors": [
+    {
+      "binding": "TRIAGE",
+      "budget": null,
+      "effects": [],
+      "justification": [
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Triage",
+      "purpose": "Triages what arrives",
+      "receives": [
+        "issue.opened"
+      ],
+      "schedules": [],
+      "sends": []
+    }
+  ],
+  "messages": [
+    {
+      "description": "An issue was opened",
+      "name": "issue.opened",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "number": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@github",
+      "message": "issue.opened",
+      "to": "Triage"
+    },
+    {
+      "from": "@mirror",
+      "message": "issue.opened",
+      "to": "Triage"
+    }
+  ],
+  "effects": [],
+  "sources": [
+    {
+      "events": [
+        {
+          "event": "issues.opened",
+          "message": "issue.opened"
+        }
+      ],
+      "kind": "webhook",
+      "message": null,
+      "name": "github",
+      "path": "/hooks",
+      "verify": "github"
+    },
+    {
+      "events": [
+        {
+          "event": "issues.opened",
+          "message": "issue.opened"
+        }
+      ],
+      "kind": "webhook",
+      "message": null,
+      "name": "mirror",
+      "path": "/hooks",
+      "verify": "github"
+    }
+  ],
+  "approvals": null
+}

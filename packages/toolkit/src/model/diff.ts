@@ -1,7 +1,7 @@
 // `actord diff`: compare two normalized models and classify every architectural change, then produce a
 // deploy plan. All actors in one Worker deploy atomically, so the compatibility question for messages is
 // whether the new code accepts what is already in flight (outboxes, alarms) when the deploy lands.
-import { scheduleLabel, type Manifest, type ManifestActor, type ManifestEffect, type ManifestMessage } from "./manifest.ts";
+import { scheduleLabel, type Manifest, type ManifestActor, type ManifestEffect, type ManifestMessage, type ManifestSource } from "./manifest.ts";
 
 export type Compatibility = "compatible" | "breaking" | "risky";
 
@@ -33,6 +33,8 @@ export const EMPTY_MANIFEST: Manifest = {
   messages: [],
   routes: [],
   effects: [],
+  sources: [],
+  approvals: null,
 };
 
 export function diffManifests(base: Manifest, head: Manifest): DiffResult {
@@ -71,6 +73,17 @@ export function diffManifests(base: Manifest, head: Manifest): DiffResult {
       unclassified("effect", b, h, EFFECT_FIELDS, add);
     },
   });
+  // A baseline manifest written before sources has none.
+  diffKeyed(base.sources ?? [], head.sources ?? [], {
+    added: (x) => add("source.added", `@${x.name}`, "compatible", `New source @${x.name} (${x.kind}${x.path ? ` ${x.path}` : ""})`),
+    removed: (x) => add("source.removed", `@${x.name}`, "breaking", `Source @${x.name} removed; deliveries still on their way, and the provider's calls to it, will be refused after the deploy`),
+    changed: (b, h) => {
+      diffSource(b, h, add);
+      unclassified("source", b, h, SOURCE_FIELDS, add);
+    },
+  });
+  if (show(base.approvals ?? null) !== show(head.approvals ?? null))
+    add("approvals.notify", "approvals", "risky", `Approval notifications ${base.approvals?.notify ?? "none"} → ${head.approvals?.notify ?? "none"}; requests already waiting were announced through the old effect`);
   if (base.system.name && base.system.name !== head.system.name) add("system.renamed", head.system.name, "risky", `System renamed from ${base.system.name}`);
 
   const order = (c: Change) => `${c.kind}\u0000${c.subject}\u0000${c.detail}`;
@@ -140,14 +153,31 @@ function diffMessage(b: ManifestMessage, h: ManifestMessage, add: Add) {
  * route.removed report.
  */
 const ACTOR_FIELDS = new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends"]);
-const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes"]);
+const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes"]);
+const SOURCE_FIELDS = new Set(["name", "kind", "path", "verify", "events", "message"]);
 
 /** Any other field that changed (one a later manifest adds, say) is reported as risky, never left silent. */
-function unclassified<T extends object>(what: "actor" | "effect", b: T, h: T, classified: Set<string>, add: Add) {
+function unclassified<T extends object>(what: "actor" | "effect" | "source", b: T, h: T, classified: Set<string>, add: Add) {
   const bv = b as Record<string, unknown>;
   const hv = h as Record<string, unknown>;
   const fields = [...new Set([...Object.keys(bv), ...Object.keys(hv)])].filter((k) => !classified.has(k) && show(bv[k]) !== show(hv[k])).sort();
   if (fields.length > 0) add(`${what}.changed`, String(hv.name), "risky", `${fields.join(", ")} changed, and diff has no rule for ${fields.length === 1 ? "it" : "them"}; check how what is already in flight behaves`);
+}
+
+function diffSource(b: ManifestSource, h: ManifestSource, add: Add) {
+  const s = `@${h.name}`;
+  if (b.kind !== h.kind) add("source.kind", s, "risky", `Kind ${b.kind} → ${h.kind}`);
+  if (b.path !== h.path) add("source.path", s, "risky", `Path ${b.path ?? "none"} → ${h.path ?? "none"}; the provider keeps calling the old path until it is reconfigured`);
+  if (b.verify !== h.verify) add("source.verify", s, "risky", `Verification ${b.verify ?? "none"} → ${h.verify ?? "none"}; deliveries signed the old way are refused`);
+  if (b.message !== h.message) add("source.message", s, "risky", `Decision message ${b.message ?? "none"} → ${h.message ?? "none"}; replies already on their way arrive as the old message`);
+  const bEvents = new Map((b.events ?? []).map((e) => [e.event, e.message]));
+  const hEvents = new Map((h.events ?? []).map((e) => [e.event, e.message]));
+  for (const [event, message] of hEvents) {
+    if (!bEvents.has(event)) add("source.event.added", `${s} ${event}`, "compatible", `${s} now maps ${event} to ${message}`);
+    else if (bEvents.get(event) !== message) add("source.event.message", `${s} ${event}`, "risky", `${s} maps ${event} to ${message} instead of ${bEvents.get(event)}; deliveries already on their way keep the old message`);
+  }
+  for (const [event, message] of bEvents)
+    if (!hEvents.has(event)) add("source.event.removed", `${s} ${event}`, "risky", `${s} no longer maps ${event} (was ${message}); the provider may still send it, and it will be refused`);
 }
 
 function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
@@ -168,6 +198,7 @@ function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
   if (b.idempotency !== h.idempotency)
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} → ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
   if (b.approval !== h.approval) add("effect.approval", s, "risky", `Approval ${b.approval} → ${h.approval}`, { approval: h.approval === "none" });
+  if ((b.publishes ?? false) !== (h.publishes ?? false)) add("effect.publishes", s, "risky", `Publishes ${b.publishes ?? false} → ${h.publishes ?? false}`, { approval: h.publishes === true });
   if (b.reconcile !== h.reconcile) add("effect.reconcile", s, "risky", `Reconciliation ${b.reconcile} → ${h.reconcile}`);
   if ((b.result ?? null) !== (h.result ?? null)) add("effect.result", s, "risky", `Outcome message ${b.result ?? "none"} → ${h.result ?? "none"}; in-flight outcomes use the old message`);
 }

@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "SOURCE_ROUTE_MISSING"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

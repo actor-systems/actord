@@ -96,13 +96,56 @@ export interface EffectSpec {
   readonly probe?: { readonly every: Duration };
   /** For a job: the message whose handler settles it with ctx.settleJob(...). It names that message for checks and the graph. */
   readonly completes?: { readonly message: string };
+  /** True when the effect makes something public (a post, a release). It requires approval: "human", and an emailed approval of it must be answered from a verified sender. */
+  readonly publishes?: boolean;
+}
+
+/** One webhook event, named `${X-GitHub-Event}.${action}` (the bare event name when the payload has no action). */
+export interface WebhookEventSpec {
+  /** The system message this event becomes. */
+  readonly message: string;
+  /** A stable id for the event's content, used for deduplication. */
+  readonly key: (event: any) => string;
+  /** Maps the provider's payload to the message's payload. */
+  readonly map: (event: any) => unknown;
+}
+
+/** A webhook source. `secret` names an `env` entry holding the signing secret; it is never the value. */
+export interface WebhookSourceSpec {
+  readonly kind: "webhook";
+  readonly path: `/${string}`;
+  readonly verify: "github";
+  readonly secret: string;
+  readonly events: Readonly<Record<string, WebhookEventSpec>>;
+}
+
+/** An email source for approvals by reply. `secret`, `owner`, `from` and `send` name `env` entries (a secret, two variables and a send_email binding). */
+export interface EmailSourceSpec {
+  readonly kind: "email";
+  readonly secret: string;
+  readonly owner: string;
+  readonly from: string;
+  readonly send: string;
+  readonly message: string;
+}
+
+export type SourceSpec = WebhookSourceSpec | EmailSourceSpec;
+
+/** Declare a webhook source. Its name in `sources` becomes the route sender `@<name>`. */
+export function webhook<const S extends Omit<WebhookSourceSpec, "kind">>(spec: S): S & { readonly kind: "webhook" } {
+  return { ...spec, kind: "webhook" };
+}
+
+/** Declare an inbound email source. Its name in `sources` becomes the route sender `@<name>`. */
+export function inboundEmail<const S extends Omit<EmailSourceSpec, "kind">>(spec: S): S & { readonly kind: "email" } {
+  return { ...spec, kind: "email" };
 }
 
 /** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron); "@timer" delivers timers an actor set for itself. */
 export type ExternalSender = "@clock" | "@ingress" | "@timer";
 
-export interface RouteSpec<A extends string = string, M extends string = string> {
-  readonly from: A | ExternalSender;
+export interface RouteSpec<A extends string = string, M extends string = string, Src extends string = string> {
+  readonly from: A | ExternalSender | `@${Src}`;
   readonly message: M;
   readonly to: A;
 }
@@ -121,12 +164,17 @@ export interface SystemSpec<
   Actors extends Record<string, ActorSpec>,
   Effects extends Record<string, EffectSpec>,
   Routes extends readonly RouteSpec[],
+  Sources extends Record<string, SourceSpec> = Record<never, SourceSpec>,
 > {
   readonly name: string;
   readonly description?: string;
   readonly messages: Msgs;
   readonly actors: Actors & { readonly [K in keyof Actors]: ActorRefs<NoInfer<Msgs>, NoInfer<Effects>> };
   readonly effects?: Effects;
+  /** Where the outside world enters: each name becomes a route sender `@<name>`. */
+  readonly sources?: Sources;
+  /** `notify`: the effect that tells a person an approval is waiting. */
+  readonly approvals?: { readonly notify: string };
   readonly routes: Routes;
 }
 
@@ -137,7 +185,8 @@ export interface System<
   Actors extends Record<string, ActorSpec> = Record<string, ActorSpec>,
   Effects extends Record<string, EffectSpec> = Record<string, EffectSpec>,
   Routes extends readonly RouteSpec[] = readonly RouteSpec[],
-> extends SystemSpec<Msgs, Actors, Effects, Routes> {
+  Sources extends Record<string, SourceSpec> = Record<string, SourceSpec>,
+> extends SystemSpec<Msgs, Actors, Effects, Routes, Sources> {
   readonly kind: typeof SYSTEM_BRAND;
 }
 
@@ -153,9 +202,10 @@ export function message<const S extends StandardSchemaV1>(spec: MessageSpec<S>):
 export function defineSystem<
   const Msgs extends Record<string, MessageSpec>,
   const Actors extends Record<string, ActorSpec>,
-  const Routes extends readonly RouteSpec<Extract<keyof NoInfer<Actors>, string>, Extract<keyof NoInfer<Msgs>, string>>[],
+  const Routes extends readonly RouteSpec<Extract<keyof NoInfer<Actors>, string>, Extract<keyof NoInfer<Msgs>, string>, Extract<keyof NoInfer<Sources>, string>>[],
   const Effects extends Record<string, EffectSpec> = Record<never, EffectSpec>,
->(spec: SystemSpec<Msgs, Actors, Effects, Routes>): System<Msgs, Actors, Effects, Routes> {
+  const Sources extends Record<string, SourceSpec> = Record<never, SourceSpec>,
+>(spec: SystemSpec<Msgs, Actors, Effects, Routes, Sources>): System<Msgs, Actors, Effects, Routes, Sources> {
   return { ...spec, kind: SYSTEM_BRAND };
 }
 
@@ -173,7 +223,7 @@ export function durationMs(d: string): number | null {
 
 // ---- Types derived from a declaration, used by actor implementations and the runtime ----
 
-type AnySystem = System<Record<string, MessageSpec>, Record<string, ActorSpec>, Record<string, EffectSpec>, readonly RouteSpec[]>;
+type AnySystem = System<Record<string, MessageSpec>, Record<string, ActorSpec>, Record<string, EffectSpec>, readonly RouteSpec[], Record<string, SourceSpec>>;
 
 export type ActorName<S extends AnySystem> = Extract<keyof S["actors"], string>;
 export type MessageName<S extends AnySystem> = Extract<keyof S["messages"], string>;

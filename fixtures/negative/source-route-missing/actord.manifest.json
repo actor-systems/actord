@@ -1,0 +1,71 @@
+{
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "source-route-missing",
+    "description": "A GitHub source maps issues.opened to issue.opened, but no route carries it from @github"
+  },
+  "actors": [
+    {
+      "binding": "TRIAGE",
+      "budget": null,
+      "effects": [],
+      "justification": [
+        "state"
+      ],
+      "kind": "deterministic",
+      "name": "Triage",
+      "purpose": "Triages what arrives",
+      "receives": [
+        "issue.opened"
+      ],
+      "schedules": [],
+      "sends": []
+    }
+  ],
+  "messages": [
+    {
+      "description": "An issue was opened",
+      "name": "issue.opened",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "number": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number"
+        ],
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@ingress",
+      "message": "issue.opened",
+      "to": "Triage"
+    }
+  ],
+  "effects": [],
+  "sources": [
+    {
+      "events": [
+        {
+          "event": "issues.opened",
+          "message": "issue.opened"
+        }
+      ],
+      "kind": "webhook",
+      "message": null,
+      "name": "github",
+      "path": "/hooks/github",
+      "verify": "github"
+    }
+  ],
+  "approvals": null
+}

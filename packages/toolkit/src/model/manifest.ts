@@ -63,6 +63,22 @@ export interface ManifestEffect {
   probe: { every: string } | null;
   /** The message whose handler settles the job with ctx.settleJob. */
   completes: { message: string } | null;
+  /** Present only when true: the effect makes something public. */
+  publishes?: true;
+}
+
+export interface ManifestSource {
+  name: string;
+  /** "webhook" or "email". */
+  kind: string;
+  /** A webhook's path; null for email. */
+  path: string | null;
+  /** A webhook's signature scheme; null for email. */
+  verify: string | null;
+  /** A webhook's event names and the messages they become. */
+  events: Array<{ event: string; message: string }>;
+  /** An email source's decision message; null for a webhook. */
+  message: string | null;
 }
 
 export interface Manifest {
@@ -73,6 +89,9 @@ export interface Manifest {
   messages: ManifestMessage[];
   routes: ManifestRoute[];
   effects: ManifestEffect[];
+  sources: ManifestSource[];
+  /** The effect that tells a person an approval is waiting; null when the system declares none. */
+  approvals: { notify: string } | null;
 }
 
 const byName = <T extends { name: string }>(a: T, b: T) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
@@ -118,7 +137,24 @@ export function normalize(system: System): Manifest {
       deadline: e.deadline ?? null,
       probe: e.probe ? { every: e.probe.every } : null,
       completes: e.completes ? { message: e.completes.message } : null,
+      ...(e.publishes === true ? { publishes: true as const } : {}),
     }))
+    .sort(byName);
+  const sources = Object.entries(system.sources ?? {})
+    .map(([name, src]): ManifestSource =>
+      src.kind === "webhook"
+        ? {
+            name,
+            kind: "webhook",
+            path: src.path,
+            verify: src.verify,
+            events: Object.entries(src.events ?? {})
+              .map(([event, spec]) => ({ event, message: spec.message }))
+              .sort((a, b) => (a.event < b.event ? -1 : a.event > b.event ? 1 : 0)),
+            message: null,
+          }
+        : { name, kind: "email", path: null, verify: null, events: [], message: src.message },
+    )
     .sort(byName);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
@@ -128,6 +164,8 @@ export function normalize(system: System): Manifest {
     messages: sortKeys(messages),
     routes,
     effects: sortKeys(effects),
+    sources: sortKeys(sources),
+    approvals: system.approvals ? { notify: system.approvals.notify } : null,
   };
 }
 
@@ -143,6 +181,6 @@ function jsonSchemaOf(schema: unknown): Record<string, unknown> | null {
 
 export function serializeManifest(m: Manifest): string {
   // $comment first for people reading the file; the rest in fixed order.
-  const { $comment, schemaVersion, system, actors, messages, routes, effects } = m;
-  return `${JSON.stringify({ $comment, schemaVersion, system, actors, messages, routes, effects }, null, 2)}\n`;
+  const { $comment, schemaVersion, system, actors, messages, routes, effects, sources, approvals } = m;
+  return `${JSON.stringify({ $comment, schemaVersion, system, actors, messages, routes, effects, sources, approvals }, null, 2)}\n`;
 }

@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "PUBLISHES_WITHOUT_APPROVAL"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}
