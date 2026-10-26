@@ -5,9 +5,10 @@ Authoritative intent: `docs/charter.md`. Platform facts: `docs/ground-truth.md`.
 Gate evidence: `npm run verify` → `verify-report.json` + `docs/verification-report.md`.
 
 ## Current gate
-**v0.2.0: one repository, both plugins (decision 0014); every gate passes.** `packages/toolkit`, `plugins/claude/`,
-and `plugins/codex/` share version 0.2.0 and the local tag `actord--v0.2.0` (never pushed without
-authorization; there's no remote). `actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. The
+**v0.2.0 published; every gate passes.** Public at https://github.com/actor-systems/actord (CI green), with
+the wiki generated from `docs/wiki/` (decision 0015); `@actord/toolkit` 0.2.0 is on npm, the same bytes the
+plugins ship. `packages/toolkit`, `plugins/claude/`, and `plugins/codex/` share version 0.2.0 and the tag
+`actord--v0.2.0` (`0020f21`); `actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. The
 Codex plugin moved in on `codex-plugin` (its own agent; relicensed Apache-2.0; reference templates ship only in
 its distribution) and was merged by the owner. Release runs L and M are the Claude plugin's eval record
 (`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds); the Codex plugin has none yet.
@@ -55,8 +56,10 @@ Report: `docs/implementation-report.md`.
   (CLI file mode), absolute path in a snapshot, skipped checks counted as passing, machine paths in reports.
 
 ## Next
-- ASK OWNER before any model-backed eval run (either plugin), before pushing or moving a tag, and before
-  publishing (GitHub `actor-systems/actord`, npm `@actord/toolkit`, either plugin directory).
+- ASK OWNER before any model-backed eval run (either plugin), before moving a pushed tag, before publishing
+  a new npm version, and before submitting to either plugin directory.
+- Next version: `actord init` still vendors the plugin's toolkit tarball (offline installs, an exact pin);
+  its comments in `init.ts` and `build.mjs` still say "until it's on npm".
 - A later release: consider Pele (obsidianmd/pele) to draw the Room's topology from `actord graph --format
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 

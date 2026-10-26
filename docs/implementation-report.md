@@ -63,7 +63,7 @@ plugins/claude/
   types/index.d.ts                   the Room's $.state contract
   bin/actord                         sh launcher: project pin, else dist/actord.mjs
   dist/actord.mjs, VERSION           the CLI, one dependency-free ESM file (127 KB)
-  dist/actord-toolkit-0.2.0.tgz      the toolkit package `actord init` vendors until it's on npm
+  dist/actord-toolkit-0.2.0.tgz      the toolkit package, the same bytes as npm's; `actord init` vendors it
   tests/                             mod tests and recorded CLI fixtures
   evals/                             12 cases + offline scaffolds
 plugins/codex/                       the Codex plugin: manifest, six skills, launcher, dist (decision 0014)
@@ -227,7 +227,8 @@ None: every check passes (`npm run verify`, 2026-10-26T02:34:07.344Z).
 - Mods are early access; the Room is tested on Claude Code 2.1.310 in the terminal and 2.1.308 in the Desktop
   app. In the Desktop app the first `/actord-room` of a session can be flagged "isn't a command here"; it runs
   anyway. The core works without the Room.
-- `@actord/toolkit` isn't on npm; `actord init` vendors the tarball the plugin ships.
+- `@actord/toolkit` 0.2.0 is on npm. `actord init` still vendors the plugin's copy (the same bytes), so a new
+  project installs offline and pins exactly the plugin's version.
 - The mod type-check needs this build's declarations on the machine (CI reports it blocked without them).
 
 ## Setup
