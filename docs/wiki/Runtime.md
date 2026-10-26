@@ -41,7 +41,7 @@ a route sender (`@github`), and routes deliver its messages like any other. Acto
 - **Approval emails.** Declare `approvals: { notify: "<effect>" }` and give that effect the `approvalEmail`
   adapter, with `idempotency: "none"`. The default email includes the effect's input as JSON; supply `describe()`
   if inputs are sensitive.
-- **Finding a missed event.** GitHub doesn't redeliver a delivery that got an error. `source.invalid` and
+- **Finding a missed event.** GitHub doesn't redeliver failed deliveries automatically (a timeout, `4xx` or `5xx` is a failure); they can be redelivered by hand for a limited period. `source.invalid` and
   `source.failed` events carry the delivery id; `actord events` shows them.
 
 Not guaranteed: GitHub signs only the body, so a captured delivery replayed under a new `X-GitHub-Delivery` is

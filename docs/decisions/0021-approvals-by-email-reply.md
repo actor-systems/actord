@@ -32,8 +32,8 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
    2. *DMARC.* `dmarc=fail` in any `Authentication-Results` header refuses the reply.
    3. *Auto-replies.* Mail with an `Auto-Submitted` header other than `no` is ignored without a reply, so an
       out-of-office answer and a re-ask cannot loop. Every reply the handler sends is itself marked
-      `Auto-Submitted: auto-replied` and carries `In-Reply-To`.
-   4. *Token, then decision.* Missing, edited or expired tokens, and unparsable decisions, get a reply saying so.
+      `Auto-Submitted: auto-replied` and carries `In-Reply-To`, which is left out when the incoming Message-ID is absent or unsafe to repeat in a header.
+   4. *Token, then decision.* A missing or edited token gets one generic reply that doesn't tell the two apart; an expired token and an unparsable decision each get a reply saying so.
 5. **Authentication is trusted only from a configured server.** A sender can write their own
    `Authentication-Results: …; dmarc=pass` header. So the reply is `authenticated: "pass"` only when the **topmost**
    `Authentication-Results` header's authserv-id equals the value in `env[authserv]` and its `dmarc` result, read
@@ -55,7 +55,7 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
 Before any app sets `authserv`, spike 6 must confirm against real Gmail and Cloudflare Email Routing: the authserv-id
 Cloudflare writes; that its `Authentication-Results` header is topmost; that Cloudflare removes inbound headers
 claiming its id (RFC 8601 §5); that the subject token survives a Gmail reply; and that the envelope sender of a Gmail
-message equals the owner's address. Until then every email reply is `"unknown"`.
+message equals the owner's address. While apps leave `authserv` unset, every email reply is `"unknown"`.
 
 ## Known edges
 - Old auto-responders that set only `Precedence` or `X-Autoreply` are not detected; they get one re-ask.

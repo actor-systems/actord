@@ -247,8 +247,8 @@ A webhook arrives once per provider, at one URL. It needs a signature check and 
 sources: {
   github: webhook({
     path: "/hooks/github",
-    secret: "GITHUB_WEBHOOK_SECRET",                    // HMAC check (X-Hub-Signature-256) before anything else
-    id: (req) => req.headers.get("x-github-delivery"),  // becomes the envelope id, so redeliveries are dropped
+    verify: "github",
+    secret: "GITHUB_WEBHOOK_SECRET",                    // names an env entry; HMAC check (X-Hub-Signature-256) before anything else
     events: {
       "issues.opened": { message: "issue.opened", key: (e) => issueKey(e.repository, e.issue.number), map: (e) => ({ ... }) },
       "pull_request_review.submitted": { message: "pr.reviewed", key: (e) => issueKeyFromBranch(e.repository, e.pull_request.head.ref), map: ... },
@@ -274,6 +274,11 @@ routes: [
 - An unmapped event is answered `204` and recorded as `source.ignored`.
 - An event that fails verification is answered `401` and recorded.
 - An event that fails mapping or validation is answered `400` and recorded with the delivery id. Because GitHub won't redeliver on its own, the record is what lets someone find and redeliver it.
+
+- **Amended (2026-10-26, plan 2, decision 0017):** the code differs from the sketch above.
+  - `webhook()` takes `path`, `verify: "github"`, `secret` (an `env` entry name) and `events`. There is no `id` option: the envelope id is always `X-GitHub-Delivery`, so GitHub's redeliveries are dropped.
+  - Delivery uses `deliverExternal` (the same path `ingress` uses), not `ingress` itself.
+  - Answers: `202` delivered or duplicate; `204` unmapped (`source.ignored`); `400` invalid (`source.invalid`); `401` failed verification (`source.rejected`); `405` not `POST`; `500` secret not configured, no route, or delivery or handler failed (`source.rejected` or `source.failed`).
 
 ### 6.3 Checks and derived configuration
 

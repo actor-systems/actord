@@ -21,7 +21,7 @@
   effect declared `publishes: true`; approve those in GitHub. Strict envelope-sender equality also refuses an
   owner whose provider rewrites MAIL FROM (VERP, SRS); it fails closed. Old auto-responders that set only
   `Precedence` or `X-Autoreply` aren't detected and get one re-ask.
-- **GitHub doesn't redeliver failures.** A `4xx`/`5xx` answer is final. `source.invalid` and `source.failed`
+- **GitHub doesn't redeliver failures automatically.** Failed deliveries can be redelivered manually (UI or API) for a limited period; a timeout counts as a failure, as do a `4xx` and `5xx`. `source.invalid` and `source.failed`
   records (with the delivery id) are how a missed event is found. A captured signed delivery can be replayed
   under a new `X-GitHub-Delivery` and is then a new event: keep the secret, use HTTPS, make handlers idempotent
   on business keys.

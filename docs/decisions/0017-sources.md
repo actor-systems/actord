@@ -35,13 +35,13 @@ visible to `actord check` and the graph, and handled by code the toolkit owns.
    | `405` | not `POST` | none |
    | `500` | secret not configured, no route, unknown message, delivery failed, or the receiver's handler failed | `source.rejected` or `source.failed` |
 
-   Every record has the actor `@<source>`; those with a delivery have it as `messageId`.
+   Every record has the actor `@<source>`. Once the delivery id is known and the signature passed, it is the record's `messageId`; the `signature`, `secret_missing` and `delivery_id_missing` records carry the delivery id, if any, in `detail` instead.
 6. **Ids come from the provider's delivery id.** The envelope id is `X-GitHub-Delivery`, so GitHub redelivering the
    same delivery is `duplicate` (answered `202`) and runs nothing twice. `key` in an event's declaration picks the
    receiving actor's instance; it is not a dedupe id. An email's envelope id is `deriveId("email", <Message-ID>)`.
-7. **GitHub does not redeliver a delivery that got a `4xx` or `5xx`.** Nobody retries for us. So a failure is never
+7. **GitHub does not redeliver failed deliveries automatically; they can be redelivered manually (UI or API) for a limited period. A timeout counts as a failure, as do a `4xx` or `5xx`.** Nobody retries for us. So a failure is never
    silent: `source.invalid` and `source.failed` carry the delivery id, and that record is how a missed event is
-   found and redelivered from GitHub's delivery log (`actord events` shows it).
+   found and redelivered by hand from GitHub's delivery log (`actord events` shows it).
 8. **Header values that come from the sender are cut to 200 characters before they are recorded,** and a refusal says
    as little as it can.
 
@@ -55,4 +55,4 @@ redelivery, not against a replay.
 ## Consequences
 - An app's `fetch()` calls `handleWebhook` first; its `email()` calls `handleEmail`. Nothing else is needed for a source.
 - Adding another provider means another `verify` value and another handler; the declaration shape stays.
-- Spec §6 is implemented for webhooks and email. Other channels are not.
+- Spec §6 is implemented for webhooks and email, as amended in §6.2: no `id` option (the delivery id is fixed), `deliverExternal` rather than `ingress`, and `405`/`500` answers. Other channels are not.
