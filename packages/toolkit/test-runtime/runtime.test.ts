@@ -8,7 +8,7 @@ import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
 const probe = (key: string) => env.PROBE.getByName(key);
-const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted" | "gateway.job-plain") =>
+const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted" | "gateway.job-plain" | "gateway.job-approval") =>
   ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
 
 it("[denied-capability] an effect the actor didn't declare is refused and nothing is queued", async () => {
@@ -668,18 +668,71 @@ it("[job-early-completion-wins] a completion recorded while the start runs wins 
 });
 
 it("[job-settle-while-cancelling] a completion that arrives while a cancel is pending settles the job, and the cancel's answer is dropped", async () => {
+  // Made here, in the test's context: a promise made inside the adapter belongs to the Durable Object, and resolving it from the test is refused as cross-object I/O.
   let answer!: (confirmed: boolean) => void;
-  overrideEffect("gateway.job", { start: async () => ({ runId: "sc" }), cancel: () => new Promise<boolean>((r) => (answer = r)) });
+  const reply = new Promise<boolean>((r) => (answer = r));
+  let cancels = 0;
+  overrideEffect("gateway.job", {
+    start: async () => ({ runId: "sc" }),
+    cancel: () => {
+      cancels++;
+      return reply;
+    },
+  });
   await startJob("jsc");
   await settle(env, system);
   await cancelJob("jsc");
   await jobDone("jsc");
   expect(await probe("jsc").settled()).toEqual([{ key: "jsc", ok: true }]);
-  answer(true);
-  await settle(env, system);
-  expect(await probe("jsc").outcomes()).toMatchObject([{ key: "jsc", status: "confirmed" }]);
   expect(await jobRow("jsc")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
+  answer(true); // the cancel confirms, after the job already settled
+  await settle(env, system); // waits until the cancel's answer has been handled (settle counts it in flight)
+  expect(cancels).toBe(1);
+  expect(await jobRow("jsc")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
+  expect(await probe("jsc").outcomes()).toMatchObject([{ key: "jsc", status: "confirmed" }]);
   expect(await resultRows("jsc")).toBe(1);
+});
+
+it("[job-early-completion-approval] a completion that arrives while the job awaits approval settles it once it is approved and starts", async () => {
+  let starts = 0;
+  overrideEffect("gateway.job-approval", {
+    start: async () => {
+      starts++;
+      return { runId: "ap" };
+    },
+  });
+  await send("jap", "gateway.job-approval");
+  await settle(env, system);
+  expect(await jobRow("jap", "gateway.job-approval")).toMatchObject({ status: "awaiting_approval" });
+  await ingress(env, system, "Probe", "probe.job.done", { key: "jap", ok: true, effect: "gateway.job-approval" }, { key: "jap" });
+  expect(await probe("jap").settled()).toEqual([{ key: "jap", ok: true }]);
+  expect(starts).toBe(0); // kept, not run: a person still has to approve it
+  expect(await probe("jap").decide("jap", "approve")).toMatchObject({ status: "confirmed", value: { finished: true } });
+  await settle(env, system);
+  expect(starts).toBe(1);
+  expect(await probe("jap").outcomes()).toMatchObject([{ key: "jap", status: "confirmed" }]);
+  expect(await jobRow("jap", "gateway.job-approval")).toMatchObject({ status: "confirmed", body: { settledBy: "message", handle: { runId: "ap" } } });
+  expect(await resultRows("jap")).toBe(1);
+});
+
+it("[job-early-completion-denied] a denial overrides a completion kept while the job awaited approval", async () => {
+  let starts = 0;
+  overrideEffect("gateway.job-approval", {
+    start: async () => {
+      starts++;
+      return { runId: "dn" };
+    },
+  });
+  await send("jdn", "gateway.job-approval");
+  await settle(env, system);
+  await ingress(env, system, "Probe", "probe.job.done", { key: "jdn", ok: true, effect: "gateway.job-approval" }, { key: "jdn" });
+  expect(await probe("jdn").settled()).toEqual([{ key: "jdn", ok: true }]);
+  expect(await probe("jdn").decide("jdn", "deny")).toMatchObject({ status: "denied" });
+  await settle(env, system);
+  expect(starts).toBe(0);
+  expect(await jobRow("jdn", "gateway.job-approval")).toMatchObject({ status: "denied", body: { earlyOutcome: { status: "confirmed" } } });
+  expect(await probe("jdn").outcomes()).toEqual([]); // a denied effect sends no result, kept completion or not
+  expect(await resultRows("jdn")).toBe(0);
 });
 
 it("[job-early-completion-orphan] an unkeyed start cut off by a restart settles by the completion kept for it, not in doubt", async () => {
