@@ -830,14 +830,14 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   /**
    * Look at a waiting job in the background, like an effect attempt, bounded by the effect's timeout. The
-   * next look is booked before this one runs, so a probe lost with the instance is simply tried again then.
+   * next look is booked first: a probe lost with the instance is simply tried again then, and a look that
+   * comes due while a probe still runs waits a period instead of holding the wake in the past.
    */
   function startProbe(job: JobRow): void {
-    if (inflight.has(job.id)) return;
     const { everyMs } = jobTiming(system.effects?.[job.body.name] ?? {});
     const deadlineAt = job.body.deadlineAt ?? now();
     rescheduleJob(sql, job.id, nextLookAt(now(), everyMs, deadlineAt), job.body);
-    if (everyMs === null) return; // no probe declared: the next look is the deadline
+    if (everyMs === null || inflight.has(job.id)) return; // no probe declared (the next look is the deadline), or one is running
     const adapter = adapterFor(job.body.name) as JobAdapter | undefined;
     const { timeoutMs } = resolveBudget(job.body.name);
     const controller = new AbortController();

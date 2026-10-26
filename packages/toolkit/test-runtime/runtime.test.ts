@@ -551,3 +551,20 @@ it("[job-arms-alarm] a waiting job holds actord's wake at its next look", async 
   // The probe period (1m) is nearer than the deadline (1h) and the hourly schedule, so it sets the wake.
   expect(wake).toBe(row!.nextAt);
 });
+
+it("[job-probe-in-flight] a look that comes due while a probe still runs books the next one, not an immediate wake", async () => {
+  overrideEffectBudget("gateway.job", { timeoutMs: 150 });
+  let probes = 0;
+  overrideEffect("gateway.job", { start: async () => ({ runId: "busy" }), probe: () => { probes++; return new Promise(() => {}); } });
+  await startJob("jpf");
+  await settle(env, system);
+  await probeDue("jpf");
+  await settle(env, system, { rounds: 1 }); // the probe starts, and hangs
+  await probeDue("jpf"); // its next look is due while it still runs
+  const before = Date.now();
+  await settle(env, system, { rounds: 1 });
+  expect(probes).toBe(1);
+  // Left in the past, next_at would hold actord's wake there and re-fire the alarm until the probe ends.
+  expect((await jobRow("jpf"))!.nextAt).toBeGreaterThanOrEqual(before + 60_000);
+  await settle(env, system); // let the hung probe reach its timeout
+});
