@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 import { classify, compareVersions } from "../classify.ts";
@@ -8,6 +9,8 @@ import { classify, compareVersions } from "../classify.ts";
  * runtime's inbox; seeing the same item again in a later poll is a business duplicate, handled here.
  */
 export class ReleaseLedger extends DurableObject<Env> {
+  readonly lifecycle = Lifecycle.install(this);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS releases (
@@ -16,7 +19,7 @@ export class ReleaseLedger extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS latest (feed_id TEXT PRIMARY KEY, version TEXT NOT NULL)");
   }
 
-  actor = actorRuntime({ ctx: this.ctx, env: this.env }, system, "ReleaseLedger", {
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "ReleaseLedger", {
     "release.observed": ({ id, payload }, ctx) => {
       const seen = ctx.sql.exec("SELECT 1 FROM releases WHERE item_id = ?", payload.itemId).toArray().length > 0;
       if (seen) return ctx.note("already recorded", { itemId: payload.itemId });
@@ -55,10 +58,6 @@ export class ReleaseLedger extends DurableObject<Env> {
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  alarm() {
-    return this.actor.alarm();
   }
 
   releases(): Array<{ item_id: string; version: string; severity: string | null }> {

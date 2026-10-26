@@ -22,7 +22,7 @@
       "receives": [
         "ping.sent"
       ],
-      "schedule": null,
+      "schedules": [],
       "sends": []
     },
     {
@@ -40,11 +40,14 @@
         "ping.due",
         "ping.kicked"
       ],
-      "schedule": {
-        "every": "5m",
-        "everyMs": 300000,
-        "message": "ping.due"
-      },
+      "schedules": [
+        {
+          "cron": null,
+          "every": "5m",
+          "everyMs": 300000,
+          "message": "ping.due"
+        }
+      ],
       "sends": [
         "ping.sent"
       ]
@@ -62,7 +65,7 @@
       "receives": [
         "ping.sent"
       ],
-      "schedule": null,
+      "schedules": [],
       "sends": [
         "ping.sent"
       ]
@@ -157,9 +160,13 @@
   "effects": [
     {
       "approval": "none",
+      "completes": null,
+      "deadline": null,
       "description": "Message the operator about a sequence gap",
       "idempotency": "key",
+      "kind": "call",
       "name": "notify.operator",
+      "probe": null,
       "reconcile": false,
       "result": null
     }

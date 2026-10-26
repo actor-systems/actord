@@ -11,7 +11,7 @@ export default defineSystem({
       kind: "deterministic",
       purpose: "Sends a numbered ping on a schedule or on request",
       justification: ["scheduling", "state"],
-      schedule: { every: "5m", message: "ping.due" },
+      schedules: [{ every: "5m", message: "ping.due" }],
     },
     Ponger: {
       binding: "PONGER",

@@ -17,7 +17,7 @@ export default defineSystem({
       kind: "deterministic",
       purpose: "Watches one feed (one instance per feed id) and reports every item it sees",
       justification: ["identity", "scheduling"],
-      schedule: { every: "15m", message: "feed.poll.due" },
+      schedules: [{ every: "15m", message: "feed.poll.due" }],
       effects: ["feed.fetch"],
     },
     ReleaseLedger: {

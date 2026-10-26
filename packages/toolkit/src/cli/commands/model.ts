@@ -5,7 +5,7 @@ import { checkProject, type Diagnostic } from "../../model/check.ts";
 import { type DiffResult, diffManifests, EMPTY_MANIFEST } from "../../model/diff.ts";
 import { fingerprint } from "../../model/fingerprint.ts";
 import { loadProject, type Project } from "../../model/load.ts";
-import { MANIFEST_FILE, type Manifest, serializeManifest } from "../../model/manifest.ts";
+import { MANIFEST_FILE, type Manifest, scheduleLabel, serializeManifest } from "../../model/manifest.ts";
 import { renderMermaid } from "../../model/mermaid.ts";
 import type { CommandResult } from "../output.ts";
 import { findProjectRoot } from "../project.ts";
@@ -127,7 +127,7 @@ export function renderGraph(m: Manifest): string {
     "Actors",
   ];
   for (const a of m.actors) {
-    const facts = [a.kind, a.schedule ? `every ${a.schedule.every}` : null, a.effects.length ? `effects ${a.effects.join(", ")}` : null, `justified by ${a.justification.join(", ") || "nothing"}`].filter(Boolean);
+    const facts = [a.kind, a.schedules.length ? a.schedules.map(scheduleLabel).join(" · ") : null, a.effects.length ? `effects ${a.effects.join(", ")}` : null, `justified by ${a.justification.join(", ") || "nothing"}`].filter(Boolean);
     lines.push(`  ${a.name} (${a.binding}): ${facts.join(" · ")}`, `    ${a.purpose}`);
   }
   if (m.effects.length) {

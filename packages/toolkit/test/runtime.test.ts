@@ -2,9 +2,10 @@
 // runtime uses in workerd. Here a transaction waits a turn before it starts, which lets other copies of a
 // message pass the inbox check meanwhile, as workerd occasionally does under load.
 import { DatabaseSync } from "node:sqlite";
+import { Lifecycle } from "agents/lifecycle";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { actorRuntime, type DurableObjectStateLike, type Envelope } from "../src/runtime/index.ts";
+import { actorRuntime, type Envelope } from "../src/runtime/index.ts";
 import { defineSystem, message } from "../src/system.ts";
 
 const system = defineSystem({
@@ -15,17 +16,19 @@ const system = defineSystem({
   routes: [{ from: "@ingress", message: "count.add", to: "Counter" }],
 });
 
-function slowStartStorage(): DurableObjectStateLike {
+/** A Durable Object's state with a slow-starting transaction, and a real Lifecycle installed on it. */
+function slowStartObject() {
   const db = new DatabaseSync(":memory:");
-  let alarm: number | null = null;
   let tail: Promise<unknown> = Promise.resolve();
-  return {
+  const ctx = {
     id: { name: "main", toString: () => "main" },
+    // Lifecycle runs its startup inside this; nothing else here competes for the input gate.
+    blockConcurrencyWhile: <T>(closure: () => Promise<T>) => closure(),
     storage: {
       sql: {
-        exec(query: string, ...bindings: unknown[]) {
-          const rows = db.prepare(query).all(...(bindings as never[])) as never[];
-          return { toArray: () => rows, one: () => rows[0]! };
+        exec<T>(query: string, ...bindings: unknown[]) {
+          const rows = db.prepare(query).all(...(bindings as never[])) as T[];
+          return { toArray: () => rows, one: () => rows[0]!, [Symbol.iterator]: () => rows[Symbol.iterator]() };
         },
       },
       // Exclusive, as in workerd, but it only starts after a turn of the event loop.
@@ -46,20 +49,22 @@ function slowStartStorage(): DurableObjectStateLike {
         tail = result.catch(() => {});
         return result;
       },
-      setAlarm: (when: number) => void (alarm = when),
-      getAlarm: () => alarm,
+      // Lifecycle arms the alarm from its job queue; nothing here fires it.
+      setAlarm: async (_when: number) => {},
+      deleteAlarm: async () => {},
     },
   };
+  return { ctx, lifecycle: Lifecycle.install({ ctx } as never) };
 }
 
 beforeEach(() => void vi.spyOn(console, "log").mockImplementation(() => {}));
 afterEach(() => vi.restoreAllMocks());
 
 it("[duplicate-delivery] copies that pass the inbox check while the first copy's transaction waits are duplicates, not failures", async () => {
-  const ctx = slowStartStorage();
+  const { ctx, lifecycle } = slowStartObject();
   ctx.storage.sql.exec("CREATE TABLE count (n INTEGER NOT NULL)");
   ctx.storage.sql.exec("INSERT INTO count (n) VALUES (0)");
-  const counter = actorRuntime({ ctx, env: {} }, system, "Counter", {
+  const counter = actorRuntime({ lifecycle, ctx, env: {} }, system, "Counter", {
     "count.add": ({ payload }, c) => void c.sql.exec("UPDATE count SET n = n + ?", payload.n),
   });
   const envelope: Envelope = {
@@ -78,4 +83,9 @@ it("[duplicate-delivery] copies that pass the inbox check while the first copy's
   const receipts = await Promise.all(Array.from({ length: 10 }, (_, i) => counter.receive({ ...envelope, attempt: i + 1 })));
   expect(receipts.map((r) => r.status).sort()).toEqual(["handled", ...Array(9).fill("duplicate")].sort());
   expect(ctx.storage.sql.exec<{ n: number }>("SELECT n FROM count").one().n).toBe(1);
+});
+
+it("[undeclared-actor] actorRuntime for an actor the system doesn't declare names it, rather than failing on its schedules", () => {
+  const { ctx, lifecycle } = slowStartObject();
+  expect(() => actorRuntime({ lifecycle, ctx, env: {} }, system, "Nobody" as "Counter", {} as never)).toThrow("actord: Nobody is not declared in system inbox-race");
 });

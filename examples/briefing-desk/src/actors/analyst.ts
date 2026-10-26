@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type Envelope, type HandlerContext } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 import { webhookGateway } from "../gateway.ts";
@@ -24,6 +25,8 @@ type Ctx = HandlerContext<typeof system, "Analyst">;
  * result for an older generation, or for an item no longer being analyzed, is stale and ignored.
  */
 export class Analyst extends DurableObject<Env> {
+  readonly lifecycle = Lifecycle.install(this);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS item (
@@ -32,7 +35,7 @@ export class Analyst extends DurableObject<Env> {
   }
 
   actor = actorRuntime(
-    { ctx: this.ctx, env: this.env },
+    { lifecycle: this.lifecycle, ctx: this.ctx, env: this.env },
     system,
     "Analyst",
     {
@@ -68,11 +71,11 @@ export class Analyst extends DurableObject<Env> {
         const item = load(ctx);
         if (item?.status !== "awaiting_approval") return ctx.note(`no briefing awaiting approval (status ${item?.status ?? "unknown"})`);
         if (payload.decision === "approve") {
-          ctx.approve("notify.brief", item.item_id);
+          ctx.approve("notify.brief", item.item_id, { by: payload.by });
           ctx.sql.exec("UPDATE item SET status = 'sending'");
           update(ctx, { status: "sending", reason: `approved by ${payload.by}` });
         } else {
-          ctx.deny("notify.brief", item.item_id, `refused by ${payload.by}`);
+          ctx.deny("notify.brief", item.item_id, `refused by ${payload.by}`, { by: payload.by });
           ctx.sql.exec("UPDATE item SET status = 'denied'");
           update(ctx, { status: "denied", reason: `refused by ${payload.by}` });
         }
@@ -94,10 +97,6 @@ export class Analyst extends DurableObject<Env> {
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  alarm() {
-    return this.actor.alarm();
   }
 
   item(): Item | null {

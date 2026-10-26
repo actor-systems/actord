@@ -21,11 +21,14 @@
         "ping.due",
         "ping.kicked"
       ],
-      "schedule": {
-        "every": "5m",
-        "everyMs": 300000,
-        "message": "ping.due"
-      },
+      "schedules": [
+        {
+          "cron": null,
+          "every": "5m",
+          "everyMs": 300000,
+          "message": "ping.due"
+        }
+      ],
       "sends": [
         "ping.sent"
       ]
@@ -45,7 +48,7 @@
       "receives": [
         "ping.sent"
       ],
-      "schedule": null,
+      "schedules": [],
       "sends": []
     }
   ],

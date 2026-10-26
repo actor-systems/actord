@@ -65,7 +65,7 @@ Where the plugin's parts run, per current documentation:
 
 **Make the compiler the first critic.** Shape the system declaration so that undeclared routes, mismatched payloads, and missing handlers are TypeScript errors wherever the type system can express them. With a TypeScript code-intelligence plugin installed, Claude Code receives compiler diagnostics after each edit, so contract violations reach the agent at edit time, not review time. `actord check` covers what types cannot express.
 
-**Actors are native runtime components, not simulated workers.** For the first version, favor native Durable Object classes and the Agents SDK when its scheduling, queueing, or agent capabilities are needed. Do not require all actors to inherit from a custom universal `ActorHost`. Lightweight helpers, generated types, and conventions may wrap native APIs; native behavior remains accessible.
+**Actors are native runtime components, not simulated workers.** For the first version, favor native Durable Object classes that install the Agents SDK's `Lifecycle`; actord runs as one capability on it, so SDK capabilities such as harnesses can share the object. Do not require all actors to inherit from a custom universal `ActorHost`. Lightweight helpers, generated types, and conventions may wrap native APIs; native behavior remains accessible.
 
 **Actor boundaries must be justified.** Give an entity its own actor when it benefits from distinct persistent identity, state ownership, lifecycle, concurrency/failure isolation, scheduling, or permissions. Otherwise use an ordinary function, tool, or module. The design skill, backed by the boundary-critic subagent, should actively challenge needless agent/actor proliferation.
 

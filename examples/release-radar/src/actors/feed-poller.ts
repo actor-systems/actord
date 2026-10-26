@@ -1,17 +1,20 @@
 import { DurableObject } from "cloudflare:workers";
+import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type Envelope } from "@actord/toolkit/runtime";
 import system from "../../system.ts";
 import { httpFeedSource } from "../feeds.ts";
 
 /** One instance per feed id. Polls on its schedule; the fetch is an effect, so it runs outside the handler's transaction. */
 export class FeedPoller extends DurableObject<Env> {
+  readonly lifecycle = Lifecycle.install(this);
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS feed (id INTEGER PRIMARY KEY CHECK (id = 1), feed_id TEXT NOT NULL, url TEXT NOT NULL)");
   }
 
   actor = actorRuntime(
-    { ctx: this.ctx, env: this.env },
+    { lifecycle: this.lifecycle, ctx: this.ctx, env: this.env },
     system,
     "FeedPoller",
     {
@@ -40,9 +43,5 @@ export class FeedPoller extends DurableObject<Env> {
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  alarm() {
-    return this.actor.alarm();
   }
 }

@@ -1,7 +1,18 @@
 // `actord check`: what the type system can't express. Hard errors fail the check; warnings are advice.
 // Every diagnostic has a stable code so tests, hooks, and graders can match on it.
+import { parseCronExpression } from "cron-schedule";
 import type { Project } from "./load.ts";
+import { durationMs } from "../system.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "./manifest.ts";
+
+function cronParses(expr: string): boolean {
+  try {
+    parseCronExpression(expr);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type Severity = "error" | "warning";
 
@@ -15,7 +26,7 @@ export interface Diagnostic {
 
 const ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 const MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
-const EXTERNAL = new Set(["@clock", "@ingress"]);
+const EXTERNAL = new Set(["@clock", "@ingress", "@timer"]);
 
 export function checkProject(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
@@ -38,10 +49,14 @@ export function checkProject(project: Project): Diagnostic[] {
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
       add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
-    if (a.schedule) {
-      if (a.schedule.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${a.schedule.every}" isn't a duration like 15m`);
-      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === a.schedule!.message))
-        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${a.schedule.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${a.schedule.message}", to: "${a.name}" }.`);
+    const scheduled = new Set<string>();
+    for (const s of a.schedules) {
+      if (s.cron !== null && !cronParses(s.cron)) add("error", "SCHEDULE_INVALID", a.name, `schedule cron "${s.cron}" isn't a valid cron expression like 0 9 * * *`);
+      else if (s.cron === null && s.everyMs === null) add("error", "SCHEDULE_INVALID", a.name, `schedule.every "${s.every}" isn't a duration like 15m`);
+      if (scheduled.has(s.message)) add("error", "SCHEDULE_DUPLICATE", a.name, `${a.name} schedules ${s.message} more than once`, "Keep one schedule per message; a second message gives a second cadence.");
+      scheduled.add(s.message);
+      if (!m.routes.some((r) => r.from === "@clock" && r.to === a.name && r.message === s.message))
+        add("error", "SCHEDULE_ROUTE_MISSING", a.name, `${a.name} schedules ${s.message} but no route delivers it from @clock`, `Add { from: "@clock", message: "${s.message}", to: "${a.name}" }.`);
     }
     for (const e of a.effects)
       if (!effects.has(e)) add("error", "EFFECT_UNDECLARED", a.name, `${a.name} requests effect "${e}", which the system doesn't declare`, "Declare it under effects, with its idempotency, or remove it.");
@@ -66,19 +81,35 @@ export function checkProject(project: Project): Diagnostic[] {
     const label = `${r.from} → ${r.message} → ${r.to}`;
     if (seen.has(label)) add("error", "ROUTE_DUPLICATE", label, `Route ${label} is declared twice`);
     seen.add(label);
-    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label, `${r.from} isn't a sender; use @clock, @ingress, or an actor`);
+    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label, `${r.from} isn't a sender; use @clock, @ingress, @timer, or an actor`);
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label, `Route message ${r.message} isn't declared`);
-    if (r.from === "@clock" && actors.get(r.to)?.schedule?.message !== r.message)
+    if (r.from === "@clock" && !actors.get(r.to)?.schedules.some((s) => s.message === r.message))
       add("error", "CLOCK_ROUTE_WITHOUT_SCHEDULE", label, `@clock delivers ${r.message} to ${r.to}, but ${r.to} has no schedule for it`);
   }
   for (const e of m.effects) {
+    for (const [field, v] of Object.entries(e.budget ?? {}))
+      if (!Number.isInteger(v) || v < 1) add("error", "EFFECT_BUDGET_INVALID", e.name, `${e.name} declares budget.${field} ${String(v)}, which isn't a positive whole number`, "Use a positive integer, or remove the field to inherit the actor's budget.");
     if (e.result) {
       if (!messages.has(e.result)) add("error", "EFFECT_RESULT_UNKNOWN_MESSAGE", e.name, `${e.name} delivers its outcome as ${e.result}, which isn't a declared message`);
       for (const a of m.actors.filter((a) => a.effects.includes(e.name)))
         if (!m.routes.some((r) => r.from === a.name && r.to === a.name && r.message === e.result))
           add("error", "EFFECT_RESULT_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests ${e.name}, whose outcome arrives as ${e.result}, but no route delivers ${e.result} from ${a.name} to itself`, `Add { from: "${a.name}", message: "${e.result}", to: "${a.name}" }.`);
+    }
+    if (e.expires !== undefined && e.approval !== "human")
+      add("warning", "APPROVAL_EXPIRES_IGNORED", e.name, `${e.name} sets expires: "${e.expires}" but has no approval: "human", so nothing waits to expire`, `Add approval: "human", or remove expires.`);
+    if (e.kind === "job") {
+      if (e.deadline === null || durationMs(e.deadline) === null)
+        add("error", "JOB_DEADLINE_MISSING", e.name, e.deadline === null ? `${e.name} is a job with no deadline, so a job that never reports back would wait forever` : `${e.name} has deadline "${e.deadline}", which isn't a duration like 2h`, `Add deadline: "2h": how long to wait before the outcome is in_doubt.`);
+      if (!e.probe && !e.completes)
+        add("warning", "JOB_UNOBSERVABLE", e.name, `${e.name} is a job with neither probe nor completes: nothing can tell it finished, so every run ends in_doubt at its deadline`, `Add completes: { message } and call ctx.settleJob from that message's handler, or probe: { every } with a probe() in the adapter.`);
+      if (e.completes) {
+        const done = e.completes.message;
+        for (const a of m.actors.filter((a) => a.effects.includes(e.name)))
+          if (!messages.has(done) || !m.routes.some((r) => r.message === done && r.to === a.name))
+            add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
+      }
     }
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)

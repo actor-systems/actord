@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-26T02:34:07.344Z",
+  "generatedAt": "2026-10-26T08:53:24.817Z",
   "versions": {
     "claude": "2.1.310",
     "node": "v24.22.1",
@@ -80,8 +80,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 81,
-      "outputTail": "✔ deny rules cover deployment (0.410541ms)\n✔ deny rules cover secrets (0.058417ms)\n✔ deny rules cover remote writes (0.044125ms)\n✔ deny rules cover publishing (0.0525ms)\n✔ deny rules cover tag pushes (0.048125ms)\n✔ deny rules cover force pushes (0.039541ms)\n✔ model-backed evals and plain pushes still ask (0.045166ms)\n✔ no allow rules widen the agent's authority (0.050209ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.481125"
+      "durationMs": 88,
+      "outputTail": "✔ deny rules cover deployment (0.898125ms)\n✔ deny rules cover secrets (0.059792ms)\n✔ deny rules cover remote writes (0.049208ms)\n✔ deny rules cover publishing (0.051584ms)\n✔ deny rules cover tag pushes (0.050584ms)\n✔ deny rules cover force pushes (0.052458ms)\n✔ model-backed evals and plain pushes still ask (0.054375ms)\n✔ no allow rules widen the agent's authority (0.05325ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 48.819208"
     },
     {
       "id": "g0.spike.types",
@@ -91,7 +91,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 807,
+      "durationMs": 1598,
       "outputTail": "\n ⛅️ wrangler 4.152.0\n────────────────────\nGenerating project types...\n\ninterface __BaseEnv_Env {\n\tSENDER: DurableObjectNamespace<import(\"./src/index\").Sender>;\n\tRECEIVER: DurableObjectNamespace<import(\"./src/index\").Receiver>;\n\tGATE: DurableObjectNamespace<import(\"./src/index\").Gate>;\n\tSLOW: DurableObjectNamespace<import(\"./src/index\").Slow>;\n\tTX: DurableObjectNamespace<import(\"./src/index\").Tx>;\n}\ndeclare namespace Cloudflare {\n\tinterface GlobalProps {\n\t\tmainModule: typeof import(\"./src/index\");\n\t\tdurableNamespaces: \"Sender\" | \"Receiver\" | \"Gate\" | \"Slow\" | \"Tx\";\n\t}\n\tinterface Env extends __BaseEnv_Env {}\n}\ninterface Env extends __BaseEnv_Env {}\n\nGenerating runtime types...\n\nRuntime types generated.\n\n\n✨ Types written to worker-configuration.d.ts\n\n📖 Read about runtime types\nhttps://developers.cloudflare.com/workers/languages/typescript/#generate-types\n📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file.\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
@@ -102,7 +102,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 170,
+      "durationMs": 191,
       "outputTail": null
     },
     {
@@ -113,8 +113,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1225,
-      "outputTail": "\n RUN  v5.0.5 <repo>/spikes/do-messaging\n\n\n Test Files  2 passed (2)\n      Tests  6 passed (6)\n   Start at  19:28:27\n   Duration  743ms (tests 81%, worker 7%, import 6%, transform 6%)"
+      "durationMs": 1976,
+      "outputTail": "\n RUN  v5.0.5 <repo>/spikes/do-messaging\n\n\n Test Files  2 passed (2)\n      Tests  6 passed (6)\n   Start at  01:46:28\n   Duration  749ms (tests 72%, transform 16%, import 6%, worker 6%)"
     },
     {
       "id": "g0.sandbox",
@@ -124,7 +124,7 @@
       "status": "pass",
       "reason": "finding reproduced (decision 0004)",
       "evidenceSource": "host",
-      "durationMs": 2347,
+      "durationMs": 2837,
       "outputTail": "default 1 listen-eperm\nlocal-binding 0 passes"
     },
     {
@@ -135,7 +135,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 201,
+      "durationMs": 224,
       "outputTail": null
     },
     {
@@ -146,8 +146,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 482,
-      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  2 passed (2)\n      Tests  27 passed (27)\n   Start at  19:28:31\n   Duration  126ms (tests 67%, import 16%, transform 11%, worker 5%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
+      "durationMs": 517,
+      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  2 passed (2)\n      Tests  27 passed (27)\n   Start at  01:46:32\n   Duration  150ms (tests 47%, transform 38%, import 11%, worker 3%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
       "id": "g1.dist.fresh",
@@ -157,7 +157,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 854,
+      "durationMs": 921,
       "outputTail": "built @actord/toolkit 0.2.0 → dist/cli.mjs, plugins/{claude,codex}/dist/actord.mjs"
     },
     {
@@ -168,7 +168,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 99,
+      "durationMs": 88,
       "outputTail": "{\n  \"schemaVersion\": 1,\n  \"status\": \"passed\",\n  \"name\": \"actord\",\n  \"skills\": [\n    \"design-actor-system\",\n    \"evolve-actor-system\",\n    \"implement-actor-behavior\",\n    \"inspect-actor-system\",\n    \"setup-actor-project\",\n    \"verify-actor-reliability\"\n  ]\n}"
     },
     {
@@ -179,8 +179,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 91,
-      "outputTail": "    \"skills/inspect-actor-system\",\n    \"skills/setup-actor-project\",\n    \"skills/verify-actor-reliability\",\n    \"src/launcher.mjs\",\n    \"src/templates.mjs\",\n    \"skills/design-actor-system/SKILL.md\",\n    \"skills/design-actor-system/references\",\n    \"skills/evolve-actor-system/SKILL.md\",\n    \"skills/evolve-actor-system/references\",\n    \"skills/implement-actor-behavior/SKILL.md\",\n    \"skills/implement-actor-behavior/references\",\n    \"skills/inspect-actor-system/SKILL.md\",\n    \"skills/inspect-actor-system/references\",\n    \"skills/setup-actor-project/SKILL.md\",\n    \"skills/setup-actor-project/references\",\n    \"skills/verify-actor-reliability/SKILL.md\",\n    \"skills/verify-actor-reliability/references\",\n    \"skills/design-actor-system/references/workflow.md\",\n    \"skills/evolve-actor-system/references/workflow.md\",\n    \"skills/implement-actor-behavior/references/workflow.md\",\n    \"skills/inspect-actor-system/references/workflow.md\",\n    \"skills/setup-actor-project/references/workflow.md\",\n    \"skills/verify-actor-reliability/references/workflow.md\"\n  ],\n  \"inventory\": [\n    \"package/dist/LICENSE\",\n    \"package/dist/NOTICE\",\n    \"package/package.json\",\n    \"package/README.md\",\n    \"package/dist/cli.mjs\",\n    \"package/dist/runtime.mjs\",\n    \"package/dist/system.mjs\",\n    \"package/dist/testing.mjs\",\n    \"package/dist/vitest.mjs\",\n    \"package/dist/types/runtime/index.d.ts\",\n    \"package/dist/types/system.d.ts\",\n    \"package/dist/types/testing.d.ts\",\n    \"package/dist/types/vitest.d.ts\"\n  ]\n}"
+      "durationMs": 98,
+      "outputTail": "    \"src/templates.mjs\",\n    \"skills/design-actor-system/SKILL.md\",\n    \"skills/design-actor-system/references\",\n    \"skills/evolve-actor-system/SKILL.md\",\n    \"skills/evolve-actor-system/references\",\n    \"skills/implement-actor-behavior/SKILL.md\",\n    \"skills/implement-actor-behavior/references\",\n    \"skills/inspect-actor-system/SKILL.md\",\n    \"skills/inspect-actor-system/references\",\n    \"skills/setup-actor-project/SKILL.md\",\n    \"skills/setup-actor-project/references\",\n    \"skills/verify-actor-reliability/SKILL.md\",\n    \"skills/verify-actor-reliability/references\",\n    \"skills/design-actor-system/references/workflow.md\",\n    \"skills/evolve-actor-system/references/workflow.md\",\n    \"skills/implement-actor-behavior/references/workflow.md\",\n    \"skills/inspect-actor-system/references/workflow.md\",\n    \"skills/setup-actor-project/references/workflow.md\",\n    \"skills/verify-actor-reliability/references/workflow.md\"\n  ],\n  \"inventory\": [\n    \"package/dist/LICENSE\",\n    \"package/dist/NOTICE\",\n    \"package/package.json\",\n    \"package/README.md\",\n    \"package/dist/cli.mjs\",\n    \"package/dist/runtime.mjs\",\n    \"package/dist/system.mjs\",\n    \"package/dist/testing.mjs\",\n    \"package/dist/vitest.mjs\",\n    \"package/dist/types/runtime/capability.d.ts\",\n    \"package/dist/types/runtime/index.d.ts\",\n    \"package/dist/types/runtime/jobs.d.ts\",\n    \"package/dist/types/runtime/schedules.d.ts\",\n    \"package/dist/types/system.d.ts\",\n    \"package/dist/types/testing.d.ts\",\n    \"package/dist/types/runtime/timers.d.ts\",\n    \"package/dist/types/vitest.d.ts\"\n  ]\n}"
     },
     {
       "id": "g1.codex.install",
@@ -190,7 +190,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 235,
+      "durationMs": 241,
       "outputTail": "{\n  \"schemaVersion\": 1,\n  \"status\": \"passed\",\n  \"steps\": [\n    {\n      \"command\": \"codex plugin marketplace add <repo> --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"marketplaceName\\\": \\\"actord\\\",\\n  \\\"installedRoot\\\": \\\"<repo>\\\",\\n  \\\"alreadyAdded\\\": false\\n}\\n\"\n    },\n    {\n      \"command\": \"codex plugin add actord@actord --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"pluginId\\\": \\\"actord@actord\\\",\\n  \\\"name\\\": \\\"actord\\\",\\n  \\\"marketplaceName\\\": \\\"actord\\\",\\n  \\\"version\\\": \\\"0.2.0\\\",\\n  \\\"installedPath\\\": \\\"/private<temp>/codex/plugins/cache/actord/actord/0.2.0\\\",\\n  \\\"authPolicy\\\": \\\"ON_INSTALL\\\"\\n}\\n\"\n    },\n    {\n      \"command\": \"node /private<temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version\",\n      \"status\": \"passed\",\n      \"output\": \"0.2.0\\n\"\n    },\n    {\n      \"command\": \"codex plugin list --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"installed\\\": [\\n    {\\n      \\\"pluginId\\\": \\\"actord@actord\\\",\\n      \\\"name\\\": \\\"actord\\\",\\n      \\\"marketplaceName\\\": \\\"actord\\\",\\n      \\\"version\\\": \\\"0.2.0\\\",\\n      \\\"installed\\\": true,\\n      \\\"enabled\\\": true,\\n      \\\"source\\\": {\\n        \\\"source\\\": \\\"local\\\",\\n        \\\"path\\\": \\\"<repo>/plugins/codex\\\"\\n      },\\n      \\\"marketplaceSource\\\": {\\n        \\\"sourceType\\\": \\\"local\\\",\\n        \\\"source\\\": \\\"<repo>\\\"\\n      },\\n      \\\"installPolicy\\\": \\\"AVAILABLE\\\",\\n      \\\"authPolicy\\\": \\\"ON_INSTALL\\\"\\n    }\\n  ],\\n  \\\"available\\\": []\\n}\\n\"\n    },\n    {\n      \"command\": \"codex plugin remove actord@actord --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"pluginId\\\": \\\"actord@actord\\\",\\n  \\\"name\\\": \\\"actord\\\",\\n  \\\"marketplaceName\\\": \\\"actord\\\"\\n}\\n\"\n    },\n    {\n      \"command\": \"codex plugin marketplace remove actord --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"marketplaceName\\\": \\\"actord\\\",\\n  \\\"installedRoot\\\": null\\n}\\n\"\n    }\n  ],\n  \"unverified\": [\n    \"Model-backed skill invocation and desktop onboarding; not run by this credential-free lane\"\n  ]\n}"
     },
     {
@@ -201,7 +201,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 422,
+      "durationMs": 635,
       "outputTail": "Checking formatting...\nAll matched files use Prettier code style!\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
@@ -212,8 +212,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2437,
-      "outputTail": "✔ adapter uses the in-repository build and no vendored runtime (0.4705ms)\n✔ launcher honors the project pin from nested directories and avoids itself (167.522375ms)\n✔ launcher skips a core alias pointing back to the Codex adapter (2.483291ms)\n✔ graph exposes Mermaid only when requested and rejects unknown formats (585.692417ms)\n✔ missing Wrangler config or Worker entry cannot pass project checks (368.111958ms)\n✔ actor class rename produces a breaking, irreversible lifecycle plan (189.639708ms)\n✔ trace orders parent before children and includes branches from the common cause (239.992541ms)\n✔ Codex scaffold and adopt preserve host boundaries (387.585ms)\n✔ release-radar scaffolds an independent Codex reference app (205.382209ms)\n✔ briefing-desk scaffolds an independent Codex reference app (211.455958ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2401.385875"
+      "durationMs": 2634,
+      "outputTail": "✔ adapter uses the in-repository build and no vendored runtime (0.487583ms)\n✔ launcher honors the project pin from nested directories and avoids itself (179.015042ms)\n✔ launcher skips a core alias pointing back to the Codex adapter (2.235667ms)\n✔ graph exposes Mermaid only when requested and rejects unknown formats (637.628459ms)\n✔ missing Wrangler config or Worker entry cannot pass project checks (413.002375ms)\n✔ actor class rename produces a breaking, irreversible lifecycle plan (203.206667ms)\n✔ trace orders parent before children and includes branches from the common cause (249.854917ms)\n✔ Codex scaffold and adopt preserve host boundaries (413.133333ms)\n✔ release-radar scaffolds an independent Codex reference app (222.866792ms)\n✔ briefing-desk scaffolds an independent Codex reference app (226.04825ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2597.496625"
     },
     {
       "id": "g7.codex.consumer",
@@ -223,7 +223,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 33642,
+      "durationMs": 42815,
       "outputTail": "{\"status\":\"passed\",\"steps\":32}"
     },
     {
@@ -234,8 +234,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 561,
-      "outputTail": "✔ runs the bundled build outside any project (135.326542ms)\n✔ delegates to a pinned project CLI from a nested directory and passes the bundled version (337.794375ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 524.626416"
+      "durationMs": 763,
+      "outputTail": "✔ runs the bundled build outside any project (434.072833ms)\n✔ delegates to a pinned project CLI from a nested directory and passes the bundled version (251.468875ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 726.92225"
     },
     {
       "id": "g1.validate.plugin",
@@ -245,7 +245,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 539,
+      "durationMs": 530,
       "outputTail": "Validating plugin manifest: <repo>/plugins/claude/.claude-plugin/plugin.json\n\n  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)\n  ❯ types ./types/index.d.ts declares state: actord.snapshot, actord.tab, actord.selected, actord.trace\n\nValidating hooks: <repo>/plugins/claude/hooks/hooks.json\n\n  ❯ ./room.tsx hooks: session.start, classic.SessionStart, command.run{command=actord-room}, command.run{command=actord-room-view}, ui.close{id=actord-room}, tool.call{tool=Bash}, ui.render{component=Pane, requestId=actord-room}\n  ❯ ./room.tsx gating hook with .catch: classic.SessionStart\n  ❯ ./room.tsx gating hook with .catch: command.run{command=actord-room}\n  ❯ ./room.tsx gating hook with .catch: command.run{command=actord-room-view}\n  ❯ ./room.tsx gating hook with .catch: ui.close{id=actord-room}\n  ❯ ./room.tsx gating hook with .catch: tool.call{tool=Bash}\n  ❯ ./room.tsx calls: $.command.list, $.command.register, $.process.run (via actord), $.process.spawn (via follow), $.session.surfaces, $.state.get, $.state.set, $.ui.ask, $.ui.log (via follow), $.ui.open (via openRoom), $.ui.panes, $.ui.resolve, $.ui.status\n  ❯ ./room.tsx state writes: actord.selected, actord.snapshot, actord.tab, actord.trace\n  ❯ ./room.tsx state reads: actord.selected, actord.snapshot, actord.tab, actord.trace\n\nPlugin directory checks for <repo>/plugins/claude. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.\n\n⚠ Found 1 plugin directory warning:\n\n  ❯ .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.\n    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.\n\nAbout these checks:\n\n  ❯ The repository root was taken to be <repo>, the nearest parent folder with a .git folder or file. README.md was taken from it, because this plugin folder has none of its own. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.\n  ❯ hooks/hooks.json names a hooks module (a code file listed under `modules`). The plugin directory has rules of its own for such code, and these checks apply none of them, so passing here does not mean the directory accepts the plugin. The developer portal's own validation applies those rules.\n\nThese plugin directory checks do not change the result below.\n\nThe directory also runs a safety scan and a policy review that this command does not.\n\n✔ Validation passed"
     },
     {
@@ -256,7 +256,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 612,
+      "durationMs": 531,
       "outputTail": "Validating marketplace manifest: <repo>/.claude-plugin/marketplace.json\n\n✔ Validation passed"
     },
     {
@@ -267,8 +267,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2632,
-      "outputTail": "== marketplace add <repo>\nAdding marketplace…✔ Successfully added marketplace: actord (declared in user settings)\n== install actord@actord\nInstalling plugin \"actord@actord\"...✔ Successfully installed plugin: actord@actord (scope: user)\n3 userConfig options not yet set — run /plugin configure actord@actord in Claude Code, or pass --config KEY=VALUE.\n== list\n== launcher from the installed plugin\nlauncher: /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.0f5nNmifIn/plugins/cache/actord/actord/0.2.0/bin/actord\n== uninstall\n✔ Successfully uninstalled plugin: actord (scope: user)\n✔ Successfully removed marketplace: actord\n== nothing left\ninstall-smoke: ok (actord 0.2.0)"
+      "durationMs": 2662,
+      "outputTail": "== marketplace add <repo>\nAdding marketplace…✔ Successfully added marketplace: actord (declared in user settings)\n== install actord@actord\nInstalling plugin \"actord@actord\"...✔ Successfully installed plugin: actord@actord (scope: user)\n3 userConfig options not yet set — run /plugin configure actord@actord in Claude Code, or pass --config KEY=VALUE.\n== list\n== launcher from the installed plugin\nlauncher: /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.MdcY5TgBPD/plugins/cache/actord/actord/0.2.0/bin/actord\n== uninstall\n✔ Successfully uninstalled plugin: actord (scope: user)\n✔ Successfully removed marketplace: actord\n== nothing left\ninstall-smoke: ok (actord 0.2.0)"
     },
     {
       "id": "g1.budget",
@@ -278,7 +278,7 @@
       "status": "pass",
       "reason": "always-on ~803 tokens",
       "evidenceSource": "host",
-      "durationMs": 1526,
+      "durationMs": 1940,
       "outputTail": "{\"pluginDir\":803,\"installed\":803,\"max\":803,\"target\":1000,\"limit\":1500}"
     },
     {
@@ -289,8 +289,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 621,
-      "outputTail": "✔ the wiki has a trust page (0.374292ms)\n✔ every settings-style hook command is listed (0.506875ms)\n✔ every monitor command is listed (0.110334ms)\n✔ every mod event and mod call is listed (528.27025ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 579.875708"
+      "durationMs": 639,
+      "outputTail": "✔ the wiki has a trust page (0.394292ms)\n✔ every settings-style hook command is listed (0.565959ms)\n✔ every monitor command is listed (0.115042ms)\n✔ every mod event and mod call is listed (543.876875ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 592.4395"
     },
     {
       "id": "g1.start-session",
@@ -311,7 +311,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 272,
+      "durationMs": 279,
       "outputTail": "npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
@@ -322,8 +322,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 3356,
-      "outputTail": "ok   valid/evolved: tsc pass (expected pass)\nok   valid/minimal: tsc pass (expected pass)\nok   negative/actor-unjustified: tsc pass (expected pass)\nok   negative/agent-budget-missing: tsc pass (expected pass)\nok   negative/config-binding-missing: tsc pass (expected pass)\nok   negative/config-export-missing: tsc pass (expected pass)\nok   negative/declaration-load-failed: tsc fail (expected fail)  fixtures/negative/declaration-load-failed/system.ts(2,37): error TS2307: Cannot find module './src/messages/missing.ts' or its corresponding type declarations.\nok   negative/effect-undeclared: tsc fail (expected fail)  fixtures/negative/effect-undeclared/system.ts(21,7): error TS2322: Type '[\"notify.pager\"]' is not assignable to type 'readonly [\"notify.pager\"] & readonly never[]'.\nok   negative/entry-export-missing: tsc pass (expected pass)\nok   negative/manifest-stale: tsc pass (expected pass)\nok   negative/route-unknown-actor: tsc fail (expected fail)  fixtures/negative/route-unknown-actor/system.ts(26,45): error TS2322: Type '\"Ghost\"' is not assignable to type '\"Pinger\" | \"Ponger\"'.\nok   negative/route-unknown-message: tsc fail (expected fail)  fixtures/negative/route-unknown-message/system.ts(25,25): error TS2322: Type '\"ping.vanished\"' is not assignable to type '\"ping.due\" | \"ping.kicked\" | \"ping.sent\"'.\nok   negative/schedule-route-missing: tsc pass (expected pass)\nok   negative/schema-invalid: tsc pass (expected pass)"
+      "durationMs": 4550,
+      "outputTail": "ok   valid/evolved: tsc pass (expected pass)\nok   valid/minimal: tsc pass (expected pass)\nok   negative/actor-unjustified: tsc pass (expected pass)\nok   negative/agent-budget-missing: tsc pass (expected pass)\nok   negative/config-binding-missing: tsc pass (expected pass)\nok   negative/config-export-missing: tsc pass (expected pass)\nok   negative/declaration-load-failed: tsc fail (expected fail)  fixtures/negative/declaration-load-failed/system.ts(2,37): error TS2307: Cannot find module './src/messages/missing.ts' or its corresponding type declarations.\nok   negative/effect-budget-invalid: tsc pass (expected pass)\nok   negative/effect-undeclared: tsc fail (expected fail)  fixtures/negative/effect-undeclared/system.ts(21,7): error TS2322: Type '[\"notify.pager\"]' is not assignable to type 'readonly [\"notify.pager\"] & readonly never[]'.\nok   negative/entry-export-missing: tsc pass (expected pass)\nok   negative/job-deadline-missing: tsc pass (expected pass)\nok   negative/manifest-stale: tsc pass (expected pass)\nok   negative/route-unknown-actor: tsc fail (expected fail)  fixtures/negative/route-unknown-actor/system.ts(26,45): error TS2322: Type '\"Ghost\"' is not assignable to type '\"Pinger\" | \"Ponger\"'.\nok   negative/route-unknown-message: tsc fail (expected fail)  fixtures/negative/route-unknown-message/system.ts(25,25): error TS2322: Type '\"ping.vanished\"' is not assignable to type '\"ping.due\" | \"ping.kicked\" | \"ping.sent\"'.\nok   negative/schedule-cron-invalid: tsc pass (expected pass)\nok   negative/schedule-duplicate: tsc pass (expected pass)\nok   negative/schedule-route-missing: tsc pass (expected pass)\nok   negative/schema-invalid: tsc pass (expected pass)"
     },
     {
       "id": "g2.cli.model",
@@ -333,8 +333,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2891,
-      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  2 passed (2)\n      Tests  64 passed (64)\n   Start at  19:29:19\n   Duration  2.56s (tests 99%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
+      "durationMs": 3388,
+      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  2 passed (2)\n      Tests  79 passed (79)\n   Start at  01:47:32\n   Duration  3.03s (tests 98%, transform 2%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
       "id": "g2.negative.unchanged",
@@ -344,7 +344,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 26,
+      "durationMs": 69,
       "outputTail": null
     },
     {
@@ -355,7 +355,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 906,
+      "durationMs": 1428,
       "outputTail": null
     },
     {
@@ -366,7 +366,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 87,
+      "durationMs": 94,
       "outputTail": "✓ release-radar: 0 error(s), 0 warning(s)"
     },
     {
@@ -377,7 +377,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 3252,
+      "durationMs": 2881,
       "outputTail": "ok   [malformed] 4 test(s)\nok   [unauthorized-route] 1 test(s)\nok   [unknown-message] 1 test(s)\nok   [duplicate-delivery] 2 test(s)\nok   [duplicate-input] 1 test(s)\nok   [crash-before-mutation] 1 test(s)\nok   [crash-after-mutation] 1 test(s)\nok   [delivery-retry] 1 test(s)\nok   [restart] 2 test(s)\nok   [retry-exhausted] 1 test(s)\nok   [out-of-order] 2 test(s)\nok   [scheduled-wake] 3 test(s)\nok   [lost-ack-idempotent] 1 test(s)\n22/22 tests passed in workerd"
     },
     {
@@ -388,8 +388,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 62,
-      "outputTail": "trace 0hzcyeas1syci · correlation 0fdh5m4mnb2bt · coverage: .actord/events.ndjson (local only)\n  @clock → FeedPoller:workers-sdk  feed.poll.due  ✓ handled (0fdh5m4mnb2bt)\n  └─ effect feed.fetch [poll-1792981766377]  ✓ confirmed\n     └─ FeedPoller:workers-sdk → FeedPoller:workers-sdk  feed.fetched  ✓ handled (1uigbpxwkmat1)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (1cav9uft8v7ov)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (1luc5c32fuypq)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (0hzcyeas1syci)  ◀ target\n        │     └─ effect notify.digest [wsdk-4.151.1]  ✓ confirmed\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (2e136f3nghgy5)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (38phi4khwocat)\n        │     └─ effect notify.digest [wsdk-5.0.0]  ✓ confirmed\n        └─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (37xli3brb1sug)"
+      "durationMs": 290,
+      "outputTail": "trace 0mxxvvkonn5qx · correlation 3j00e2grtpqkt · coverage: .actord/events.ndjson (local only)\n  @clock → FeedPoller:ooo  feed.poll.due  ✓ handled (30zhckdxwzs6i)\n  └─ effect feed.fetch [poll-1793004459620]  ✓ confirmed\n     └─ FeedPoller:ooo → FeedPoller:ooo  feed.fetched  ✓ handled (3m8b9e4debmtc)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (0erften59ofti)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (0mxxvvkonn5qx)  ◀ target\n        │     └─ effect notify.digest [wsdk-4.151.1]  ✓ confirmed\n        ├─ FeedPoller:ooo → ReleaseLedger:main  release.observed  ✓ handled (1gn3ijxdm7xdz)\n        ├─ FeedPoller:workers-sdk → ReleaseLedger:main  release.observed  ✓ handled (2ot15dvn3q4kl)\n        │  └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (377wx7gzyv0vb)\n        │     └─ effect notify.digest [wsdk-5.0.0]  ✓ confirmed\n        └─ FeedPoller:ooo → ReleaseLedger:main  release.observed  ✓ handled after 1 retry (3hpokw2ya5i68)\n             ! injected fault at before-handler\n           └─ ReleaseLedger:main → DigestWriter:main  release.significant  ✓ handled (2ls7v1j8tj74j)\n              └─ effect notify.digest [crash-before-2.0.0]  ✓ confirmed"
     },
     {
       "id": "g3.radar.dev",
@@ -399,8 +399,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 5969,
-      "outputTail": "wrangler dev: http://127.0.0.1:56797 (local, throwaway state)\nok   GET / answers with the Worker's routes\nok   POST /feeds → 202 handled ({\"status\":\"handled\",\"messageId\":\"5ee04646-d204-4d6f-ae40-5bdbb3977b17\"})\nok   POST /feeds with a bad url → 400 rejected (invalid_payload)\nok   GET /findings → [] before any poll\ntrace 5ee04646-d204-4d6f-ae40-5bdbb3977b17 · correlation 5ee04646-d204-4d6f-ae40-5bdbb3977b17 · coverage: the dev server's events (local only)\n  @ingress → FeedPoller:smoke  feed.watch  ✓ handled (5ee04646-d204-4d6f-ae40-5bdbb3977b17)  ◀ target\nok   trace: @ingress → FeedPoller:smoke feed.watch handled\nok   the rejection is in the event log\n3 events from the running Worker"
+      "durationMs": 6088,
+      "outputTail": "wrangler dev: http://127.0.0.1:61108 (local, throwaway state)\nok   GET / answers with the Worker's routes\nok   POST /feeds → 202 handled ({\"status\":\"handled\",\"messageId\":\"ff551673-114a-4773-87c6-b926ed4e336e\"})\nok   POST /feeds with a bad url → 400 rejected (invalid_payload)\nok   GET /findings → [] before any poll\ntrace ff551673-114a-4773-87c6-b926ed4e336e · correlation ff551673-114a-4773-87c6-b926ed4e336e · coverage: the dev server's events (local only)\n  @ingress → FeedPoller:smoke  feed.watch  ✓ handled (ff551673-114a-4773-87c6-b926ed4e336e)  ◀ target\nok   trace: @ingress → FeedPoller:smoke feed.watch handled\nok   the rejection is in the event log\n3 events from the running Worker"
     },
     {
       "id": "g3.cli.events",
@@ -410,8 +410,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1402,
-      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n   Start at  19:29:33\n   Duration  1.01s (tests 99%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
+      "durationMs": 1675,
+      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  10 passed (10)\n   Start at  01:47:46\n   Duration  1.29s (tests 98%, transform 1%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
       "id": "g4.desk.typecheck",
@@ -421,7 +421,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 863,
+      "durationMs": 1537,
       "outputTail": null
     },
     {
@@ -432,7 +432,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 94,
+      "durationMs": 93,
       "outputTail": "! EFFECT_IN_DOUBT notify.brief: notify.brief has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered\n✓ briefing-desk: 0 error(s), 1 warning(s)"
     },
     {
@@ -443,7 +443,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2772,
+      "durationMs": 4320,
       "outputTail": "ok   [end-to-end] 1 test(s)\nok   [duplicate-submission] 1 test(s)\nok   [reentrancy] 1 test(s)\nok   [approval-required] 2 test(s)\nok   [approval-denied] 1 test(s)\nok   [model-unavailable] 1 test(s)\nok   [model-timeout] 1 test(s)\nok   [budget] 1 test(s)\nok   [model-output-invalid] 1 test(s)\nok   [lost-ack-in-doubt] 1 test(s)\nok   [gateway-unreachable] 1 test(s)\n11/11 tests passed in workerd"
     },
     {
@@ -454,8 +454,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 65,
-      "outputTail": "trace 0f8wn3kidj35w · correlation d5ddc93f-0218-4104-a626-57158c30fb21 · coverage: .actord/events.ndjson (local only)\n  @ingress → Intake:main  item.submitted  ✓ handled (d5ddc93f-0218-4104-a626-57158c30fb21)\n  └─ Intake:main → Analyst:re-1  item.routed  ✓ handled (3eacof3aiyom2)\n     ├─ effect model.analyze [re-1:g1]  ✓ confirmed\n     │  └─ Analyst:re-1 → Analyst:re-1  analysis.completed  ✓ handled (0f8wn3kidj35w)  ◀ target\n     │       · stale analysis ignored (item cancelled, generation 1 vs 2)\n     └─ Analyst:re-1 → Desk:main  briefing.updated  ✓ handled (23pnrajgehnhl)"
+      "durationMs": 341,
+      "outputTail": "trace 0f8wn3kidj35w · correlation 0c1ba9f8-bbf8-4e8d-902f-fe95515fdd57 · coverage: .actord/events.ndjson (local only)\n  @ingress → Intake:main  item.submitted  ✓ handled (0c1ba9f8-bbf8-4e8d-902f-fe95515fdd57)\n  └─ Intake:main → Analyst:re-1  item.routed  ✓ handled (21n7jsnzpkzj0)\n     ├─ effect model.analyze [re-1:g1]  ✓ confirmed\n     │  └─ Analyst:re-1 → Analyst:re-1  analysis.completed  ✓ handled (0f8wn3kidj35w)  ◀ target\n     │       · stale analysis ignored (item cancelled, generation 1 vs 2)\n     └─ Analyst:re-1 → Desk:main  briefing.updated  ✓ handled (0udvucbqw0o0y)"
     },
     {
       "id": "g4.desk.dev",
@@ -465,8 +465,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 7209,
-      "outputTail": "wrangler dev: http://127.0.0.1:56847 (local, throwaway state)\nok   POST /items → 202 handled ({\"status\":\"handled\",\"messageId\":\"c1bb2c92-716d-4aaa-af4c-eadc1d8d077e\"})\nok   POST /items without a title → 400 rejected (invalid_payload)\nok   the board says why: model failed: no ANTHROPIC_API_KEY is configured, so no model is available\ntrace c1bb2c92-716d-4aaa-af4c-eadc1d8d077e · correlation c1bb2c92-716d-4aaa-af4c-eadc1d8d077e · coverage: the dev server's events (local only)\n  @ingress → Intake:main  item.submitted  ✓ handled (c1bb2c92-716d-4aaa-af4c-eadc1d8d077e)  ◀ target\n  └─ Intake:main → Analyst:smoke-1  item.routed  ✓ handled (13v7uzwraxi9q)\n     ├─ effect model.analyze [smoke-1:g1]  ✗ failed after 2 attempts: no ANTHROPIC_API_KEY is configured, so no model is available\n     │  └─ Analyst:smoke-1 → Analyst:smoke-1  analysis.completed  ✓ handled (17cee0v7r3n9g)\n     │     └─ Analyst:smoke-1 → Desk:main  briefing.updated  ✓ handled (10dm34wwnqmw7)\n     └─ Analyst:smoke-1 → Desk:main  briefing.updated  ✓ handled (0i94qm1hef9if)\nok   trace: rooted at @ingress → Intake\nok   trace: Intake → Analyst item.routed handled\nok   trace: model.analyze failed after its budget of 2 attempts (failed, 2)\nok   trace: Analyst → Desk briefing.updated handled\n22 events from the running Worker"
+      "durationMs": 7186,
+      "outputTail": "wrangler dev: http://127.0.0.1:61166 (local, throwaway state)\nok   POST /items → 202 handled ({\"status\":\"handled\",\"messageId\":\"6806cb3d-9dc5-4acf-aacc-5a4bad4a41d5\"})\nok   POST /items without a title → 400 rejected (invalid_payload)\nok   the board says why: model failed: no ANTHROPIC_API_KEY is configured, so no model is available\ntrace 6806cb3d-9dc5-4acf-aacc-5a4bad4a41d5 · correlation 6806cb3d-9dc5-4acf-aacc-5a4bad4a41d5 · coverage: the dev server's events (local only)\n  @ingress → Intake:main  item.submitted  ✓ handled (6806cb3d-9dc5-4acf-aacc-5a4bad4a41d5)  ◀ target\n  └─ Intake:main → Analyst:smoke-1  item.routed  ✓ handled (3d9pekqcg4s5r)\n     ├─ effect model.analyze [smoke-1:g1]  ✗ failed after 2 attempts: no ANTHROPIC_API_KEY is configured, so no model is available\n     │  └─ Analyst:smoke-1 → Analyst:smoke-1  analysis.completed  ✓ handled (17cee0v7r3n9g)\n     │     └─ Analyst:smoke-1 → Desk:main  briefing.updated  ✓ handled (10dm34wwnqmw7)\n     └─ Analyst:smoke-1 → Desk:main  briefing.updated  ✓ handled (122jwd04rpxer)\nok   trace: rooted at @ingress → Intake\nok   trace: Intake → Analyst item.routed handled\nok   trace: model.analyze failed after its budget of 2 attempts (failed, 2)\nok   trace: Analyst → Desk briefing.updated handled\n22 events from the running Worker"
     },
     {
       "id": "g4.runtime.probe",
@@ -476,8 +476,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 1678,
-      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  19:29:45\n   Duration  1.06s (transform 72%, import 16%, tests 11%, worker 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
+      "durationMs": 10202,
+      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  74 passed (74)\n   Start at  01:48:02\n   Duration  9.58s (tests 90%, transform 9%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line\nSourcemap for \"<repo>/node_modules/cron-schedule/dist/index.js\" points to missing source files\nSourcemap for \"<repo>/node_modules/cron-schedule/dist/cron.js\" points to missing source files\nSourcemap for \"<repo>/node_modules/cron-schedule/dist/utils.js\" points to missing source files\nSourcemap for \"<repo>/node_modules/cron-schedule/dist/cron-parser.js\" points to missing source files"
     },
     {
       "id": "g5.cli.unit",
@@ -487,8 +487,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2068,
-      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  11 passed (11)\n   Start at  19:29:47\n   Duration  1.71s (tests 99%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
+      "durationMs": 2574,
+      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  11 passed (11)\n   Start at  01:48:12\n   Duration  2.20s (tests 99%, transform 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
       "id": "g5.skills.lint",
@@ -498,8 +498,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 83,
-      "outputTail": "✔ the plugin ships the seven skills and two critics the charter names (0.8925ms)\n✔ design: narrow description under the listing cap, concise body (0.107292ms)\n✔ design: allowed-tools never names deploy, secret, publish, or network commands (0.168958ms)\n✔ design: every injected command tolerates failure and is pre-approved (0.158708ms)\n✔ design: states its rules up front, its done condition, and when to stop (0.112958ms)\n✔ evolve: narrow description under the listing cap, concise body (0.05225ms)\n✔ evolve: allowed-tools never names deploy, secret, publish, or network commands (0.093541ms)\n✔ evolve: every injected command tolerates failure and is pre-approved (0.23925ms)\n✔ evolve: states its rules up front, its done condition, and when to stop (0.100125ms)\n✔ implement: narrow description under the listing cap, concise body (0.483584ms)\n✔ implement: allowed-tools never names deploy, secret, publish, or network commands (0.12075ms)\n✔ implement: every injected command tolerates failure and is pre-approved (0.186958ms)\n✔ implement: states its rules up front, its done condition, and when to stop (0.050875ms)\n✔ inspect: narrow description under the listing cap, concise body (0.028583ms)\n✔ inspect: allowed-tools never names deploy, secret, publish, or network commands (0.021625ms)\n✔ inspect: every injected command tolerates failure and is pre-approved (0.07975ms)\n✔ inspect: states its rules up front, its done condition, and when to stop (0.038167ms)\n✔ reliability: narrow description under the listing cap, concise body (0.022ms)\n✔ reliability: allowed-tools never names deploy, secret, publish, or network commands (0.024875ms)\n✔ reliability: every injected command tolerates failure and is pre-approved (0.0315ms)\n✔ reliability: states its rules up front, its done condition, and when to stop (0.033542ms)\n✔ setup: narrow description under the listing cap, concise body (0.022208ms)\n✔ setup: allowed-tools never names deploy, secret, publish, or network commands (0.016625ms)\n✔ setup: every injected command tolerates failure and is pre-approved (0.022625ms)\n✔ setup: states its rules up front, its done condition, and when to stop (0.0275ms)\n✔ start: narrow description under the listing cap, concise body (0.019334ms)\n✔ start: allowed-tools never names deploy, secret, publish, or network commands (0.02125ms)\n✔ start: every injected command tolerates failure and is pre-approved (0.161541ms)\n✔ start: states its rules up front, its done condition, and when to stop (0.027333ms)\n✔ boundary-critic.md: read-only tools, so the critic can't edit (0.162791ms)\n✔ delivery-auditor.md: read-only tools, so the critic can't edit (0.060917ms)\n✔ no always-on instructions beyond skill and agent descriptions (0.108792ms)\nℹ tests 32\nℹ suites 0\nℹ pass 32\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 48.727917"
+      "durationMs": 94,
+      "outputTail": "✔ the plugin ships the seven skills and two critics the charter names (0.975083ms)\n✔ design: narrow description under the listing cap, concise body (0.095209ms)\n✔ design: allowed-tools never names deploy, secret, publish, or network commands (0.184458ms)\n✔ design: every injected command tolerates failure and is pre-approved (0.164333ms)\n✔ design: states its rules up front, its done condition, and when to stop (0.116334ms)\n✔ evolve: narrow description under the listing cap, concise body (0.044292ms)\n✔ evolve: allowed-tools never names deploy, secret, publish, or network commands (0.089209ms)\n✔ evolve: every injected command tolerates failure and is pre-approved (0.23125ms)\n✔ evolve: states its rules up front, its done condition, and when to stop (0.114042ms)\n✔ implement: narrow description under the listing cap, concise body (0.537666ms)\n✔ implement: allowed-tools never names deploy, secret, publish, or network commands (0.107583ms)\n✔ implement: every injected command tolerates failure and is pre-approved (0.165209ms)\n✔ implement: states its rules up front, its done condition, and when to stop (0.050541ms)\n✔ inspect: narrow description under the listing cap, concise body (0.028458ms)\n✔ inspect: allowed-tools never names deploy, secret, publish, or network commands (0.023208ms)\n✔ inspect: every injected command tolerates failure and is pre-approved (0.099ms)\n✔ inspect: states its rules up front, its done condition, and when to stop (0.038833ms)\n✔ reliability: narrow description under the listing cap, concise body (0.026125ms)\n✔ reliability: allowed-tools never names deploy, secret, publish, or network commands (0.024209ms)\n✔ reliability: every injected command tolerates failure and is pre-approved (0.026917ms)\n✔ reliability: states its rules up front, its done condition, and when to stop (0.02925ms)\n✔ setup: narrow description under the listing cap, concise body (0.022417ms)\n✔ setup: allowed-tools never names deploy, secret, publish, or network commands (0.042667ms)\n✔ setup: every injected command tolerates failure and is pre-approved (0.04775ms)\n✔ setup: states its rules up front, its done condition, and when to stop (0.029417ms)\n✔ start: narrow description under the listing cap, concise body (0.023333ms)\n✔ start: allowed-tools never names deploy, secret, publish, or network commands (0.023417ms)\n✔ start: every injected command tolerates failure and is pre-approved (0.148042ms)\n✔ start: states its rules up front, its done condition, and when to stop (0.020417ms)\n✔ boundary-critic.md: read-only tools, so the critic can't edit (0.111375ms)\n✔ delivery-auditor.md: read-only tools, so the critic can't edit (0.061875ms)\n✔ no always-on instructions beyond skill and agent descriptions (0.135916ms)\nℹ tests 32\nℹ suites 0\nℹ pass 32\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 55.287792"
     },
     {
       "id": "g5.evals.static",
@@ -509,8 +509,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 103,
-      "outputTail": "✔ add-message-handler: well-formed prompt and graders (0.5335ms)\n✔ add-message-handler: scaffold script exists and is executable (0.123708ms)\n✔ add-message-handler: grades the evidence file it asks for (0.19675ms)\n✔ design-release-monitor: well-formed prompt and graders (0.316875ms)\n✔ design-release-monitor: scaffold script exists and is executable (0.093459ms)\n✔ evolve-scheduled-digest: well-formed prompt and graders (0.349125ms)\n✔ evolve-scheduled-digest: scaffold script exists and is executable (0.24975ms)\n✔ evolve-scheduled-digest: grades the evidence file it asks for (0.335833ms)\n✔ investigate-trace: well-formed prompt and graders (0.309959ms)\n✔ investigate-trace: scaffold script exists and is executable (0.1365ms)\n✔ negative-cloudflare-kv: well-formed prompt and graders (0.175875ms)\n✔ negative-cloudflare-kv: asserts no actord skill fires, in both arms (0.125583ms)\n✔ negative-typescript-bug: well-formed prompt and graders (0.143333ms)\n✔ negative-typescript-bug: scaffold script exists and is executable (0.077417ms)\n✔ negative-typescript-bug: asserts no actord skill fires, in both arms (0.086917ms)\n✔ recover-duplicate-notify: well-formed prompt and graders (0.278792ms)\n✔ recover-duplicate-notify: scaffold script exists and is executable (0.052958ms)\n✔ recover-duplicate-notify: grades the evidence file it asks for (0.157166ms)\n✔ safety-deploy-request: well-formed prompt and graders (0.194166ms)\n✔ safety-deploy-request: scaffold script exists and is executable (0.051291ms)\n✔ safety-exactly-once: well-formed prompt and graders (0.16275ms)\n✔ safety-exactly-once: scaffold script exists and is executable (0.06375ms)\n✔ safety-undeclared-capability: well-formed prompt and graders (0.204958ms)\n✔ safety-undeclared-capability: scaffold script exists and is executable (0.065083ms)\n✔ safety-undeclared-capability: grades the evidence file it asks for (0.122667ms)\n✔ scaffold-new-project: well-formed prompt and graders (0.228708ms)\n✔ scaffold-new-project: scaffold script exists and is executable (0.060125ms)\n✔ scaffold-new-project: grades the evidence file it asks for (0.123166ms)\n✔ start-orients: well-formed prompt and graders (0.135416ms)\n✔ the deploy case asserts that no deploy ran, in both arms, and that a plan was shown (0.17225ms)\n✔ host gate: the plugin arm may trail the baseline by one run per case, not more (7.155208ms)\n✔ host gate: catches the add-message-handler regression recorded in release run E (0.273541ms)\nℹ tests 33\nℹ suites 0\nℹ pass 33\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 68.784042"
+      "durationMs": 101,
+      "outputTail": "✔ add-message-handler: well-formed prompt and graders (0.597375ms)\n✔ add-message-handler: scaffold script exists and is executable (0.138583ms)\n✔ add-message-handler: grades the evidence file it asks for (0.215333ms)\n✔ design-release-monitor: well-formed prompt and graders (0.323625ms)\n✔ design-release-monitor: scaffold script exists and is executable (0.094375ms)\n✔ evolve-scheduled-digest: well-formed prompt and graders (0.344166ms)\n✔ evolve-scheduled-digest: scaffold script exists and is executable (0.0815ms)\n✔ evolve-scheduled-digest: grades the evidence file it asks for (0.230083ms)\n✔ investigate-trace: well-formed prompt and graders (0.215875ms)\n✔ investigate-trace: scaffold script exists and is executable (0.085333ms)\n✔ negative-cloudflare-kv: well-formed prompt and graders (0.15275ms)\n✔ negative-cloudflare-kv: asserts no actord skill fires, in both arms (0.111958ms)\n✔ negative-typescript-bug: well-formed prompt and graders (0.137542ms)\n✔ negative-typescript-bug: scaffold script exists and is executable (0.071292ms)\n✔ negative-typescript-bug: asserts no actord skill fires, in both arms (0.095292ms)\n✔ recover-duplicate-notify: well-formed prompt and graders (0.262ms)\n✔ recover-duplicate-notify: scaffold script exists and is executable (0.051459ms)\n✔ recover-duplicate-notify: grades the evidence file it asks for (0.166667ms)\n✔ safety-deploy-request: well-formed prompt and graders (0.184041ms)\n✔ safety-deploy-request: scaffold script exists and is executable (0.059375ms)\n✔ safety-exactly-once: well-formed prompt and graders (0.1715ms)\n✔ safety-exactly-once: scaffold script exists and is executable (0.066ms)\n✔ safety-undeclared-capability: well-formed prompt and graders (0.209458ms)\n✔ safety-undeclared-capability: scaffold script exists and is executable (0.057834ms)\n✔ safety-undeclared-capability: grades the evidence file it asks for (0.122833ms)\n✔ scaffold-new-project: well-formed prompt and graders (0.224375ms)\n✔ scaffold-new-project: scaffold script exists and is executable (0.058583ms)\n✔ scaffold-new-project: grades the evidence file it asks for (0.134542ms)\n✔ start-orients: well-formed prompt and graders (0.162791ms)\n✔ the deploy case asserts that no deploy ran, in both arms, and that a plan was shown (0.167042ms)\n✔ host gate: the plugin arm may trail the baseline by one run per case, not more (7.054542ms)\n✔ host gate: catches the add-message-handler regression recorded in release run E (0.205584ms)\nℹ tests 33\nℹ suites 0\nℹ pass 33\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 65.580292"
     },
     {
       "id": "g5.inventory",
@@ -520,7 +520,7 @@
       "status": "pass",
       "reason": "always-on ~803 tokens",
       "evidenceSource": "host",
-      "durationMs": 1699,
+      "durationMs": 1901,
       "outputTail": "{\"pluginDir\":803,\"installed\":803,\"max\":803,\"target\":1000,\"limit\":1500}"
     },
     {
@@ -531,8 +531,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 12448,
-      "outputTail": "scaffolded starter at /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.0i2A2fF97t/starter\nactord verify: starter-app · PASS · evidence in .actord/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     3 passed, 0 failed, 0 skipped (workerd)\n\nClaims: 3 proved locally · 0 stub only · 1 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally end-to-end: A greeting request reaches the guestbook.\n  ✓ proved-locally dedupe-delivery: A redelivered message is recorded once.\n  ✓ proved-locally refuse-invalid: Invalid payloads are refused before any handler runs.\n  · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)\n\nVerdict: PASS\nBefore any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.\nstarter-smoke: ok"
+      "durationMs": 15114,
+      "outputTail": "scaffolded starter at /var/folders/_k/cv9xyy4j22q9kt03pxsz0b8h0000gn/T/tmp.8ZoWLWIecW/starter\nactord verify: starter-app · PASS · evidence in .actord/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     3 passed, 0 failed, 0 skipped (workerd)\n\nClaims: 3 proved locally · 0 stub only · 1 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally end-to-end: A greeting request reaches the guestbook.\n  ✓ proved-locally dedupe-delivery: A redelivered message is recorded once.\n  ✓ proved-locally refuse-invalid: Invalid payloads are refused before any handler runs.\n  · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)\n\nVerdict: PASS\nBefore any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.\nstarter-smoke: ok"
     },
     {
       "id": "g5.verify.blocked",
@@ -542,7 +542,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 8889,
+      "durationMs": 11635,
       "outputTail": "actord verify: starter-app · BLOCKED · evidence in .actord/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ⊘ tests     blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding)\n\nClaims: 0 proved locally · 0 stub only · 1 not guaranteed · 3 blocked · 0 failing · 0 untested\n  ⊘ blocked        end-to-end: A greeting request reaches the guestbook.\n  ⊘ blocked        dedupe-delivery: A redelivered message is recorded once.\n  ⊘ blocked        refuse-invalid: Invalid payloads are refused before any handler runs.\n  · not-guaranteed exactly-once-external: Exactly-once external effects. (The starter has no external effects; when you add one, say what its destination guarantees.)\n\nVerdict: BLOCKED: tests blocked (blocked: the sandbox denies local port binding, which workerd needs (see docs on network.allowLocalBinding))\nBefore any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.\nverify-blocked: ok"
     },
     {
@@ -553,7 +553,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 6337,
+      "durationMs": 7813,
       "outputTail": "  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     21 passed, 0 failed, 1 skipped (workerd)\n\nClaims: 8 proved locally · 1 stub only · 3 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally refuse-invalid: Malformed, wrong-version, unknown, and off-route messages are refused before any handler runs, and change no state.\n  ✓ proved-locally dedupe-delivery: A redelivered message (same id) is handled once.\n  ✓ proved-locally dedupe-input: A release seen again in a later poll is recorded once and notified once.\n  ✓ proved-locally atomic-handler: A crash before or after a handler's writes leaves no partial state; the retry runs as if the first attempt never happened.\n  ✓ proved-locally at-least-once: A message whose delivery failed survives the sender's eviction and is delivered by the alarm; actor state survives eviction.\n  ✓ proved-locally dead-letter: A message that can't be delivered stops after 6 attempts and is recorded as retry.exhausted, not retried forever.\n  ✓ proved-locally order-independent: Classification and the latest-version pointer don't depend on arrival order.\n  ✓ proved-locally scheduled-wake: Watching a feed arms a 15-minute wake that re-arms itself; a wake with nothing to watch does nothing.\n  ~ stub-only      notify-once-keyed: A notification the gateway accepted but didn't acknowledge reaches the owner once, because it is retried with the same key and the gateway deduplicates by key. Shown with a stub gateway; a real gateway must honor the key.\n  · not-guaranteed exactly-once-notify: Exactly-once notification when a gateway ignores the idempotency key. (Retries after a lost acknowledgment can duplicate; only the gateway's deduplication prevents it.)\n  · not-guaranteed exact-schedule: Polls exactly every 15 minutes. (Durable Object alarms run at least once and can be delayed by up to a minute.)\n  · not-guaranteed production-traces: Traces of production traffic in actord trace. (actord trace reads local test and dev events only; production events go to Workers Logs.)\n\nVerdict: PASS\nBefore any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy.\nactord verify: briefing-desk · PASS · evidence in .actord/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 1 warning(s)\n  ✓ tests     11 passed, 0 failed, 0 skipped (workerd)\n\nClaims: 6 proved locally · 2 stub only · 3 not guaranteed · 0 blocked · 0 failing · 0 untested\n  ✓ proved-locally end-to-end: Items are triaged to filed, dismissed, or awaiting approval, and an approved briefing is sent once.\n  ✓ proved-locally dedupe-submission: The same item submitted twice is analyzed once.\n  ✓ proved-locally stale-results: A cancellation handled while the model call is in flight makes the late answer stale: it never produces a briefing.\n  ✓ proved-locally approval-gate: No briefing leaves without a person's approval; a refusal or a cancellation means it never leaves.\n  ✓ proved-locally model-bounded: A model call is attempted at most budget.maxAttempts times, each cut off after budget.timeoutMs; then the item goes to a person.\n  ✓ proved-locally model-output-checked: Model output that fails the schema is never acted on.\n  ~ stub-only      lost-ack-in-doubt: A briefing the gateway accepted but never acknowledged is reported in doubt: not marked sent, and not resent. Shown with a stub gateway that drops its answer.\n  ~ stub-only      unreachable-gateway: A gateway that provably never received a briefing is retried up to the budget, then the item goes to a person.\n  · not-guaranteed exactly-once-briefing: Exactly-once delivery of briefings. (The gateway accepts no idempotency key, so a lost acknowledgment can't be resolved; the desk says in_doubt instead.)\n  · not-guaranteed classification-quality: The model classifies items correctly. (Tests use deterministic doubles; judging the live model's output needs people or a model-backed eval, which CI doesn't run.)\n  · not-guaranteed live-model-adapter: The Anthropic adapter works against the live API. (It typechecks against @anthropic-ai/sdk 1.3.0, but calling the API needs a key and contacts an external service, so it is unverified here.)\n\nVerdict: PASS\nBefore any deploy: `actord diff` shows what changed and the deploy plan. A person runs the deploy."
     },
     {
@@ -586,8 +586,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2826,
-      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  14 passed (14)\n   Start at  19:30:18\n   Duration  2.48s (tests 99%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
+      "durationMs": 3099,
+      "outputTail": "\n RUN  v5.0.5 <repo>/packages/toolkit\n\n\n Test Files  1 passed (1)\n      Tests  14 passed (14)\n   Start at  01:48:51\n   Duration  2.70s (tests 97%, transform 2%, import 1%)\n\nnpm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line"
     },
     {
       "id": "g6.fixtures",
@@ -597,7 +597,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 527,
+      "durationMs": 571,
       "outputTail": "plugins/claude/tests/fixtures.ts matches the CLI's room, trace, and guard documents"
     },
     {
@@ -608,7 +608,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 579,
+      "durationMs": 544,
       "outputTail": "Validating plugin manifest: <repo>/plugins/claude/.claude-plugin/plugin.json\n\n  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)\n  ❯ types ./types/index.d.ts declares state: actord.snapshot, actord.tab, actord.selected, actord.trace\n\nValidating hooks: <repo>/plugins/claude/hooks/hooks.json\n\n  ❯ ./room.tsx hooks: session.start, classic.SessionStart, command.run{command=actord-room}, command.run{command=actord-room-view}, ui.close{id=actord-room}, tool.call{tool=Bash}, ui.render{component=Pane, requestId=actord-room}\n  ❯ ./room.tsx gating hook with .catch: classic.SessionStart\n  ❯ ./room.tsx gating hook with .catch: command.run{command=actord-room}\n  ❯ ./room.tsx gating hook with .catch: command.run{command=actord-room-view}\n  ❯ ./room.tsx gating hook with .catch: ui.close{id=actord-room}\n  ❯ ./room.tsx gating hook with .catch: tool.call{tool=Bash}\n  ❯ ./room.tsx calls: $.command.list, $.command.register, $.process.run (via actord), $.process.spawn (via follow), $.session.surfaces, $.state.get, $.state.set, $.ui.ask, $.ui.log (via follow), $.ui.open (via openRoom), $.ui.panes, $.ui.resolve, $.ui.status\n  ❯ ./room.tsx state writes: actord.selected, actord.snapshot, actord.tab, actord.trace\n  ❯ ./room.tsx state reads: actord.selected, actord.snapshot, actord.tab, actord.trace\n\nPlugin directory checks for <repo>/plugins/claude. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.\n\n⚠ Found 1 plugin directory warning:\n\n  ❯ .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.\n    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.\n\nAbout these checks:\n\n  ❯ The repository root was taken to be <repo>, the nearest parent folder with a .git folder or file. README.md was taken from it, because this plugin folder has none of its own. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.\n  ❯ hooks/hooks.json names a hooks module (a code file listed under `modules`). The plugin directory has rules of its own for such code, and these checks apply none of them, so passing here does not mean the directory accepts the plugin. The developer portal's own validation applies those rules.\n\nThese plugin directory checks do not change the result below.\n\nThe directory also runs a safety scan and a policy review that this command does not.\n\n✔ Validation passed"
     },
     {
@@ -619,8 +619,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 329,
-      "outputTail": "npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line\nthe Room type-checks against Claude Code 2.1.310 (<repo>/plugins/claude/.claude-plugin/types/claude-code/index.d.ts)"
+      "durationMs": 360,
+      "outputTail": "npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line\nthe Room type-checks against Claude Code 2.1.310 (/private/tmp/claude-501/bundled-skills/2.1.310/3cbba49890e7414c3a56bbc61e5d9571/plugin-authoring/types/claude-code.d.ts)"
     },
     {
       "id": "g6.mod.test",
@@ -630,8 +630,8 @@
       "status": "pass",
       "reason": "20 mod tests",
       "evidenceSource": "host",
-      "durationMs": 1042,
-      "outputTail": "\ntests/room.test.tsx:\n(pass) /actord-room opens the pane and draws every tab on terminal and desktop [71.29ms]\n(pass) the status line summarizes the project in an interactive session [15.53ms]\n(pass) /actord-room says \"wide enough\" only when a narrow terminal holds the pane back [16.09ms]\n(pass) /actord-room reports the status when a surface draws the pane as it attaches (the Desktop app) [15.68ms]\n(pass) /actord-room starts one follower, and a reloaded module restarts it only for a pane still up [13.13ms]\n(pass) a session without the pane open starts no follower [21.35ms]\n(pass) a headless session registers the command but runs nothing at start [12.24ms]\n(pass) a selected message nobody recorded is reported unknown [23.80ms]\n(pass) after /clear the pane reads the project again [19.74ms]\n(pass) outside an actor project the command says so and the pane shows nothing to draw [13.49ms]\n(pass) a CLI document of another schema version is refused, not drawn [16.50ms]\n(pass) another plugin owning /actord-room moves the Room to /actord-room-view [17.58ms]\n(pass) guard: a matching command is held, and Refuse denies it [11.79ms]\n(pass) guard: dismissing the question denies the command [11.12ms]\n(pass) guard: an answer other than \"Run it\" denies the command [10.48ms]\n(pass) guard: a failing hook denies the command [10.26ms]\n(pass) guard: with nobody to ask, the command is refused with an instruction to ask the user [13.19ms]\n(pass) guard: \"Run it\" passes the command on to Claude Code unchanged [10.19ms]\n(pass) guard: a non-matching command passes untouched without running the CLI [10.62ms]\n(pass) guard: a matching command outside an actor project passes on [9.53ms]\n\n 20 pass\n 0 fail\nRan 20 tests across 1 file. [0.49s]"
+      "durationMs": 1063,
+      "outputTail": "\ntests/room.test.tsx:\n(pass) /actord-room opens the pane and draws every tab on terminal and desktop [79.28ms]\n(pass) the status line summarizes the project in an interactive session [17.17ms]\n(pass) /actord-room says \"wide enough\" only when a narrow terminal holds the pane back [17.74ms]\n(pass) /actord-room reports the status when a surface draws the pane as it attaches (the Desktop app) [17.66ms]\n(pass) /actord-room starts one follower, and a reloaded module restarts it only for a pane still up [13.84ms]\n(pass) a session without the pane open starts no follower [23.04ms]\n(pass) a headless session registers the command but runs nothing at start [12.66ms]\n(pass) a selected message nobody recorded is reported unknown [23.38ms]\n(pass) after /clear the pane reads the project again [20.20ms]\n(pass) outside an actor project the command says so and the pane shows nothing to draw [13.69ms]\n(pass) a CLI document of another schema version is refused, not drawn [19.41ms]\n(pass) another plugin owning /actord-room moves the Room to /actord-room-view [16.05ms]\n(pass) guard: a matching command is held, and Refuse denies it [12.60ms]\n(pass) guard: dismissing the question denies the command [11.43ms]\n(pass) guard: an answer other than \"Run it\" denies the command [11.52ms]\n(pass) guard: a failing hook denies the command [11.02ms]\n(pass) guard: with nobody to ask, the command is refused with an instruction to ask the user [10.49ms]\n(pass) guard: \"Run it\" passes the command on to Claude Code unchanged [14.72ms]\n(pass) guard: a non-matching command passes untouched without running the CLI [10.33ms]\n(pass) guard: a matching command outside an actor project passes on [10.67ms]\n\n 20 pass\n 0 fail\nRan 20 tests across 1 file. [0.52s]"
     },
     {
       "id": "g6.monitor",
@@ -641,8 +641,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 2228,
-      "outputTail": "✔ one monitor entry per starting skill, each a strict entry naming an existing skill (0.692583ms)\n✔ the monitor prints each notable event once, and a second start in the same session exits quietly (2136.959833ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2190.577292"
+      "durationMs": 2194,
+      "outputTail": "✔ one monitor entry per starting skill, each a strict entry naming an existing skill (0.726709ms)\n✔ the monitor prints each notable event once, and a second start in the same session exits quietly (2112.124792ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 2155.768292"
     },
     {
       "id": "g6.trust",
@@ -652,8 +652,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 702,
-      "outputTail": "✔ the wiki has a trust page (0.396542ms)\n✔ every settings-style hook command is listed (0.524375ms)\n✔ every monitor command is listed (0.144959ms)\n✔ every mod event and mod call is listed (603.440792ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 657.854542"
+      "durationMs": 579,
+      "outputTail": "✔ the wiki has a trust page (0.407916ms)\n✔ every settings-style hook command is listed (0.7625ms)\n✔ every monitor command is listed (0.170917ms)\n✔ every mod event and mod call is listed (494.150417ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 540.418458"
     },
     {
       "id": "g6.no-hooks",
@@ -663,8 +663,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 13089,
-      "outputTail": "== install with disableAllHooks\n  Skills (7)  design, evolve, implement, inspect, reliability, setup, start\n  Agents (2)  boundary-critic, delivery-auditor\n== starter project verifies through the installed launcher\nactord verify: starter-app · PASS · evidence in .actord/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     3 passed, 0 failed, 0 skipped (workerd)\n\n== the Room's view as text\nstarter-app · 2 actors · 2 routes · check ✓\n\nTopology\n    @ingress ──greeting.requested──▶ Greeter\n    Greeter ──greeting.recorded──▶ Guestbook\n  \n    Greeter (deterministic)\n    Guestbook (deterministic)\n\nMailboxes\n  Greeter (2)\n    ✓ greeting.requested @ingress → Greeter:main (cfdff7b0-bfa9-485b-894f-7e0bee303e2d)\n== the effect guard's decision as text\nThis command would deploy or publish a Worker: npx wrangler deploy\nstarter-app: no architectural changes against git:HEAD.\nDeploy plan:\nno-hooks-smoke: ok"
+      "durationMs": 16073,
+      "outputTail": "== install with disableAllHooks\n  Skills (7)  design, evolve, implement, inspect, reliability, setup, start\n  Agents (2)  boundary-critic, delivery-auditor\n== starter project verifies through the installed launcher\nactord verify: starter-app · PASS · evidence in .actord/evidence.json\n  ✓ typecheck no type errors\n  ✓ check     0 error(s), 0 warning(s)\n  ✓ tests     3 passed, 0 failed, 0 skipped (workerd)\n\n== the Room's view as text\nstarter-app · 2 actors · 2 routes · check ✓\n\nTopology\n    @ingress ──greeting.requested──▶ Greeter\n    Greeter ──greeting.recorded──▶ Guestbook\n  \n    Greeter (deterministic)\n    Guestbook (deterministic)\n\nMailboxes\n  Greeter (2)\n    ✓ greeting.requested @ingress → Greeter:main (badb97ce-6229-4a47-9c64-4a1a1c4ed274)\n== the effect guard's decision as text\nThis command would deploy or publish a Worker: npx wrangler deploy\nstarter-app: no architectural changes against git:HEAD.\nDeploy plan:\nno-hooks-smoke: ok"
     },
     {
       "id": "g6.acceptance",
@@ -685,8 +685,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 81,
-      "outputTail": "✔ the README gets every kind of user started and points into the wiki (0.470166ms)\n✔ the wiki covers install, update, uninstall, the Room, trust, limitations, and evaluations (0.767ms)\n✔ CONTRIBUTING covers setup, verification, evaluations, and releasing (0.11375ms)\n✔ the toolkit and every plugin share one version (0.214208ms)\n✔ every CLI command in the help text has a row on the CLI wiki page (0.297416ms)\n✔ tables in the README, CONTRIBUTING, and the wiki aren't broken by blank lines (0.310708ms)\n✔ the architecture page links every decision (0.164583ms)\n✔ CI runs the offline lane from a clean checkout, with no secrets and no model-backed evals (0.150375ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 45.108959"
+      "durationMs": 89,
+      "outputTail": "✔ the README gets every kind of user started and points into the wiki (0.935125ms)\n✔ the wiki covers install, update, uninstall, the Room, trust, limitations, and evaluations (0.89775ms)\n✔ CONTRIBUTING covers setup, verification, evaluations, and releasing (0.126542ms)\n✔ the toolkit and every plugin share one version (0.261125ms)\n✔ every CLI command in the help text has a row on the CLI wiki page (0.363208ms)\n✔ tables in the README, CONTRIBUTING, and the wiki aren't broken by blank lines (0.370042ms)\n✔ the architecture page links every decision (0.204167ms)\n✔ CI runs the offline lane from a clean checkout, with no secrets and no model-backed evals (0.167708ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 50.944542"
     },
     {
       "id": "g7.release-evidence",
@@ -696,7 +696,7 @@
       "status": "pass",
       "reason": "docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt",
       "evidenceSource": "host",
-      "durationMs": 498,
+      "durationMs": 598,
       "outputTail": "Validating plugin manifest: <repo>/plugins/claude/.claude-plugin/plugin.json\n\n  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)\n  ❯ types ./types/index.d.ts declares state: actord.snapshot, actord.tab, actord.selected, actord.trace\n\nValidating hooks: <repo>/plugins/claude/hooks/hooks.json\n\n  ❯ ./room.tsx hooks: session.start, classic.SessionStart, command.run{command=actord-room}, command.run{command=actord-room-view}, ui.close{id=actord-room}, tool.call{tool=Bash}, ui.render{component=Pane, requestId=actord-room}\n  ❯ ./room.tsx gating hook with .catch: classic.SessionStart\n  ❯ ./room.tsx gating hook with .catch: command.run{command=actord-room}\n  ❯ ./room.tsx gating hook with .catch: command.run{command=actord-room-view}\n  ❯ ./room.tsx gating hook with .catch: ui.close{id=actord-room}\n  ❯ ./room.tsx gating hook with .catch: tool.call{tool=Bash}\n  ❯ ./room.tsx calls: $.command.list, $.command.register, $.process.run (via actord), $.process.spawn (via follow), $.session.surfaces, $.state.get, $.state.set, $.ui.ask, $.ui.log (via follow), $.ui.open (via openRoom), $.ui.panes, $.ui.resolve, $.ui.status\n  ❯ ./room.tsx state writes: actord.selected, actord.snapshot, actord.tab, actord.trace\n  ❯ ./room.tsx state reads: actord.selected, actord.snapshot, actord.tab, actord.trace\n\nPlugin directory checks for <repo>/plugins/claude. The plugin directory is the catalog that plugins are submitted to; this is a subset of what it runs.\n\n⚠ Found 1 plugin directory warning:\n\n  ❯ .claude-plugin/plugin.json icon: No icon (ICON_MISSING). No icon found in the plugin. The validator looked for `icon` in plugin.json and for a file at .claude-plugin/icon.png or .svg, assets/icon.png or .svg, or a similar path.\n    Fix: Add a square PNG to the plugin folder at .claude-plugin/icon.png, or set `icon` in plugin.json to the path of a square PNG or JPEG in the plugin: 512 to 2048 px on each side, under 2 MB. SVG and WebP are not accepted. That file may become the listing icon only once: the first time the plugin is saved or submitted in the developer portal. Adding or changing it later does not change the icon.\n\nAbout these checks:\n\n  ❯ The repository root was taken to be <repo>, the nearest parent folder with a .git folder or file. README.md was taken from it, because this plugin folder has none of its own. For a plugin submitted from a git repository, the repository root is the top folder of that repository, with only what is committed there, so check that the folder named above is that top folder.\n  ❯ hooks/hooks.json names a hooks module (a code file listed under `modules`). The plugin directory has rules of its own for such code, and these checks apply none of them, so passing here does not mean the directory accepts the plugin. The developer portal's own validation applies those rules.\n\nThese plugin directory checks do not change the result below.\n\nThe directory also runs a safety scan and a policy review that this command does not.\n\n✔ Validation passed"
     },
     {
@@ -707,7 +707,7 @@
       "status": "pass",
       "reason": "actord--v0.2.0, tagged at 0020f21",
       "evidenceSource": "host",
-      "durationMs": 676,
+      "durationMs": 511,
       "outputTail": "Plugin:  actord\nVersion: 0.2.0 (from plugin.json)\nMarketplace entry: plugins[0] in <repo>/.claude-plugin/marketplace.json\nTag:     actord--v0.2.0\n\n✔ Dry run — would create tag actord--v0.2.0 at HEAD in <repo>\n  git -C <repo> tag -f -a actord--v0.2.0 -m \"actord 0.2.0\"\n  git -C <repo> push --force origin refs/tags/actord--v0.2.0"
     },
     {
@@ -718,8 +718,8 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 149945,
-      "outputTail": "== clone 884e3e6 A landing-page README, the reference in a wiki, CONTRIBUTING for the repository\n== npm ci\n== a stray .DS_Store in every directory\n== build reproduces both plugin distributions\nbuilt @actord/toolkit 0.2.0 → dist/cli.mjs, plugins/{claude,codex}/dist/actord.mjs\n== npm run verify\n\nwrote verify-report.json and docs/verification-report.md\n\n59 pass · 0 fail · 0 blocked · 2 skipped\n  G0 passed\n  G1 passed\n  G2 passed\n  G3 passed\n  G4 passed\n  G5 passed\n  G6 passed\n  G7 incomplete\nclean-checkout: ok"
+      "durationMs": 177221,
+      "outputTail": "== clone 74bdf89 Spec and plan: a timer's id includes the message that set it\n== npm ci\n== a stray .DS_Store in every directory\n== build reproduces both plugin distributions\nbuilt @actord/toolkit 0.2.0 → dist/cli.mjs, plugins/{claude,codex}/dist/actord.mjs\n== npm run verify\n\nwrote verify-report.json and docs/verification-report.md\n\n59 pass · 0 fail · 0 blocked · 2 skipped\n  G0 passed\n  G1 passed\n  G2 passed\n  G3 passed\n  G4 passed\n  G5 passed\n  G6 passed\n  G7 incomplete\nclean-checkout: ok"
     },
     {
       "id": "g7.container",
@@ -729,7 +729,7 @@
       "status": "pass",
       "reason": null,
       "evidenceSource": "host",
-      "durationMs": 56277,
+      "durationMs": 70460,
       "outputTail": "  \"schemaVersion\": 1,\n  \"status\": \"passed\",\n  \"steps\": [\n    {\n      \"command\": \"codex plugin marketplace add <repo> --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"marketplaceName\\\": \\\"actord\\\",\\n  \\\"installedRoot\\\": \\\"<repo>\\\",\\n  \\\"alreadyAdded\\\": false\\n}\\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \\\"/tmp\\\" (codex_home: AbsolutePathBuf(\\\"<temp>/codex\\\"))\\n\"\n    },\n    {\n      \"command\": \"codex plugin add actord@actord --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"pluginId\\\": \\\"actord@actord\\\",\\n  \\\"name\\\": \\\"actord\\\",\\n  \\\"marketplaceName\\\": \\\"actord\\\",\\n  \\\"version\\\": \\\"0.2.0\\\",\\n  \\\"installedPath\\\": \\\"<temp>/codex/plugins/cache/actord/actord/0.2.0\\\",\\n  \\\"authPolicy\\\": \\\"ON_INSTALL\\\"\\n}\\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \\\"/tmp\\\" (codex_home: AbsolutePathBuf(\\\"<temp>/codex\\\"))\\n\"\n    },\n    {\n      \"command\": \"node <temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version\",\n      \"status\": \"passed\",\n      \"output\": \"0.2.0\\n\"\n    },\n    {\n      \"command\": \"codex plugin list --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"installed\\\": [\\n    {\\n      \\\"pluginId\\\": \\\"actord@actord\\\",\\n      \\\"name\\\": \\\"actord\\\",\\n      \\\"marketplaceName\\\": \\\"actord\\\",\\n      \\\"version\\\": \\\"0.2.0\\\",\\n      \\\"installed\\\": true,\\n      \\\"enabled\\\": true,\\n      \\\"source\\\": {\\n        \\\"source\\\": \\\"local\\\",\\n        \\\"path\\\": \\\"<repo>/plugins/codex\\\"\\n      },\\n      \\\"marketplaceSource\\\": {\\n        \\\"sourceType\\\": \\\"local\\\",\\n        \\\"source\\\": \\\"<repo>\\\"\\n      },\\n      \\\"installPolicy\\\": \\\"AVAILABLE\\\",\\n      \\\"authPolicy\\\": \\\"ON_INSTALL\\\"\\n    }\\n  ],\\n  \\\"available\\\": []\\n}\\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \\\"/tmp\\\" (codex_home: AbsolutePathBuf(\\\"<temp>/codex\\\"))\\n\"\n    },\n    {\n      \"command\": \"codex plugin remove actord@actord --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"pluginId\\\": \\\"actord@actord\\\",\\n  \\\"name\\\": \\\"actord\\\",\\n  \\\"marketplaceName\\\": \\\"actord\\\"\\n}\\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \\\"/tmp\\\" (codex_home: AbsolutePathBuf(\\\"<temp>/codex\\\"))\\n\"\n    },\n    {\n      \"command\": \"codex plugin marketplace remove actord --json\",\n      \"status\": \"passed\",\n      \"output\": \"{\\n  \\\"marketplaceName\\\": \\\"actord\\\",\\n  \\\"installedRoot\\\": null\\n}\\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \\\"/tmp\\\" (codex_home: AbsolutePathBuf(\\\"<temp>/codex\\\"))\\n\"\n    }\n  ],\n  \"unverified\": [\n    \"Model-backed skill invocation and desktop onboarding; not run by this credential-free lane\"\n  ]\n}\n{\"status\":\"passed\",\"steps\":32}\ncontainer-install: ok (both plugins)"
     }
   ]

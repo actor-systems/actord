@@ -14,7 +14,7 @@ export default defineSystem({
       binding: "ANALYST", kind: "model-assisted", purpose: "…", justification: ["identity", "isolation"],
       effects: ["model.analyze"],
       budget: { maxAttempts: 2, timeoutMs: 30_000, maxTokens: 2048 }, // required for model-assisted and agent
-      // schedule: { every: "15m", message: "x.due" }  // needs a route from "@clock"
+      // schedules: [{ every: "15m", message: "x.due" }]  // needs a route from "@clock"
     },
   },
   effects: {

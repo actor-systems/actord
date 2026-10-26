@@ -42,6 +42,11 @@ export interface MessageSpec<S extends StandardSchemaV1 = StandardSchemaV1> {
   readonly payload: S;
 }
 
+/** A schedule: a fixed period (`every`) or a cron expression (`cron`, in UTC), delivering `message`. */
+export type ScheduleSpec =
+  | { readonly every: Duration; readonly message: string; readonly cron?: never }
+  | { readonly cron: string; readonly message: string; readonly every?: never };
+
 export interface ActorSpec {
   /** The Durable Object binding name in wrangler.jsonc, such as "RELEASE_LEDGER". */
   readonly binding: string;
@@ -50,8 +55,8 @@ export interface ActorSpec {
   readonly purpose: string;
   /** At least one reason this is an actor. An empty list is a check error. */
   readonly justification: readonly Justification[];
-  /** A periodic wake, delivered as `message` on a route from "@clock". */
-  readonly schedule?: { readonly every: Duration; readonly message: string };
+  /** Periodic wakes, each delivered as its `message` on a route from "@clock". */
+  readonly schedules?: readonly ScheduleSpec[];
   /** Names of external effects (keys of the system's `effects`) this actor may request. */
   readonly effects?: readonly string[];
   /** Required for model-assisted and agent actors: bounds on one unit of model work. */
@@ -70,15 +75,31 @@ export interface EffectSpec {
   readonly reconcile?: boolean;
   /** "human": the effect goes through an approval gateway before it runs. */
   readonly approval?: "human" | "none";
+  /** How long an approval request waits for a person before it expires and the actor hears it failed. Default "3d". Only with approval: "human". */
+  readonly expires?: Duration;
   /**
-   * A message delivered back to the requesting actor with the outcome ({ key, status, value | error }),
+   * A message delivered back to the requesting actor with the outcome ({ key, status, value | error, usage? }),
    * on a route from the actor to itself. This makes the external wait an explicit message boundary.
    */
   readonly result?: string;
+  /** Bounds for one run of this effect. They take precedence over the requesting actor's budget. */
+  readonly budget?: { readonly maxAttempts?: number; readonly timeoutMs?: number };
+  /**
+   * "call" (the default): one request answered within the effect's timeout. "job": work that outlives a
+   * request (an agent session, a CI run). The adapter's start() returns a handle; the job is settled once,
+   * later, by its completion message, its probe, its deadline (in_doubt) or a cancel. See decision 0018.
+   */
+  readonly kind?: "call" | "job";
+  /** Required for a job: how long it may wait before its outcome is in_doubt. */
+  readonly deadline?: Duration;
+  /** For a job: ask the adapter's probe(handle) this often until it reports done. */
+  readonly probe?: { readonly every: Duration };
+  /** For a job: the message whose handler settles it with ctx.settleJob(...). It names that message for checks and the graph. */
+  readonly completes?: { readonly message: string };
 }
 
-/** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron). */
-export type ExternalSender = "@clock" | "@ingress";
+/** "@clock" delivers scheduled messages; "@ingress" is the Worker's own entry point (fetch, cron); "@timer" delivers timers an actor set for itself. */
+export type ExternalSender = "@clock" | "@ingress" | "@timer";
 
 export interface RouteSpec<A extends string = string, M extends string = string> {
   readonly from: A | ExternalSender;
@@ -89,7 +110,10 @@ export interface RouteSpec<A extends string = string, M extends string = string>
 /** Per-actor references that must name declared effects and messages. */
 export type ActorRefs<Msgs, Effects> = {
   readonly effects?: readonly Extract<keyof Effects, string>[];
-  readonly schedule?: { readonly every: Duration; readonly message: Extract<keyof Msgs, string> };
+  readonly schedules?: readonly (
+    | { readonly every: Duration; readonly message: Extract<keyof Msgs, string>; readonly cron?: never }
+    | { readonly cron: string; readonly message: Extract<keyof Msgs, string>; readonly every?: never }
+  )[];
 };
 
 export interface SystemSpec<
@@ -161,6 +185,8 @@ export type MessagesTo<S extends AnySystem, A extends string> = Extract<Extract<
 export type MessagesFrom<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: A }>["message"], MessageName<S>>;
 /** Messages the Worker may send to actor A from its own code (route sender "@ingress"). */
 export type IngressMessages<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: "@ingress"; to: A }>["message"], MessageName<S>>;
+/** Messages actor A may set as timers for itself (route sender "@timer"). */
+export type TimerMessages<S extends AnySystem, A extends string> = Extract<Extract<S["routes"][number], { from: "@timer"; to: A }>["message"], MessageName<S>>;
 /** The receivers of message M from actor A. */
 export type Receivers<S extends AnySystem, A extends string, M extends string> = Extract<S["routes"][number], { from: A; message: M }>["to"];
 

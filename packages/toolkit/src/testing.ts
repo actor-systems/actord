@@ -1,19 +1,27 @@
 // @actord/toolkit/testing: helpers for tests that run in workerd with @cloudflare/vitest-plugin.
 // Import only from test files: it depends on the `cloudflare:test` module.
-import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import type { EffectAdapter, FaultPoint } from "./runtime/index.ts";
+import { listDurableObjectIds, runInDurableObject } from "cloudflare:test";
+import type { ActorEvent, ActorRuntime, EffectAdapter, FaultPoint, JobAdapter } from "./runtime/index.ts";
+import { expireJobRows } from "./runtime/jobs.ts";
+import { scheduleKey } from "./runtime/schedules.ts";
 import type { System } from "./system.ts";
 
 interface Seams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
-  effects: Record<string, EffectAdapter>;
+  effects: Record<string, EffectAdapter | JobAdapter>;
   budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  effectBudgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  runtimes: Map<string, ActorRuntime>;
+  names: Map<string, string>;
+  events?: ActorEvent[];
 }
 function seams(): Seams {
   const g = globalThis as { __actorsTestSeams?: Seams };
-  g.__actorsTestSeams ??= { faults: [], effects: {} };
+  g.__actorsTestSeams ??= { faults: [], effects: {}, runtimes: new Map(), names: new Map() };
   return g.__actorsTestSeams;
 }
+// Create the seams at import, before any actor is constructed, so every runtime registers itself in them.
+seams();
 
 /**
  * Make the next `times` matching steps throw. "before-handler" fails before any state change,
@@ -30,8 +38,8 @@ export function injectFault(fault: { actor: string; type?: string; at: FaultPoin
   });
 }
 
-/** Replace an effect's adapter for the rest of the test file (or until resetSeams). */
-export function overrideEffect(name: string, adapter: EffectAdapter): void {
+/** Replace an effect's adapter (a JobAdapter for a job effect) for the rest of the test file (or until resetSeams). */
+export function overrideEffect(name: string, adapter: EffectAdapter | JobAdapter): void {
   seams().effects[name] = adapter;
 }
 
@@ -40,30 +48,48 @@ export function overrideBudget(actor: string, budget: { maxAttempts?: number; ti
   seams().budgets = { ...seams().budgets, [actor]: budget };
 }
 
+/** Override one effect's budget for a test; it wins over the effect's own and its actor's. */
+export function overrideEffectBudget(effect: string, budget: { maxAttempts?: number; timeoutMs?: number }): void {
+  seams().effectBudgets = { ...seams().effectBudgets, [effect]: budget };
+}
+
+/** Start capturing every event the runtime emits; returns the live array, which fills until resetSeams(). */
+export function captureEvents(): ActorEvent[] {
+  const events: ActorEvent[] = [];
+  seams().events = events;
+  return events;
+}
+
 export function resetSeams(): void {
+  delete seams().events;
   seams().faults = [];
   seams().effects = {};
   seams().budgets = {};
+  seams().effectBudgets = {};
 }
 
 type Env = Record<string, { get(id: unknown): unknown; getByName(name: string): unknown }>;
 
+/** Rows waiting to be delivered or run, and work in flight: running effects, cancels, and the runtime's background probes. */
 async function outboxCounts(stub: unknown): Promise<{ pending: number; running: number }> {
   return runInDurableObject(stub, (_i, state) => {
+    const background = seams().runtimes.get(state.id.toString())?.busy() ?? 0;
     try {
-      const rows = state.storage.sql.exec("SELECT status, COUNT(*) AS n FROM _actors_outbox WHERE status IN ('pending', 'running') GROUP BY status").toArray();
+      const rows = state.storage.sql.exec("SELECT status, COUNT(*) AS n FROM _actors_outbox WHERE status IN ('pending', 'running', 'cancelling') GROUP BY status").toArray();
       const get = (s: string) => Number(rows.find((r) => r.status === s)?.n ?? 0);
-      return { pending: get("pending"), running: get("running") };
+      return { pending: get("pending"), running: get("running") + get("cancelling") + background };
     } catch {
-      return { pending: 0, running: 0 };
+      return { pending: 0, running: background };
     }
   });
 }
 
 /**
- * Wait until no effect is running anywhere in the system and, unless `deliver` is false, deliver every
- * pending outbox row, fast-forwarding retry backoff. Stops when the system is quiet or `rounds` run out;
- * returns the number of busy rounds.
+ * Wait until no effect, job probe or cancel is in flight anywhere in the system and, unless `deliver` is
+ * false, deliver every pending outbox row, fast-forwarding retry backoff by driving the runtime directly
+ * rather than through the alarm. Waiting jobs' probes and deadlines are left when they are due (use
+ * expireJobs, or make a probe due yourself). Stops when the system is quiet or `rounds` run out; returns
+ * the number of busy rounds.
  */
 export async function settle(env: unknown, system: System, options: { rounds?: number; deliver?: boolean } = {}): Promise<number> {
   const e = env as Env;
@@ -74,16 +100,27 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
       const ns = e[spec.binding];
       if (!ns) continue;
       for (const id of await listDurableObjectIds(ns)) {
-        const stub = ns.get(id);
+        // After abortAllDurableObjects the listing can hand back ids with no name, and Lifecycle won't start an
+        // instance whose ctx.id.name is missing. Nothing can be driven or counted there, so skip it.
+        // listDurableObjectIds returns ids without names (and, after abortAllDurableObjects, so does ctx.id), and
+        // Lifecycle won't start an instance whose ctx.id.name is missing. Resolve each id through the name its
+        // runtime registered; an id never seen by a runtime has nothing to drive or count, so skip it.
+        const name = seams().names.get(String(id));
+        if (name === undefined) continue;
+        const stub = ns.getByName(name);
         const { pending, running } = await outboxCounts(stub);
         if (running > 0) any = true;
-        if (pending === 0 || options.deliver === false) continue;
-        any = true;
-        await runInDurableObject(stub, async (_i, state) => {
-          state.storage.sql.exec("UPDATE _actors_outbox SET next_at = 0 WHERE status = 'pending'");
-          if ((await state.storage.getAlarm()) === null) await state.storage.setAlarm(Date.now() + 3_600_000);
+        if (options.deliver === false) continue;
+        if (pending > 0) any = true;
+        // Drive every instance each round, not only those with pending rows: a schedule can be due with an empty outbox.
+        const started = await runInDurableObject(stub, async (_i, state) => {
+          if (pending > 0) state.storage.sql.exec("UPDATE _actors_outbox SET next_at = 0 WHERE status = 'pending'");
+          const runtime = seams().runtimes.get(state.id.toString());
+          await runtime?.drive();
+          // drive() may have started background work (a probe, an effect), which another round waits for.
+          return runtime?.busy() ?? 0;
         });
-        await runDurableObjectAlarm(stub);
+        if (started > 0) any = true;
       }
     }
     if (!any) return busy;
@@ -96,23 +133,71 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
 let lastWake = 0;
 
 /**
- * Simulate a scheduled wake now: mark the instance's next tick due at the current time and run its alarm,
- * as when an alarm fires on schedule, so the wake's `payload.at` is now. Each call is a distinct wake (a
+ * Simulate a scheduled wake now: mark the instance's next tick of one schedule (by `message`, default the
+ * first) due at the current time and drive it, as
+ * when its job fires on schedule, so the wake's `payload.at` is now. Each call is a distinct wake (a
  * later scheduled time, so a distinct message id).
  */
-export async function tick(env: unknown, system: System, actor: string, key = "main"): Promise<boolean> {
+export async function tick(env: unknown, system: System, actor: string, key = "main", message?: string): Promise<boolean> {
   const spec = system.actors[actor];
   if (!spec) throw new Error(`${actor} is not declared`);
+  const target = message ?? spec.schedules?.[0]?.message;
+  if (!target || !spec.schedules?.some((sc) => sc.message === target)) throw new Error(`${actor} has no schedule for ${target ?? "any message"}`);
   const stub = (env as Env)[spec.binding]!.getByName(key);
   const at = Math.max(Date.now(), lastWake + 1);
   lastWake = at;
   if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now() + 1));
   const due = String(at);
   await runInDurableObject(stub, async (_i, state) => {
-    state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES ('schedule.next', ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", due);
-    // An alarm set to "now" would fire on its own and race the test; park one far ahead instead,
-    // since runDurableObjectAlarm runs whatever alarm is set, whenever it is due.
-    if ((await state.storage.getAlarm()) === null) await state.storage.setAlarm(Date.now() + 3_600_000);
+    state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", scheduleKey(target), due);
+    await seams().runtimes.get(state.id.toString())?.drive();
   });
-  return runDurableObjectAlarm(stub);
+  return true;
+}
+
+/**
+ * Make an instance's pending timers due now and drive it, as when its job fires after their delays.
+ * Returns how many were due.
+ */
+export async function fireTimers(env: unknown, system: System, actor: string, key = "main"): Promise<number> {
+  const spec = system.actors[actor];
+  if (!spec) throw new Error(`${actor} is not declared`);
+  const stub = (env as Env)[spec.binding]!.getByName(key);
+  return runInDurableObject(stub, async (_i, state) => {
+    const due = Number(state.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_timers").toArray()[0]!.n);
+    state.storage.sql.exec("UPDATE _actors_timers SET due_at = 0");
+    await seams().runtimes.get(state.id.toString())?.drive();
+    return due;
+  });
+}
+
+/**
+ * Make every job an instance is waiting on reach its deadline now, and drive it, as when its job fires at
+ * the deadline: each becomes in_doubt. Returns how many were waiting.
+ */
+export async function expireJobs(env: unknown, system: System, actor: string, key = "main"): Promise<number> {
+  const spec = system.actors[actor];
+  if (!spec) throw new Error(`${actor} is not declared`);
+  const stub = (env as Env)[spec.binding]!.getByName(key);
+  return runInDurableObject(stub, async (_i, state) => {
+    const waiting = expireJobRows(state.storage.sql, Date.now());
+    await seams().runtimes.get(state.id.toString())?.drive();
+    return waiting;
+  });
+}
+
+/**
+ * Make every approval an instance is waiting on expire now, and drive it, as when the approval's
+ * deadline passes: each becomes denied with "approval expired". Returns how many were waiting.
+ */
+export async function expireApprovals(env: unknown, system: System, actor: string, key = "main"): Promise<number> {
+  const spec = system.actors[actor];
+  if (!spec) throw new Error(`${actor} is not declared`);
+  const stub = (env as Env)[spec.binding]!.getByName(key);
+  return runInDurableObject(stub, async (_i, state) => {
+    const waiting = state.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE status = 'awaiting_approval'").one().n as number;
+    state.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", Date.now());
+    await seams().runtimes.get(state.id.toString())?.drive();
+    return waiting;
+  });
 }

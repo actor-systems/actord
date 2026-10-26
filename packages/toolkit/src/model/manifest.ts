@@ -6,13 +6,25 @@ import { durationMs, type System } from "../system.ts";
 export const MANIFEST_FILE = "actord.manifest.json";
 export const MANIFEST_SCHEMA_VERSION = 1;
 
+export interface ManifestSchedule {
+  every: string | null;
+  everyMs: number | null;
+  cron: string | null;
+  message: string;
+}
+
+/** "every 15m" or "cron 0 9 * * *": how a schedule reads in the graph and the facts line. */
+export function scheduleLabel(s: Pick<ManifestSchedule, "every" | "cron">): string {
+  return s.cron !== null ? `cron ${s.cron}` : `every ${s.every}`;
+}
+
 export interface ManifestActor {
   name: string;
   binding: string;
   kind: string;
   purpose: string;
   justification: string[];
-  schedule: { every: string; everyMs: number | null; message: string } | null;
+  schedules: ManifestSchedule[];
   effects: string[];
   budget: { maxAttempts: number; timeoutMs: number; maxTokens: number | null } | null;
   receives: string[];
@@ -39,7 +51,18 @@ export interface ManifestEffect {
   idempotency: string;
   reconcile: boolean;
   approval: string;
+  /** Present only when the effect declares one: how long an approval waits before it expires. */
+  expires?: string;
   result: string | null;
+  /** Present only when the effect declares one. */
+  budget?: { maxAttempts?: number; timeoutMs?: number };
+  /** "call" or "job". */
+  kind: string;
+  /** A job's deadline, such as "2h"; null when none is declared. */
+  deadline: string | null;
+  probe: { every: string } | null;
+  /** The message whose handler settles the job with ctx.settleJob. */
+  completes: { message: string } | null;
 }
 
 export interface Manifest {
@@ -66,7 +89,12 @@ export function normalize(system: System): Manifest {
       kind: a.kind,
       purpose: a.purpose ?? "",
       justification: [...(a.justification ?? [])].sort(),
-      schedule: a.schedule ? { every: a.schedule.every, everyMs: durationMs(a.schedule.every), message: a.schedule.message } : null,
+      schedules: (a.schedules ?? []).map((s) => ({
+        every: s.every ?? null,
+        everyMs: s.every === undefined ? null : durationMs(s.every),
+        cron: s.cron ?? null,
+        message: s.message,
+      })),
       effects: [...(a.effects ?? [])].sort(),
       budget: a.budget ? { maxAttempts: a.budget.maxAttempts, timeoutMs: a.budget.timeoutMs, maxTokens: a.budget.maxTokens ?? null } : null,
       receives: [...new Set(routes.filter((r) => r.to === name).map((r) => r.message))].sort(),
@@ -83,7 +111,13 @@ export function normalize(system: System): Manifest {
       idempotency: e.idempotency,
       reconcile: e.reconcile ?? false,
       approval: e.approval ?? "none",
+      ...(e.expires ? { expires: e.expires } : {}),
       result: e.result ?? null,
+      ...(e.budget ? { budget: { ...(e.budget.maxAttempts !== undefined ? { maxAttempts: e.budget.maxAttempts } : {}), ...(e.budget.timeoutMs !== undefined ? { timeoutMs: e.budget.timeoutMs } : {}) } } : {}),
+      kind: e.kind ?? "call",
+      deadline: e.deadline ?? null,
+      probe: e.probe ? { every: e.probe.every } : null,
+      completes: e.completes ? { message: e.completes.message } : null,
     }))
     .sort(byName);
   return {

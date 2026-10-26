@@ -72,6 +72,51 @@ describe("actord trace", () => {
     expect(node).toMatchObject({ outcome: "handled", attempts: 2, failures: ["injected fault at after-handler"] });
   });
 
+  it("shows a job's handle and what settled it, or that it is still waiting", () => {
+    // The event shapes the runtime emits for a job (its [job-events] test pins them).
+    const ev = (e: Record<string, unknown>) => JSON.stringify({ $actord: 1, at: 1, actor: "Probe:j", ...e });
+    const msg = { type: "probe.job.start", version: 1, from: "@ingress", to: "Probe:j", correlationId: "m-start", causationId: null };
+    const fx = { effect: "gateway.job", effectKey: "j", causationId: "m-start", correlationId: "m-start" };
+    const started = [
+      ev({ kind: "received", messageId: "m-start", ...msg }),
+      ev({ kind: "handled", messageId: "m-start", ...msg }),
+      ev({ kind: "effect.requested", ...fx }),
+      ev({ kind: "job.started", ...fx, at: 1_000, attempt: 1, detail: { handle: { runId: "r-1" }, deadlineAt: 7_201_000, nextAt: 61_000 } }),
+    ];
+    const waiting = join(tmp, "job-waiting.ndjson");
+    writeFileSync(waiting, `${started.join("\n")}\n`);
+    expect(JSON.parse(run("trace", "m-start", "--file", waiting, "--json").out).root.effects).toMatchObject([{ effect: "gateway.job", outcome: "awaiting_job", job: { handle: { runId: "r-1" }, settledBy: null, waitedMs: null } }]);
+    expect(run("trace", "m-start", "--file", waiting).out).toContain('job {"runId":"r-1"} not settled yet');
+    const settled = join(tmp, "job-settled.ndjson");
+    // Settled 3m 25s after it started.
+    writeFileSync(settled, `${[...started, ev({ kind: "effect.confirmed", ...fx, at: 206_000, attempt: 1, detail: { settledBy: "message" } })].join("\n")}\n`);
+    expect(JSON.parse(run("trace", "m-start", "--file", settled, "--json").out).root.effects).toMatchObject([{ outcome: "confirmed", job: { handle: { runId: "r-1" }, settledBy: "message", waitedMs: 205_000 } }]);
+    expect(run("trace", "m-start", "--file", settled).out).toContain('job {"runId":"r-1"} settled by message after 3m 25s');
+  });
+
+  it("trace attributes a duplicate request to the message that made it, not the first outcome", () => {
+    const ev = (e: Record<string, unknown>) => JSON.stringify({ $actord: 1, actor: "A", at: 1, ...e });
+    const msg = (id: string) => ({ messageId: id, type: "t", from: "@ingress", to: "A", version: 1, correlationId: "c", attempt: 1 });
+    const fx = { effect: "x", effectKey: "k", correlationId: "c" };
+    const log = join(tmp, "dup.ndjson");
+    writeFileSync(
+      log,
+      `${[
+        ev({ kind: "received", ...msg("M1") }),
+        ev({ kind: "handled", ...msg("M1") }),
+        ev({ kind: "effect.requested", ...fx, causationId: "M1" }),
+        ev({ kind: "effect.confirmed", ...fx, causationId: "M1", at: 2 }),
+        ev({ kind: "received", ...msg("M2") }),
+        ev({ kind: "handled", ...msg("M2") }),
+        ev({ kind: "effect.duplicate", ...fx, causationId: "M2", at: 3, detail: { existingStatus: "confirmed", firstCausationId: "M1" } }),
+      ].join("\n")}\n`,
+    );
+    expect(JSON.parse(run("trace", "M2", "--file", log, "--json").out).root.effects).toMatchObject([{ effect: "x", key: "k", outcome: "duplicate", attempts: 0, result: null, duplicateOf: "M1" }]);
+    expect(run("trace", "M2", "--file", log).out).toContain("already requested by M1 (confirmed)");
+    // The first requester's trace is unchanged by the later duplicate.
+    expect(JSON.parse(run("trace", "M1", "--file", log, "--json").out).root.effects).toMatchObject([{ outcome: "confirmed" }]);
+  });
+
   it("marks a dead-lettered message as retry.exhausted", () => {
     const dead = find(faults, (e) => e.kind === "retry.exhausted");
     const out = run("trace", dead, "--file", faults).out;

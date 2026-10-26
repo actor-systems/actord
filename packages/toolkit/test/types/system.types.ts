@@ -58,7 +58,7 @@ defineSystem({
   messages: { "release.observed": Observed },
   actors: {
     // @ts-expect-error poll.due is not a declared message
-    Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"], schedule: { every: "5m", message: "poll.due" } },
+    Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"], schedules: [{ every: "5m", message: "poll.due" }] },
   },
   routes: [{ from: "@ingress", message: "release.observed", to: "Poller" }],
 });
@@ -67,7 +67,7 @@ defineSystem({
   name: "effects-ok",
   messages: { "release.observed": Observed },
   actors: {
-    Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"], effects: ["notify.digest"], schedule: { every: "5m", message: "release.observed" } },
+    Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"], effects: ["notify.digest"], schedules: [{ every: "5m", message: "release.observed" }] },
   },
   effects: { "notify.digest": { description: "digest", idempotency: "key" } },
   routes: [{ from: "@clock", message: "release.observed", to: "Poller" }],
