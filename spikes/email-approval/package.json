@@ -1,0 +1,17 @@
+{
+  "name": "spike-email-approval",
+  "private": true,
+  "type": "module",
+  "description": "Spike 6: an email-approval Worker for a real Gmail round trip (owner-deployed; no tests)",
+  "scripts": {
+    "types": "wrangler types",
+    "typecheck": "wrangler types >/dev/null && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@actord/toolkit": "0.2.0",
+    "agents": "0.30.1",
+    "typescript": "7.0.2",
+    "wrangler": "4.152.0",
+    "zod": "4.6.5"
+  }
+}
