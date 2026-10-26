@@ -190,7 +190,7 @@ These stay unchanged:
 1. **Timers handlers can set.**
    - `ctx.after(duration, type, payload, { key })` and `ctx.at(time, type, payload, { key })`.
    - Each is committed in the handler's transaction and stored as a row the alarm job considers.
-   - When due, it is delivered as an ordinary message to the actor itself. It travels on a route from `@timer`, and its id is derived from the actor, the key and the due time, so a duplicate fire is dropped by the inbox.
+   - When due, it is delivered as an ordinary message to the actor itself. It travels on a route from `@timer`, and its id is derived from the actor, the key, the due time and the id of the message that set it (`deriveId(self, "timer", key, dueAt, causationId)`), so a duplicate fire is dropped by the inbox and a crash-redelivery of the same row keeps the same id, while setting the key again gives a new id (amended after the final review: a re-set timer must not be mistaken for a redelivery).
    - `ctx.cancelTimer(key)` removes one.
    - This covers retries with backoff, deadlines, stall checks and approval expiry.
 2. **Several schedules per actor.** `schedules: [{ every | cron, message }]` replaces the single `schedule`.

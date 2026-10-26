@@ -43,7 +43,7 @@ The factory itself gets its own design and plan, in its own repo. Spike 1 (the L
   - approval expiry: `"3d"`;
   - effect timeout: 30 s, and delivery attempts: 6 (both unchanged).
 - **Ids derive with `deriveId(...)` from causal position,** as today:
-  - timer fires: `deriveId(self, "timer", key, dueAt)`;
+  - timer fires: `deriveId(self, "timer", key, dueAt, causationId)`, where `causationId` is the id of the message that set the timer;
   - schedule ticks: `deriveId(self, "tick", message, dueAt)`.
 - **Toolkit machinery never calls a model,** and never approves anything (charter conviction 11).
 - **Rebuild and commit `dist/` after toolkit changes.** After any change under `packages/toolkit/src`, run `npm run build -w @actord/toolkit` and commit the rebuilt artifacts (`packages/toolkit/dist`, `plugins/*/dist`, `plugins/claude/hooks/effect-patterns.ts`). CI checks that a fresh build reproduces them byte for byte, and toolkit unit tests run the shipped CLI.
@@ -287,7 +287,7 @@ it("[timer-atomic] a handler that sets a timer and then throws leaves no timer",
 
 - [ ] **Step 3: Implement `timers.ts` and the context methods.**
   - **Writes are transactional.** `after` and `at` write the row inside the open transaction through `ctx.sql`, so a rollback removes it. `after` resolves a `Duration` with the existing `durationMs`.
-  - **Delivery in `drive()`.** It calls `receive(envelope)` for each due row, with `id = deriveId(self, "timer", key, due_at)`.
+  - **Delivery in `drive()`.** It calls `receive(envelope)` for each due row, with `id = deriveId(self, "timer", key, due_at, causation_id)`, where `causation_id` is the id of the message that set the timer.
     - `handled`, `duplicate` or `rejected`: delete the row. A rejection also emits `undeliverable`.
     - `failed`: set `attempts + 1` and `due_at = now + backoff(attempts)`. At `maxAttempts`, delete the row and emit `retry.exhausted`.
   - Emit `timer.set` and `timer.cancelled` with the handler's notes, and `timer.fired` before delivery.
