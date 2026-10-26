@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "steps": [
+    {
+      "command": "codex plugin marketplace add <repo> --json",
+      "status": "passed",
+      "output": "{\n  \"marketplaceName\": \"actord\",\n  \"installedRoot\": \"<repo>\",\n  \"alreadyAdded\": false\n}\n"
+    },
+    {
+      "command": "codex plugin add actord@actord --json",
+      "status": "passed",
+      "output": "{\n  \"pluginId\": \"actord@actord\",\n  \"name\": \"actord\",\n  \"marketplaceName\": \"actord\",\n  \"version\": \"0.2.0\",\n  \"installedPath\": \"/private<temp>/codex/plugins/cache/actord/actord/0.2.0\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\n"
+    },
+    {
+      "command": "/Users/jaredmcfarland/.local/share/vite-plus/js_runtime/node/24.22.1/bin/node /private<temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version",
+      "status": "passed",
+      "output": "0.2.0\n"
+    },
+    {
+      "command": "codex plugin list --json",
+      "status": "passed",
+      "output": "{\n  \"installed\": [\n    {\n      \"pluginId\": \"actord@actord\",\n      \"name\": \"actord\",\n      \"marketplaceName\": \"actord\",\n      \"version\": \"0.2.0\",\n      \"installed\": true,\n      \"enabled\": true,\n      \"source\": {\n        \"source\": \"local\",\n        \"path\": \"<repo>/plugins/codex\"\n      },\n      \"marketplaceSource\": {\n        \"sourceType\": \"local\",\n        \"source\": \"<repo>\"\n      },\n      \"installPolicy\": \"AVAILABLE\",\n      \"authPolicy\": \"ON_INSTALL\"\n    }\n  ],\n  \"available\": []\n}\n"
+    },
+    {
+      "command": "codex plugin remove actord@actord --json",
+      "status": "passed",
+      "output": "{\n  \"pluginId\": \"actord@actord\",\n  \"name\": \"actord\",\n  \"marketplaceName\": \"actord\"\n}\n"
+    },
+    {
+      "command": "codex plugin marketplace remove actord --json",
+      "status": "passed",
+      "output": "{\n  \"marketplaceName\": \"actord\",\n  \"installedRoot\": null\n}\n"
+    }
+  ],
+  "unverified": [
+    "Model-backed skill invocation and desktop onboarding; not run by this credential-free lane"
+  ]
+}

@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-26T01:01:25.282Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-26T01:19:13.476Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -29,7 +29,7 @@ Generated 2026-10-26T01:01:25.282Z by `npm run verify` (`scripts/verify.mjs`). M
 | G6 — The Room | **passed** | — |
 | G7 — Release candidate | **incomplete** | — |
 
-## Checks (53 pass · 0 fail · 0 blocked · 2 skipped)
+## Checks (59 pass · 0 fail · 0 blocked · 2 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -41,7 +41,13 @@ Generated 2026-10-26T01:01:25.282Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g0.sandbox` workerd under the OS sandbox: default denies listen, local binding passes | G0 | pass | host | `spikes/do-messaging/sandbox/run.sh` | finding reproduced (decision 0004) |
 | `g1.cli.typecheck` CLI typechecks (TypeScript 7) | G1 | pass | host | `npm run --silent typecheck -w @actord/toolkit` |  |
 | `g1.cli.unit` CLI unit tests (doctor, effect pattern table) | G1 | pass | host | `npx --no-install vitest run test/doctor.test.ts test/patterns.test.ts` |  |
-| `g1.dist.fresh` Shipped plugins/claude/dist matches a fresh build of packages/toolkit | G1 | pass | host | `npm run --silent build -w @actord/toolkit` |  |
+| `g1.dist.fresh` Both shipped plugin distributions match a fresh build of packages/toolkit | G1 | pass | host | `npm run --silent build -w @actord/toolkit` |  |
+| `g1.codex.validate` Codex portable manifest, six skills, paths and onboarding validate | G1 | pass | host | `node scripts/codex/validate-plugin.mjs` |  |
+| `g1.codex.distribution` Direct Codex marketplace source and packaged root example templates | G1 | pass | host | `node scripts/codex/distribution.mjs` |  |
+| `g1.codex.install` Codex marketplace install, installed launcher and uninstall in disposable config | G1 | pass | host | `node scripts/codex/install-test.mjs` |  |
+| `g1.codex.format` Codex shipping source, tests and scripts are formatted | G1 | pass | host | `npx --no-install prettier --check plugins/codex/bin plugins/codex/src plugins/codex/skills plugins/codex/plugin.json scripts/codex tests/codex-*.mjs` |  |
+| `g2.codex.adapter` Codex launcher, host boundaries, graph, trace, contracts and reference scaffolds | G2 | pass | host | `node --test tests/codex-*.test.mjs` |  |
+| `g7.codex.consumer` Standalone Codex shipping directory scaffolds and verifies all three apps without credentials | G7 | pass | host | `node scripts/codex/clean-install.mjs --online` |  |
 | `g1.launcher` bin/actord prefers the project pin, else the bundle | G1 | pass | host | `node --test tests/launcher.test.mjs` |  |
 | `g1.validate.plugin` claude plugin validate --strict plugins/claude | G1 | pass | host | `claude plugin validate --strict plugins/claude` |  |
 | `g1.validate.marketplace` claude plugin validate --strict (marketplace) | G1 | pass | host | `claude plugin validate --strict .` |  |
@@ -86,6 +92,6 @@ Generated 2026-10-26T01:01:25.282Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g7.docs` README (install, update, uninstall, the Room, trust, limitations), architecture page, CI workflow | G7 | pass | host | `node --test tests/release.test.mjs` |  |
 | `g7.release-evidence` Release evidence: claude plugin details output and the mod's hooks:/calls: listing, recorded | G7 | pass | host | `claude plugin validate plugins/claude > docs/evidence/mod-listing.txt` | docs/evidence/plugin-details.txt, docs/evidence/mod-listing.txt |
 | `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugins/claude --dry-run --force` | actord--v0.2.0, not yet tagged |
-| `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds plugins/claude/dist byte-for-byte, and passes npm run verify | G7 | skipped | host | `scripts/clean-checkout.sh` | inside a clean-checkout run |
+| `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds both plugin distributions byte-for-byte, and passes npm run verify | G7 | skipped | host | `scripts/clean-checkout.sh` | inside a clean-checkout run |
 | `g7.container` Clean-container install from the marketplace: install, starter verifies in workerd, uninstall | G7 | skipped | host | `scripts/container-install.sh` | inside a clean-checkout run |
 

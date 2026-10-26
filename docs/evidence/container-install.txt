@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at d4103b5 One repository: plugins/claude, packages/toolkit, version 0.2.0 (decision 0014)
+== repository at 9e54f06 Integrate Codex plugin with shared actord toolkit and verification
 == install Claude Code 2.1.310 from npm
 2.1.310 (Claude Code)
 == marketplace add + install
@@ -63,4 +63,114 @@ Topology
 ✔ Successfully uninstalled plugin: actord (scope: user)
 ✔ Successfully removed marketplace: actord
 not installed
-container-install: ok
+== Codex install and standalone consumer verification (no credentials)
+{
+  "status": "passed",
+  "validation": {
+    "schemaVersion": 1,
+    "status": "passed",
+    "name": "actord",
+    "skills": [
+      "design-actor-system",
+      "evolve-actor-system",
+      "implement-actor-behavior",
+      "inspect-actor-system",
+      "setup-actor-project",
+      "verify-actor-reliability"
+    ]
+  },
+  "files": [
+    "README.md",
+    "bin",
+    "dist",
+    "plugin.json",
+    "skills",
+    "src",
+    "bin/actord.js",
+    "dist/VERSION",
+    "dist/actord-toolkit-0.2.0.tgz",
+    "dist/actord.mjs",
+    "skills/design-actor-system",
+    "skills/evolve-actor-system",
+    "skills/implement-actor-behavior",
+    "skills/inspect-actor-system",
+    "skills/setup-actor-project",
+    "skills/verify-actor-reliability",
+    "src/launcher.mjs",
+    "src/templates.mjs",
+    "skills/design-actor-system/SKILL.md",
+    "skills/design-actor-system/references",
+    "skills/evolve-actor-system/SKILL.md",
+    "skills/evolve-actor-system/references",
+    "skills/implement-actor-behavior/SKILL.md",
+    "skills/implement-actor-behavior/references",
+    "skills/inspect-actor-system/SKILL.md",
+    "skills/inspect-actor-system/references",
+    "skills/setup-actor-project/SKILL.md",
+    "skills/setup-actor-project/references",
+    "skills/verify-actor-reliability/SKILL.md",
+    "skills/verify-actor-reliability/references",
+    "skills/design-actor-system/references/workflow.md",
+    "skills/evolve-actor-system/references/workflow.md",
+    "skills/implement-actor-behavior/references/workflow.md",
+    "skills/inspect-actor-system/references/workflow.md",
+    "skills/setup-actor-project/references/workflow.md",
+    "skills/verify-actor-reliability/references/workflow.md"
+  ],
+  "inventory": [
+    "package/dist/LICENSE",
+    "package/dist/NOTICE",
+    "package/package.json",
+    "package/dist/reference-templates.json",
+    "package/dist/cli.mjs",
+    "package/dist/runtime.mjs",
+    "package/dist/system.mjs",
+    "package/dist/testing.mjs",
+    "package/dist/vitest.mjs",
+    "package/dist/types/runtime/index.d.ts",
+    "package/dist/types/system.d.ts",
+    "package/dist/types/testing.d.ts",
+    "package/dist/types/vitest.d.ts"
+  ]
+}
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "steps": [
+    {
+      "command": "codex plugin marketplace add <repo> --json",
+      "status": "passed",
+      "output": "{\n  \"marketplaceName\": \"actord\",\n  \"installedRoot\": \"<repo>\",\n  \"alreadyAdded\": false\n}\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<temp>/codex\"))\n"
+    },
+    {
+      "command": "codex plugin add actord@actord --json",
+      "status": "passed",
+      "output": "{\n  \"pluginId\": \"actord@actord\",\n  \"name\": \"actord\",\n  \"marketplaceName\": \"actord\",\n  \"version\": \"0.2.0\",\n  \"installedPath\": \"<temp>/codex/plugins/cache/actord/actord/0.2.0\",\n  \"authPolicy\": \"ON_INSTALL\"\n}\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<temp>/codex\"))\n"
+    },
+    {
+      "command": "/usr/local/bin/node <temp>/codex/plugins/cache/actord/actord/0.2.0/bin/actord.js --version",
+      "status": "passed",
+      "output": "0.2.0\n"
+    },
+    {
+      "command": "codex plugin list --json",
+      "status": "passed",
+      "output": "{\n  \"installed\": [\n    {\n      \"pluginId\": \"actord@actord\",\n      \"name\": \"actord\",\n      \"marketplaceName\": \"actord\",\n      \"version\": \"0.2.0\",\n      \"installed\": true,\n      \"enabled\": true,\n      \"source\": {\n        \"source\": \"local\",\n        \"path\": \"<repo>/plugins/codex\"\n      },\n      \"marketplaceSource\": {\n        \"sourceType\": \"local\",\n        \"source\": \"<repo>\"\n      },\n      \"installPolicy\": \"AVAILABLE\",\n      \"authPolicy\": \"ON_INSTALL\"\n    }\n  ],\n  \"available\": []\n}\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<temp>/codex\"))\n"
+    },
+    {
+      "command": "codex plugin remove actord@actord --json",
+      "status": "passed",
+      "output": "{\n  \"pluginId\": \"actord@actord\",\n  \"name\": \"actord\",\n  \"marketplaceName\": \"actord\"\n}\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<temp>/codex\"))\n"
+    },
+    {
+      "command": "codex plugin marketplace remove actord --json",
+      "status": "passed",
+      "output": "{\n  \"marketplaceName\": \"actord\",\n  \"installedRoot\": null\n}\nWARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir \"/tmp\" (codex_home: AbsolutePathBuf(\"<temp>/codex\"))\n"
+    }
+  ],
+  "unverified": [
+    "Model-backed skill invocation and desktop onboarding; not run by this credential-free lane"
+  ]
+}
+{"status":"passed","steps":32}
+container-install: ok (both plugins)
