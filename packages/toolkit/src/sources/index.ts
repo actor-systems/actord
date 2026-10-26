@@ -2,3 +2,4 @@
 // Each handler verifies a request, maps it to the system's own message and delivers it under the
 // source's sender name ("@<source>"), as `ingress` does; actors never subscribe.
 export { handleWebhook } from "./webhook.ts";
+export { type ApprovalClaims, SUBJECT_TAG, signApprovalToken, type VerifiedApproval, verifyApprovalToken } from "./token.ts";

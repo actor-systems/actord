@@ -120,7 +120,7 @@ async function signatureValid(secret: string, body: Uint8Array, header: string |
 }
 
 /** Compares every byte whatever the first difference, so the time taken says nothing about where they differ. */
-function equalConstantTime(a: Uint8Array, b: Uint8Array): boolean {
+export function equalConstantTime(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
