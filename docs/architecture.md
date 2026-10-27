@@ -50,6 +50,13 @@ effects, global ordering, and cross-actor transactions are not offered. Each gua
 platform behavior (decision 0007), and each app lists its claims in `actord.claims.json`, classified by
 `actord verify` as proved locally, stub only, or not guaranteed.
 
+**An agent is an actor.** An actor declared `kind: "agent"` runs a Pi session in its own Durable Object, beside
+actord. The session is a job effect, settled by its probe; its tools are the effects the system declares, with the
+same keys, approvals and `in_doubt`; and actord, not the harness, enforces its budget (decision 0019). Its files live
+in a Computer workspace in the same object, its commands in a container that holds no credential, and its pushes
+leave from the object (decision 0022). Everything Pi- or Computer-specific is in `@actord/toolkit/agents`, so an app
+without agents never loads either.
+
 **Deterministic machinery, visible judgment.** The CLI, hooks, mod, and monitor never call a model and never
 approve anything. Judgment lives in skills and the two critics, where it shows in the transcript and is
 measured by `claude plugin eval` with and without the plugin (decision 0008).
@@ -108,7 +115,9 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0016](decisions/0016-actord-on-lifecycle.md) | actord on the Agents SDK's `Lifecycle`: one capability, one job, the object's one alarm |
 | [0017](decisions/0017-sources.md) | Sources: system-level senders, generated handlers, ids from delivery ids |
 | [0018](decisions/0018-job-effects.md) | Job effects: start with a handle, settle once, later |
+| [0019](decisions/0019-agent-actors.md) | Agent actors: a Pi session is a job effect, and declared effects are its tools |
 | [0021](decisions/0021-approvals-by-email-reply.md) | Approvals by email: reply, never link, matched by a signed subject token |
+| [0022](decisions/0022-agent-workspaces.md) | Agent workspaces: Computer in the object, commands in a container, git from the object |
 
 ## Coding-host adapters
 

@@ -1,7 +1,7 @@
 # Getting started
 
 actord works three ways: as a Claude Code plugin, as a Codex plugin, or as the `@actord/toolkit` package on
-its own. All three need Node.js 22.18+.
+its own. All three need Node.js 22.19+.
 
 ## Claude Code
 

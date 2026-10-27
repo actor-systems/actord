@@ -23,7 +23,7 @@ place: a change to the core and to either plugin lands in one commit and one ver
 
 ## Setting up
 
-Node.js 22.18+ (CI uses 24), then:
+Node.js 22.19+ (CI uses 24), then:
 
 ```sh
 npm install

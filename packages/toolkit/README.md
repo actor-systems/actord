@@ -5,7 +5,7 @@ systems of communicating actors on Cloudflare Durable Objects. One package holds
 libraries an actor project imports. Actors stay native Durable Object classes; the declaration in `system.ts`
 is typed, so the compiler, `actord check`, and workerd tests can hold a design to what it says.
 
-Requires Node.js 22.18 or later.
+Requires Node.js 22.19 or later.
 
 ## Start a project
 
@@ -22,6 +22,8 @@ Or add it to an existing Worker project: `npm install -D @actord/toolkit zod`, t
 | --- | --- |
 | `@actord/toolkit/system` | `defineSystem` and `message`: the typed declaration of actors, messages, routes, effects, and schedules |
 | `@actord/toolkit/runtime` | `actorRuntime(...)` for native Durable Object classes: an inbox that handles each message id once, transactional handlers, an outbox that delivers at least once, and effects that run after commit |
+| `@actord/toolkit/sources` | `handleWebhook` and `handleEmail`: the generated handlers for a system's webhook and email sources, and approvals by email reply |
+| `@actord/toolkit/agents` | `agentRuntime(...)` for agent actors: a Pi session as a job effect, declared effects as its tools, budgets, and a Computer workspace with clone and push from the Durable Object. It loads Pi and `@cloudflare/computer`, optional peers that no other entry point imports |
 | `@actord/toolkit/testing` | workerd test helpers with `@cloudflare/vitest-plugin`: `settle`, `tick`, `injectFault`, `overrideEffect`, `overrideBudget`, `resetSeams` |
 | `@actord/toolkit/vitest` | `actorEvents()`, which records each test run's events to `.actord/events.ndjson` for `actord trace` |
 

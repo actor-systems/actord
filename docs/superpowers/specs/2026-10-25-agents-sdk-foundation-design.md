@@ -305,7 +305,7 @@ actors: {
     harness: pi({
       workspace: computer({
         backend: containerBackend({ image: "factory-node" }),
-        localOnly: ["node_modules/**", "dist/**"],
+        localOnly: ["**/node_modules", "/dist"],
         egress: "registry-read",
       }),
     }),
@@ -329,6 +329,8 @@ actors: {
 | `returns` | The session's final answer, as a typed message. Its payload is validated, and it is delivered to the actor itself. |
 | `budget` | Hard limits per session. Running out stops the session and delivers `agent.exhausted`, so the actor can escalate. |
 
+- **Amended (2026-10-27, plan 3, decisions 0019 and 0022):** the example's `localOnly` was `["node_modules/**", "dist/**"]`, which fails `AGENT_LOCAL_ONLY_INVALID`: Computer takes a pattern only if it starts with `/` or `**/`. A workspace with a container backend must declare `localOnly`. Each session keeps the instructions text it started with, stored on its row. For DeepSeek V4.1 Flash the declared `reasoning` can't be honoured: pi-ai's catalog raises `low` to `high`, and `createAI` takes no `reasoningEffort`.
+
 ### 7.2 Runtime behaviour
 
 - The actor's class installs `Lifecycle` with both capabilities: `actord`, and the harness.
@@ -344,6 +346,12 @@ actors: {
   - requires every listed effect to be declared;
   - rejects an agent that lists any effect classed as publishing (§9.3) unless that effect has `approval: "human"`.
 
+- **Amended (2026-10-27, plan 3, decision 0019):** the code differs from the list above.
+  - `PiHarness` has no completion callback; it reports completion only by polling. A session ends when the model calls a `finish` tool, whose parameters are the `returns` message's schema, and the job's probe settles it: "the harness's completion settles the job" becomes "the probe settles the job". `finish` asks for a look at once, so nothing waits out a probe period.
+  - `steer` is a second internal effect, `agent.session.steer`, because Pi can't be called inside actord's transaction. `stop` cancels the job, and the cancel aborts Pi. A start while a session runs replaces it. Every `agent.session.*` name is reserved (`AGENT_NAME_RESERVED`).
+  - The events are `agent.started`, `agent.turn`, `agent.tool` and `agent.ended`, recorded under the session job's effect and key. A transcript goes to R2 as `transcripts/<actor>/<key>/<session>.json` when the app passes a bucket.
+  - The publishing rule isn't agent-specific: every effect declared `publishes: true` needs `approval: "human"` (`PUBLISHES_WITHOUT_APPROVAL`).
+
 ### 7.3 Tools and approvals (designer's call: approval lives on the effect)
 
 - **Workspace tools** (Computer's `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete` and `exec`) act only on the agent's own workspace. They are not effects. Their replay classification is Computer's (§7.4).
@@ -354,6 +362,11 @@ actors: {
   - A call to an `approval: "human"` effect parks it and sends an approval request (§8).
   - The model is told "waiting for approval". The session either continues or ends its turn, per harness.
   - It resumes when the result message arrives.
+- **Amended (2026-10-27, plan 3, decision 0019):**
+  - An effect used as a tool declares `input`, a Standard Schema, and the tool's parameters are derived from it (`AGENT_TOOL_INPUT_MISSING`).
+  - A Pi tool can't defer its result. A tool for an `approval: "human"` effect answers "waiting" at once, and the result returns later as a steer input, which the model sees as a user message, not as the tool's result. The job's probe steers in a denial, which sends no result message.
+  - A stop or a replacement denies the session's open approvals. `wallClock` isn't paused while a tool waits for one, so a session that waits longer is exhausted, and a later approval's result is only a note.
+  - The workspace tools' replay classes are the toolkit's, not Computer's (§7.4 and decision 0022).
 
 ### 7.4 Pi and the Computer workspace (the owner's decision)
 
@@ -390,6 +403,12 @@ actors: {
   - Those CLIs run in their own container with its own disk, not on a Computer workspace, so a swap also changes the workspace model: work in progress lives in the CLI's container and its snapshots, and pushes go through egress credential injection.
   - Bringing the two together is deferred until Cloudflare offers it or a need appears.
 - **Fallback.** If the Container backend proves unusable (spike 2), Pi's tools run against `ctx.container.exec` through a tool environment we write ourselves, implementing pi-durable's `FileSystem & Shell`. The Computer workspace stays the durable store either way.
+- **Amended (2026-10-27, plan 3, decision 0022; spikes 2, 4 and 5, `docs/evidence/`):**
+  - Computer ships no replay classification. The toolkit takes the Pi example's split: `read`, `ls`, `find`, `grep`, `write` and `delete` run again after a restart; `edit`, `exec` and `publish` come back to the model as interrupted. `write`, `edit` and `delete` refuse paths in a `.git` directory.
+  - Computer has no egress allowlist. `egress: "registry-read"` is the toolkit's own gateway: `GET` and `HEAD` to the npm and Yarn registries pass, and everything else gets `403`.
+  - `localOnly` is required with a container backend: without it, `npm ci` took 7.8× as long and put 405 MB in the object. Commands never get the image's `ENV`, so the egress CA goes with every exec. The tools' exec timeout defaults to 10 minutes. Nothing is pulled from the container before a session resumes.
+  - Git authenticates with Basic `x-access-token` only: GitHub's git endpoint answers Bearer with `401`. The push URL is the app's, pinned, never the workspace's remote, and `corsProxy: ""` is passed. The default `allow` is any `factory/` branch; an app binds it to the instance's own branch.
+  - The fallback isn't needed: spike 2 ran the install, the build and the tests through the Container backend.
 
 ## 8. Approvals and channels
 
@@ -521,6 +540,7 @@ Every decision is recorded with:
 **The $30 hard stop is a true ceiling (designer's call).**
 - Every costed effect (agent session, decision, extraction, model-assisted call) reserves its budget from the `Dispatcher` before it starts. It starts only if today's spend plus outstanding reservations stays at or under $30.
 - A session's reservation is its `budget.usd`, which the harness enforces, and container seconds count against it.
+  - *Amended (2026-10-27, plan 3, decision 0019):* actord enforces it, not the harness: Pi has no budgets, and a Pi hook can't stop a run. A session's `usd` counts the model cost pi-ai reports, and no container seconds, so the factory counts container time itself.
 - Each effect settles from the usage it reports. A reservation whose effect is `in_doubt` counts as fully spent.
 - The worst overshoot is one model call past a session's own budget.
 - Raising the cap is an explicit owner message.
