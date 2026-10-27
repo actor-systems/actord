@@ -13,7 +13,7 @@ import { system } from "./index.ts";
 
 /** A test's script for one instance, by its name: answers each model request (agents.test.ts installs them). */
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
-const shared = globalThis as { __scribeGate?: Promise<void>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string> };
+const shared = globalThis as { __scribeGate?: Promise<void>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number> };
 
 /** The instructions an instance is built with, unless a test set others for its name. */
 const INSTRUCTIONS = "You are Scribe. Write up the task you're given, then call finish with a summary.";
@@ -63,7 +63,7 @@ export class Scribe extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.lifecycle.use(new JobLog());
-    for (const table of ["fired (key TEXT NOT NULL)", "echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)", "done (id TEXT NOT NULL, sender TEXT NOT NULL, summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)", "noted (effect TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL)"]) {
+    for (const table of ["fired (key TEXT NOT NULL)", "echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)", "done (id TEXT NOT NULL, sender TEXT NOT NULL, summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)", "noted (effect TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL)", "results (key TEXT NOT NULL, status TEXT NOT NULL)"]) {
       ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${table}`);
     }
   }
@@ -85,6 +85,16 @@ export class Scribe extends DurableObject<Env> {
       },
       "agent.exhausted": ({ type, payload }, ctx) => {
         ctx.sql.exec("INSERT INTO failures (type, payload) VALUES (?, ?)", type, JSON.stringify(payload));
+      },
+      // Optional for a tool effect's result message; it gets every one, steered into a session or not. A test can make
+      // it throw for an instance's next deliveries (`__scribeNotedThrows`), to show the delivery is retried.
+      "scribe.noted": ({ payload }, ctx) => {
+        const throws = shared.__scribeNotedThrows;
+        if (throws?.[this.#name]) {
+          throws[this.#name]!--;
+          throw new Error("the test made scribe.noted's handler throw");
+        }
+        ctx.sql.exec("INSERT INTO results (key, status) VALUES (?, ?)", payload.key, payload.status);
       },
     },
     {
@@ -123,6 +133,10 @@ export class Scribe extends DurableObject<Env> {
   async offeredTools(session: string): Promise<string[]> {
     const conversation = await (await this.actor.harness.pi()).conversation(Number(session) as never, BACKGROUND_CONTEXT);
     return (await conversation!.agent(BACKGROUND_CONTEXT)).tools.map((t) => t.name);
+  }
+  /** The tool results the actor's own scribe.noted handler recorded, in order. */
+  results(): Array<{ key: string; status: string }> {
+    return this.ctx.storage.sql.exec<{ key: string; status: string }>("SELECT key, status FROM results ORDER BY rowid").toArray();
   }
   /** The notes each note effect's adapter wrote, in order. */
   noted(): Array<{ effect: string; key: string; text: string }> {

@@ -10,7 +10,7 @@ import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
-const shared = globalThis as { __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string> };
+const shared = globalThis as { __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number> };
 
 /** Answer each model request of instance `name` with `script` (Scribe reads it at every request). */
 function script(name: string, fn: Script): void {
@@ -542,6 +542,8 @@ it("[agent-tool-runs-effect] a declared effect is a tool: the model's call runs 
   await settle(env, system);
   expect(events.filter((e) => e.kind === "handled" && e.actor === "Scribe:tool-1" && e.type === "scribe.noted")).toHaveLength(1);
   expect((await s.outbox()).filter((r) => r.id.startsWith("fx:agent.session.steer:"))).toEqual([]);
+  // Scribe's own handler for the result message got it.
+  expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
 });
 
 it("[agent-restart-mid-tool-keyed] a restart while a keyed tool's effect runs: pi reruns the tool with the same call id, which finds the effect's row", async () => {
@@ -639,6 +641,9 @@ it("[agent-tool-approval] a tool that needs approval answers waiting at once; on
   expect(await jobRow("tool-approve-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed" });
   expect(await jobRow("tool-approve-1", "fx:agent.session:task-ta1")).toMatchObject({ status: "confirmed" });
   expect(await s.failures()).toEqual([]);
+  // Steered in, and Scribe's own handler for the result message got it too, once.
+  await settle(env, system);
+  expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
 });
 
 it("[agent-tool-result-stale] an approval that resolves after its session was replaced is only a note: nothing is submitted to either session", async () => {
@@ -669,6 +674,8 @@ it("[agent-tool-result-stale] an approval that resolves after its session was re
   }
   expect((await s.done()).map((d) => d.summary)).toEqual(["second"]);
   expect(await s.failures()).toEqual([]);
+  // Noted as stale, and Scribe's own handler for the result message got it all the same, once.
+  expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
 });
 
 it("[agent-tool-undeclared] only the effects in `tools` are offered, and requestEffect refuses an effect the actor doesn't list", async () => {
@@ -716,4 +723,44 @@ it("[agent-tool-denied] a person's denial sends no result message, so the sessio
   await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["denied"]), 5000);
   expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.approved (request ${key}): failed denied by a person`);
   expect(await s.noted()).toEqual([]);
+});
+
+it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's own handler too; when that throws, the delivery is retried and the result is steered in once", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("tool-handler-1", (r) => {
+    requests.push(r);
+    if ((users(r).at(-1) ?? "").startsWith("Result of note.approved")) return finish({ summary: "handled" });
+    return r.lastToolResults.length === 0 ? call("note_approved", { text: "h" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe("tool-handler-1");
+  await task("tool-handler-1", "the handled note", "task-th1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("tool-handler-1", session, "task-th1");
+  // Scribe's scribe.noted handler throws at the result's first delivery.
+  shared.__scribeNotedThrows = { "tool-handler-1": 1 };
+  try {
+    expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
+    const failed = () => events.filter((e) => e.kind === "failed" && e.actor === "Scribe:tool-handler-1" && e.type === "scribe.noted");
+    await eventually(async () => expect(failed()).toHaveLength(1));
+    // The throw rolled back the whole delivery, the steer it queued included.
+    expect(await jobRow("tool-handler-1", `fx:agent.session.steer:result:${key}`)).toBeUndefined();
+    expect(await s.results()).toEqual([]);
+    await settle(env, system); // the delivery's retry
+    await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["handled"]), 5000);
+    expect(failed()).toHaveLength(1);
+  } finally {
+    delete shared.__scribeNotedThrows;
+  }
+  await settle(env, system);
+  expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
+  // One steer, requested once, never asked for again; one result in the session, and the model saw it once.
+  expect(events.filter((e) => e.kind === "effect.requested" && e.effect === "agent.session.steer").map((e) => e.effectKey)).toEqual([`result:${key}`]);
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "agent.session.steer")).toEqual([]);
+  expect(await jobRow("tool-handler-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed", attempts: 1 });
+  expect((await s.messages(session)).filter((e) => e.kind === "actord.effect_result")).toHaveLength(1);
+  expect(users(requests.at(-1)!).filter((t) => t.startsWith("Result of"))).toHaveLength(1);
 });

@@ -20,7 +20,8 @@
 //   "<session>:<callId>". One that needs a person answers "waiting" at once, and the wait is recorded
 //   (_actors_agent_waits): the session's job isn't done while a result is owed to it. When the effect's result message
 //   arrives, it is steered into the session (agent.session.steer, with the operation id "result:<key>"), which starts
-//   a new run if the session's run had ended; for a session replaced or ended meanwhile it is a note only. A person's
+//   a new run if the session's run had ended; for a session replaced or ended meanwhile it is a note only. Every tool
+//   result message, owed to a session or not, also reaches the actor's own handler for it, if it has one. A person's
 //   denial sends no result message, so the job's probe steers that in.
 import { PiHarness, type PiReceipt } from "agents/harness/pi";
 import { createAI } from "agents/models/pi-ai";
@@ -199,7 +200,7 @@ type ToolResults<S extends AnySystem, A extends ActorName<S>> = S["actors"][A] e
   : never;
 /**
  * Handlers for every message the actor receives except its `on` messages. A handler for a tool effect's result
- * message is optional: agentRuntime steers the results owed to sessions, and passes it every other one.
+ * message is optional: agentRuntime steers the results owed to sessions itself, and passes every result to it too.
  */
 export type AgentHandlers<S extends AnySystem, A extends ActorName<S>> = Omit<Handlers<S, A>, OnMessages<S, A> | ToolResults<S, A>> & Partial<Pick<Handlers<S, A>, Extract<ToolResults<S, A>, keyof Handlers<S, A>>>>;
 
@@ -516,12 +517,15 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (!Object.hasOwn(verbs, verb)) throw new Error(`actord: agent actor ${actor} maps ${type} to ${JSON.stringify(verb)}; use "start", "steer" or "stop"`);
     internalHandlers[type] = verbs[verb]!;
   }
-  // A tool effect's result message: steered into the session that waits for it, else the actor's own handler's.
+  // A tool effect's result message: steered into the session that waits for it (or noted, when that session has
+  // ended), and then, whatever the session did with it, handed to the actor's own handler for the message, if it has
+  // one. Both run in the one handler transaction: a throw in either rolls back both, the steer included, and the
+  // delivery is retried.
   const ownHandlers = handlers as unknown as InternalHandlers;
-  const toolResult: InternalHandlers[string] = async (message, c) => {
+  const owedResult = (message: Message<System, string>, c: Ctx) => {
     const { key, status, value, error } = message.payload as Settled;
     const wait = waitByKey(key);
-    if (!wait) return Object.hasOwn(ownHandlers, message.type) ? ownHandlers[message.type]!(message, c) : undefined;
+    if (!wait) return; // the tool returned the value itself
     if (wait.done_at != null) {
       c.note("tool result already given to its session", { key, status });
       return;
@@ -534,6 +538,10 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       return;
     }
     c.effect(STEER as never, { key: row.key, prompt: resultPrompt(wait.effect, key, { status, value, error }), result: key }, { key: `result:${key}` });
+  };
+  const toolResult: InternalHandlers[string] = async (message, c) => {
+    owedResult(message, c);
+    if (Object.hasOwn(ownHandlers, message.type)) await ownHandlers[message.type]!(message, c);
   };
   for (const tool of spec.tools ?? []) {
     const result = system.effects?.[tool]?.result;
