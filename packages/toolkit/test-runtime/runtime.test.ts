@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
 import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
@@ -134,6 +134,49 @@ it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the o
   await settle(env, system);
   expect(await probe("shared").pings()).toBe(1);
   expect(await probe("shared").outcomes()).toEqual([{ key: "shared", status: "confirmed", error: null }]);
+});
+
+it("[lifecycle-alarm-not-held] another capability's job on the shared alarm runs while actord's drive waits on a delivery", async () => {
+  const gate = globalThis as { __probeGate?: Promise<void> };
+  let open!: () => void;
+  gate.__probeGate = new Promise((r) => (open = r));
+  try {
+    // When it fires, its outcome goes to "held-gate", which doesn't answer until the gate opens.
+    await setTimer("held", "slow-1", 20);
+    await probe("held").pingAt(Date.now() + 40); // the Pinger's job, due after actord's
+    await new Promise((r) => setTimeout(r, 60));
+    // Not awaited: an alarm whose dispatch waits on actord's delivery can't finish until the gate opens.
+    void runDurableObjectAlarm(probe("held"));
+    await eventually(async () => expect(await probe("held").pings()).toBe(1), 1000);
+    expect(await probe("held").fired()).toEqual(["slow-1"]);
+    // The delivery is still in flight. (Not asked of "held-gate", whose open transaction would hold the question.)
+    const undelivered = await runInDurableObject(probe("held"), (_i, s) => s.storage.sql.exec<{ target: string; status: string }>("SELECT target, status FROM _actors_outbox WHERE kind = 'message'").toArray());
+    expect(undelivered).toEqual([{ target: "Probe:held-gate", status: "pending" }]);
+  } finally {
+    open();
+    delete gate.__probeGate;
+  }
+  await eventually(async () => expect(await probe("held-gate").outcomes()).toEqual([{ key: "slow-1", status: "confirmed", error: null }]));
+});
+
+it("[drive-throws-keeps-wake] a drive() that throws every time is recorded each time, and the actord job stays armed", async () => {
+  const events = captureEvents();
+  await setTimer("dthrow", "t", 20);
+  // A timer payload that doesn't parse makes every drive throw once the timer is due.
+  await runInDurableObject(probe("dthrow"), (_i, s) => void s.storage.sql.exec("UPDATE _actors_timers SET payload = '{' WHERE key = 't'"));
+  await new Promise((r) => setTimeout(r, 30));
+  const failures = () => events.filter((e) => e.kind === "note" && e.actor === "Probe:dthrow" && (e.reason ?? "").startsWith("drive failed")).length;
+  // Every later settle() drives this instance too, so the broken timer must not outlive the test.
+  onTestFinished(() => runInDurableObject(probe("dthrow"), (_i, s) => void s.storage.sql.exec("DELETE FROM _actors_timers WHERE key = 't'")));
+  for (let i = 1; i <= 3; i++) {
+    // Make the actord job due again, as its next wake would. (The alarm may also have fired on its own once.)
+    await runInDurableObject(probe("dthrow"), (_i, s) => void s.storage.sql.exec("UPDATE cf_agents_jobs SET time = 0 WHERE capability = 'actord'"));
+    const before = failures();
+    await runDurableObjectAlarm(probe("dthrow"));
+    await eventually(async () => expect(failures()).toBeGreaterThan(before));
+    const job = await runInDurableObject(probe("dthrow"), (_i, s) => s.storage.sql.exec<{ time: number }>("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").toArray()[0]);
+    expect(job?.time).toBeGreaterThan(Date.now());
+  }
 });
 
 it("derived message ids are deterministic and position-sensitive", () => {

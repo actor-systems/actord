@@ -438,7 +438,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   }
   // Lifecycle runs start() once per instance, before its first fetch or alarm; receive() and drive()
   // start it themselves, since native RPC and the test helpers bypass that.
-  const cap = new ActordCapability({ start, drive });
+  const cap = new ActordCapability({
+    start,
+    drive,
+    failed: (err) => emit({ kind: "note", at: now(), actor: self, reason: `drive failed: ${messageOf(err)}` }),
+  });
   host.lifecycle.use(cap);
   const key = ctx.id.name ?? ctx.id.toString();
   const self = `${actorName}:${key}`;
@@ -1155,8 +1159,33 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     await cap.arm(earliestWake());
   }
 
-  /** What the actord job runs: each due schedule's tick, due timers, due job probes and deadlines, inbox retention, then the outbox. */
-  async function drive(): Promise<void> {
+  let driving: Promise<void> | null = null;
+  let driveAgain = false;
+
+  /**
+   * One drive at a time. The alarm hands a drive off and returns, so a later wake can arrive mid-drive: it shares the
+   * running drive, which then makes one more pass, so nothing that came due meanwhile waits for the next wake.
+   */
+  function drive(): Promise<void> {
+    if (driving) {
+      driveAgain = true;
+      return driving;
+    }
+    driving = (async () => {
+      try {
+        do {
+          driveAgain = false;
+          await driveOnce();
+        } while (driveAgain);
+      } finally {
+        driving = null;
+      }
+    })();
+    return driving;
+  }
+
+  /** What one drive does: each due schedule's tick, due timers, due job probes and deadlines, inbox retention, then the outbox. */
+  async function driveOnce(): Promise<void> {
     await cap.ready();
     await recoverOrphans();
     for (const sc of schedules) {
