@@ -5,7 +5,9 @@
 // of the message that started the session:
 // - A message the actor's `on` maps to "start" opens a new pi session and submits the message, rendered, as its
 //   prompt. A start while a session runs replaces it: the running job is cancelled (pi aborts the session) and the
-//   new session gets the next generation. "steer" joins the running turn; "stop" cancels the job.
+//   new session gets the next generation. "steer" joins the running turn; "stop" cancels the job. A stop or a
+//   replacement that lands before the session's start has returned is kept on its row (a stop mark, a newer
+//   generation), and the start acts on it: before pi is asked, it starts nothing; after, it aborts the session.
 // - The `finish` tool, whose parameters are the `returns` message's schema, records the session's result and asks
 //   for a look now. The job's probe settles it: confirmed with the result; failed once pi has no work left for the
 //   session and no tool effect of it awaits approval; failed "exhausted:<budget>" once a budget ran out.
@@ -199,15 +201,19 @@ interface SessionRow {
   started_at: number;
   result: string | null;
   exhausted: string | null;
+  /** When a stop landed before the session's start had returned, so the job couldn't be cancelled yet. */
+  stopped_at: number | null;
 }
 
 /** One row per session the actor started: the job's key, pi's session id once open, the result `finish` recorded. */
 const SESSIONS_SCHEMA = [
-  "CREATE TABLE IF NOT EXISTS _actors_agent_sessions (key TEXT PRIMARY KEY, session TEXT, operation TEXT NOT NULL, generation INTEGER NOT NULL, instructions TEXT NOT NULL, started_at INTEGER NOT NULL, result TEXT, exhausted TEXT)",
+  "CREATE TABLE IF NOT EXISTS _actors_agent_sessions (key TEXT PRIMARY KEY, session TEXT, operation TEXT NOT NULL, generation INTEGER NOT NULL, instructions TEXT NOT NULL, started_at INTEGER NOT NULL, result TEXT, exhausted TEXT, stopped_at INTEGER)",
   "CREATE INDEX IF NOT EXISTS _actors_agent_sessions_session ON _actors_agent_sessions (session)",
 ];
 /** Job statuses of a session that is still running or about to: a steer joins it, a start replaces it. */
 const LIVE = new Set(["pending", "running", "awaiting_job"]);
+const STOPPED = "stopped";
+const NOT_STEERED = "the session has ended; not steered";
 
 const defaultRender = (type: string, payload: unknown) => `${type}\n\n${JSON.stringify(payload, null, 2)}`;
 const text = (t: string): ToolExecutionResult["output"] => [{ type: "text", text: t }];
@@ -253,7 +259,14 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   const rowBySession = (session: string) => sql.exec<SessionRow>("SELECT * FROM _actors_agent_sessions WHERE session = ?", session).toArray()[0];
   /** The newest session: the only one whose result is delivered. */
   const latest = () => sql.exec<SessionRow>("SELECT * FROM _actors_agent_sessions ORDER BY generation DESC LIMIT 1").toArray()[0];
+  // The job's row in the runtime's outbox (runtime/index.ts SCHEMA): its status, and below, its body's key.
   const jobStatus = (key: string) => sql.exec<{ status: string }>("SELECT status FROM _actors_outbox WHERE id = ?", `fx:${SESSION}:${key}`).toArray()[0]?.status;
+  /** Why a session must not run any more, read fresh: a stop kept on its row, or a newer start. Null while it may. */
+  const halted = (key: string): string | null => {
+    const row = rowByKey(key);
+    if (row?.stopped_at != null) return STOPPED;
+    return row && latest()?.generation !== row.generation ? "replaced by a newer start" : null;
+  };
   /** Whether a tool effect of this session (keyed "<session>:<callId>") waits for a person. */
   const awaitingApproval = (session: string) =>
     sql.exec("SELECT 1 FROM _actors_outbox WHERE kind = 'effect' AND status = 'awaiting_approval' AND substr(json_extract(body, '$.key'), 1, ?) = ? LIMIT 1", session.length + 1, `${session}:`).toArray().length > 0;
@@ -282,6 +295,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     async start(input, { key }) {
       const row = rowByKey(key);
       if (!row) throw new EffectRejected(`no agent session was recorded for ${key}`);
+      // Stopped or replaced while this start waited (to run, or to be tried again): pi is never asked.
+      const before = halted(key);
+      if (before) throw new EffectRejected(before);
       let session = row.session;
       if (session === null) {
         // A start retried after a restart reuses the session it recorded; a crash before the record leaves an empty one.
@@ -294,8 +310,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       await conversation.configure({ instructions: row.instructions }, BACKGROUND_CONTEXT);
       // The operation id makes the submit idempotent: a retry is accepted: false, and nothing runs twice.
       await harness.session(session).submit(input.prompt, { operationId: row.operation });
-      // A later start replaced this one while it started, too early to cancel it: stop it now.
-      if (latest()?.generation !== row.generation) await harness.abort({ session });
+      // Stopped or replaced while this start ran, too early to cancel the job: stop the session now. Its probe then
+      // settles the job: failed "stopped", or, once replaced, a note.
+      if (halted(key)) await harness.abort({ session });
       watch(session, row.operation, key);
       return { session, operation: row.operation, generation: row.generation };
     },
@@ -304,7 +321,12 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       const pending = await harness.pending({ session: handle.session });
       const row = rowByKey(key);
       if (row?.result != null) return { done: true, status: "confirmed", value: JSON.parse(row.result) as unknown };
-      if (row?.exhausted != null) return { done: true, status: "failed", error: `exhausted:${row.exhausted}` };
+      if (row?.exhausted != null) {
+        // Out of budget: the session must stop spending, whatever it was doing.
+        await harness.abort({ session: handle.session });
+        return { done: true, status: "failed", error: `exhausted:${row.exhausted}` };
+      }
+      if (row?.stopped_at != null) return { done: true, status: "failed", error: STOPPED };
       // A session being stopped has no work left by design: its cancel, not this look, settles it.
       if (pending.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") return { done: false };
       return { done: true, status: "failed", error: "ended without returning a result" };
@@ -314,13 +336,31 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     },
   };
 
+  /**
+   * Steer only a session whose job still runs, and whose run is going: pi takes a steer to an idle session as new
+   * input, which would start a run no job tracks, whose result would go nowhere.
+   */
   const steerCall: EffectAdapter<{ key: string; prompt: string }, PiReceipt> = {
     async run(input, { key: operationId }) {
       const row = rowByKey(input.key);
       if (!row) throw new EffectRejected(`no agent session was recorded for ${input.key}`);
-      if (row.session === null) throw new EffectNotDelivered("the session hasn't started yet");
-      const receipt = await harness.session(row.session).steer(input.prompt, { operationId });
-      watch(row.session, operationId, input.key);
+      const notSteered = (why: Record<string, unknown>) => {
+        emit({ kind: "note", at: now(), actor: self, effect: STEER, effectKey: operationId, reason: NOT_STEERED, detail: { key: input.key, ...why } });
+        return new EffectRejected(NOT_STEERED);
+      };
+      const status = jobStatus(input.key);
+      if (!LIVE.has(status ?? "") || halted(input.key)) throw notSteered({ job: status ?? null, halted: halted(input.key) });
+      // Sent before the start returns, a steer could reach pi ahead of the prompt it is meant to follow.
+      if (row.session === null || status !== "awaiting_job") throw new EffectNotDelivered("the session's start hasn't returned yet");
+      const session = row.session;
+      if ((await harness.pending({ session })).length === 0) throw notSteered({ job: status, run: "ended" });
+      const receipt = await harness.session(session).steer(input.prompt, { operationId });
+      // The job settled while the steer was on its way: withdraw it, rather than leave it to run untracked.
+      if (jobStatus(input.key) !== "awaiting_job") {
+        await harness.abort({ session, operationId });
+        throw notSteered({ job: jobStatus(input.key) ?? null, withdrawn: true });
+      }
+      watch(session, operationId, input.key);
       return receipt;
     },
   };
@@ -346,6 +386,12 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
         if (latest()?.generation !== row.generation) {
           emit({ kind: "note", at: now(), actor: self, reason: "stale session result", detail: { key: row.key, session, generation: row.generation, via: "finish" } });
           return { output: text("A newer task replaced this session, so this result was not delivered."), control: { terminate: true } };
+        }
+        // Stopped, or its job already settled (failed, in doubt, being cancelled): a result now would go nowhere.
+        const status = jobStatus(row.key);
+        if (row.stopped_at != null || !LIVE.has(status ?? "")) {
+          emit({ kind: "note", at: now(), actor: self, reason: "result after the session ended", detail: { key: row.key, session, job: status ?? null, stopped: row.stopped_at != null } });
+          return { output: text("This session has ended, so this result was not delivered."), control: { terminate: true } };
         }
         // The arguments as given, not the parsed value: the returns message is validated again when it's delivered.
         sql.exec("UPDATE _actors_agent_sessions SET result = ? WHERE key = ? AND result IS NULL", JSON.stringify(args), row.key);
@@ -384,7 +430,14 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       const current = latest();
       const status = current ? jobStatus(current.key) : undefined;
       if (!current || !LIVE.has(status ?? "")) c.note("no active session; nothing to stop", { type: message.type });
-      else if (!cancel(c, current.key)) c.note("the session hasn't started yet, so it can't be stopped", { key: current.key });
+      // Its result is in: the probe settles the job with it, as a completion wins over a cancel.
+      else if (current.result != null) c.note("the session already returned its result; nothing to stop", { key: current.key });
+      else if (current.stopped_at != null) c.note("stop already recorded", { key: current.key });
+      else if (!cancel(c, current.key)) {
+        // The start hasn't returned, so there is no job to cancel yet: keep the stop for the start to act on.
+        c.sql.exec("UPDATE _actors_agent_sessions SET stopped_at = ? WHERE key = ?", c.now(), current.key);
+        c.note("stop recorded; the session stops when its start runs", { key: current.key, job: status ?? null });
+      }
     },
   };
   const internalHandlers: InternalHandlers = {};
@@ -397,7 +450,8 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     const row = rowByKey(key);
     const session = row?.session ?? "";
     const spent = usage ? { usage } : {};
-    const send = (type: string, payload: unknown) => c.send(type as never, payload as never, { key: c.key });
+    // To this actor by name: its returns message may also have routes to others, and these messages are its own.
+    const send = (type: string, payload: unknown) => c.send(type as never, payload as never, { to: actor as never, key: c.key });
     if (!row || latest()?.generation !== row.generation) {
       c.note("stale session result", { key, session, generation: row?.generation ?? null, status });
       return;

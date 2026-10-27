@@ -397,6 +397,8 @@ const HEARTBEAT_MS = 30_000;
 const DEFAULT_APPROVAL_EXPIRES: Duration = "3d";
 const APPROVAL_EXPIRED = "approval expired";
 
+// @actord/toolkit/agents reads _actors_outbox too (a session job's status; effects awaiting approval, by their body's
+// key): a change to its columns, ids ("fx:<effect>:<key>") or body must keep src/agents/index.ts in step.
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS _actors_inbox (id TEXT PRIMARY KEY, type TEXT NOT NULL, sender TEXT NOT NULL, handled_at INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS _actors_outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL, next_at INTEGER NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, seq INTEGER NOT NULL)",

@@ -4,7 +4,8 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
 import { type ActorEvent, ingress } from "../src/runtime/index.ts";
-import { captureEvents, eventually, resetSeams, settle } from "../src/testing.ts";
+import { captureEvents, eventually, expireJobs, resetSeams, settle } from "../src/testing.ts";
+import type { Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
@@ -26,6 +27,26 @@ function gate() {
   return g;
 }
 const reached = (g: { reached: boolean }) => eventually(async () => expect(g.reached).toBe(true));
+/**
+ * Hold instance `name`'s next session start inside pi's sessions.create(): until `g` opens, after pi made the session
+ * ("hold"), or by throwing before pi makes one ("fail"), so the start is retried after a backoff.
+ */
+async function holdStart(name: string, mode: "hold" | "fail", g?: ReturnType<typeof gate>): Promise<void> {
+  await runInDurableObject(scribe(name), (instance: Scribe) => {
+    const sessions = instance.actor.harness.sessions;
+    const create = sessions.create.bind(sessions);
+    let held = false;
+    sessions.create = async () => {
+      if (held) return create();
+      held = true;
+      if (mode === "fail") throw new Error("the test held this start");
+      const session = await create();
+      await g!.wait();
+      return session;
+    };
+  });
+}
+const jobRow = async (name: string, key: string) => (await scribe(name).outbox()).find((r) => r.id === key);
 const gates: Array<() => void> = [];
 afterEach(() => {
   for (const open of gates.splice(0)) open();
@@ -104,7 +125,7 @@ it("[agent-start-returns] a start runs a session whose finish returns the result
   expect(await s.job("task-r1")).toMatchObject({ settledBy: "probe", outcome: { summary: "ok" }, handle: { session: row!.session, operation: "task-r1", generation: 1 } });
   expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-r1")).toMatchObject({ status: "confirmed", attempts: 1 });
   expect(events.filter((e) => e.kind === "effect.confirmed" && e.effect === "agent.session")).toMatchObject([{ effectKey: "task-r1", detail: { settledBy: "probe" } }]);
-  expect(row).toEqual({ key: "task-r1", session: expect.stringMatching(/^\d+$/), operation: "task-r1", generation: 1, instructions: expect.stringContaining("You are Scribe"), started_at: expect.any(Number), result: '{"summary":"ok"}', exhausted: null });
+  expect(row).toEqual({ key: "task-r1", session: expect.stringMatching(/^\d+$/), operation: "task-r1", generation: 1, instructions: expect.stringContaining("You are Scribe"), started_at: expect.any(Number), result: '{"summary":"ok"}', exhausted: null, stopped_at: null });
   expect((await s.piSessions()).map((p) => p.id)).toContain(row!.session);
 });
 
@@ -298,4 +319,164 @@ it("[agent-instructions-pinned] a session keeps the instructions it started with
   } finally {
     delete shared.__scribeInstructions;
   }
+});
+
+it("[agent-stop-before-start-returns] a stop that lands before the session's start returns stops it: the actor hears stopped, not the result", async () => {
+  const events = captureEvents();
+  // Before pi is asked: the first start attempt failed, and the stop lands while it waits to be tried again.
+  script("stop-early-1", () => finish({ summary: "should not arrive" }));
+  await holdStart("stop-early-1", "fail");
+  await task("stop-early-1", "the early stop", "task-se1");
+  await eventually(async () => expect(await jobRow("stop-early-1", "fx:agent.session:task-se1")).toMatchObject({ status: "pending", attempts: 1 }));
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-early-1", id: "halt-se1" })).toMatchObject({ status: "handled" });
+  expect(notes(events, "Scribe:stop-early-1", "stop recorded; the session stops when its start runs")).toHaveLength(1);
+  await settle(env, system); // the retry runs now, finds the stop, and starts nothing
+  await eventually(async () => expect(await scribe("stop-early-1").failures()).toEqual([{ type: "agent.failed", payload: { session: "", key: "task-se1", reason: "stopped" } }]));
+  expect(await jobRow("stop-early-1", "fx:agent.session:task-se1")).toMatchObject({ status: "failed", lastError: "stopped" });
+  expect((await scribe("stop-early-1").piSessions()).map((p) => p.id)).toEqual(["1"]);
+  expect(await scribe("stop-early-1").done()).toEqual([]);
+
+  // After pi has the prompt: the start is held inside it, and the stop lands then.
+  const held = gate();
+  const turn = gate();
+  gates.push(held.open, turn.open);
+  script("stop-early-2", async () => {
+    await turn.wait();
+    return finish({ summary: "should not arrive" });
+  });
+  await holdStart("stop-early-2", "hold", held);
+  await task("stop-early-2", "the late stop", "task-se2");
+  await reached(held);
+  expect(await jobRow("stop-early-2", "fx:agent.session:task-se2")).toMatchObject({ status: "running" });
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-early-2", id: "halt-se2" })).toMatchObject({ status: "handled" });
+  held.open();
+  const s = scribe("stop-early-2");
+  await eventually(async () => expect((await s.failures()).map((f) => f.payload.reason)).toEqual(["stopped"]), 5000);
+  const [row] = await s.sessions();
+  expect((await s.failures())[0]!.payload).toEqual({ session: row!.session, key: "task-se2", reason: "stopped" });
+  expect(await jobRow("stop-early-2", "fx:agent.session:task-se2")).toMatchObject({ status: "failed", lastError: "stopped" });
+  expect(await s.wait("task-se2", row!.session as string)).toMatchObject({ status: "unanswered" });
+  turn.open();
+  await settle(env, system);
+  expect(await s.done()).toEqual([]);
+  expect(row).toMatchObject({ result: null, stopped_at: expect.any(Number) });
+});
+
+it("[agent-steer-after-end] a steer that runs after its session ended is refused with a note, and starts no run", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  const requests: ScriptedRequest[] = [];
+  script("steer-late-1", (r) => (requests.push(r), finish({ summary: "done before the hint" })));
+  await holdStart("steer-late-1", "hold", held);
+  await task("steer-late-1", "the quick one", "task-sl1");
+  await reached(held);
+  // Handled while the session is starting, so it is queued; it can't go to pi until the start returns.
+  expect(await ingress(env, system, "Scribe", "scribe.hint", { text: "too late" }, { key: "steer-late-1", id: "hint-sl1" })).toMatchObject({ status: "handled" });
+  await eventually(async () => expect(await jobRow("steer-late-1", "fx:agent.session.steer:hint-sl1")).toMatchObject({ status: "pending", lastError: "the session's start hasn't returned yet" }));
+  held.open();
+  const s = scribe("steer-late-1");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["done before the hint"]), 5000);
+  await settle(env, system); // the steer's retry runs now, after the session ended
+  expect(await jobRow("steer-late-1", "fx:agent.session.steer:hint-sl1")).toMatchObject({ status: "failed", lastError: "the session has ended; not steered" });
+  expect(notes(events, "Scribe:steer-late-1", "the session has ended; not steered")).toMatchObject([{ effectKey: "hint-sl1", detail: { key: "task-sl1" } }]);
+  const [row] = await s.sessions();
+  expect(requests).toHaveLength(1);
+  expect((await s.messages(row!.session as string)).filter((e) => e.kind === "pi.user")).toHaveLength(1);
+  expect((await s.done()).map((d) => d.summary)).toEqual(["done before the hint"]);
+});
+
+it("[agent-returns-second-route] the result goes to the agent itself when its returns message also routes elsewhere", async () => {
+  expect(system.routes.filter((r) => r.from === "Scribe" && r.message === "scribe.done").map((r) => r.to)).toEqual(["Scribe", "Probe"]);
+  const events = captureEvents();
+  script("onward-1", () => finish({ summary: "routed" }));
+  await task("onward-1", "the forwarded one", "task-o1");
+  await eventually(async () => expect((await scribe("onward-1").done()).map((d) => d.summary)).toEqual(["routed"]), 5000);
+  expect(events.filter((e) => e.actor === "Scribe:onward-1" && e.kind === "failed")).toEqual([]);
+  expect(events.filter((e) => e.kind === "sent" && e.to?.startsWith("Probe:"))).toEqual([]);
+});
+
+it("[agent-exhausted-marker] a session marked exhausted ends: the actor hears agent.exhausted, and pi stops the session", async () => {
+  const turn = gate();
+  gates.push(turn.open);
+  const held = async () => {
+    await turn.wait();
+    return finish({ summary: "too late" });
+  };
+  script("exhaust-1", held);
+  script("exhaust-2", held);
+  for (const [name, budget] of [["exhaust-1", "turns"], ["exhaust-2", "tokens"]] as const) {
+    turn.reached = false;
+    await task(name, "the costly one", `task-${name}`);
+    await reached(turn);
+    await eventually(async () => expect(await jobRow(name, `fx:agent.session:task-${name}`)).toMatchObject({ status: "awaiting_job" }));
+    await runInDurableObject(scribe(name), (_i, state) => state.storage.sql.exec("UPDATE _actors_agent_sessions SET exhausted = ? WHERE key = ?", budget, `task-${name}`));
+    await scribe(name).probeNow(`task-${name}`);
+  }
+  const [one] = await scribe("exhaust-1").sessions();
+  await eventually(async () => expect(await scribe("exhaust-1").failures()).toEqual([{ type: "agent.exhausted", payload: { session: one!.session, key: "task-exhaust-1", budget: "turns" } }]));
+  expect(await jobRow("exhaust-1", "fx:agent.session:task-exhaust-1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
+  expect(await scribe("exhaust-1").wait("task-exhaust-1", one!.session as string)).toMatchObject({ status: "unanswered" });
+  // A budget the runtime doesn't know isn't agent.exhausted (its schema would refuse it): it is a failure, said as is.
+  const [two] = await scribe("exhaust-2").sessions();
+  await eventually(async () => expect(await scribe("exhaust-2").failures()).toEqual([{ type: "agent.failed", payload: { session: two!.session, key: "task-exhaust-2", reason: "exhausted:tokens" } }]));
+});
+
+it("[agent-in-doubt] a session job past its deadline is in doubt, and the actor hears agent.failed", async () => {
+  const turn = gate();
+  gates.push(turn.open);
+  script("doubt-1", async () => {
+    await turn.wait();
+    return finish({ summary: "too late" });
+  });
+  await task("doubt-1", "the endless one", "task-d1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("doubt-1", "fx:agent.session:task-d1")).toMatchObject({ status: "awaiting_job" }));
+  expect(await expireJobs(env, system, "Scribe", "doubt-1")).toBe(1);
+  const [row] = await scribe("doubt-1").sessions();
+  await eventually(async () => expect(await scribe("doubt-1").failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-d1", reason: "deadline passed" } }]));
+  expect(await jobRow("doubt-1", "fx:agent.session:task-d1")).toMatchObject({ status: "in_doubt", lastError: "deadline passed" });
+  // The model answers after the job settled: its result is a note, not a delivery.
+  turn.open();
+  await settle(env, system);
+  expect(await scribe("doubt-1").done()).toEqual([]);
+});
+
+it("[agent-approval-pending] a session with a tool effect awaiting approval isn't done when its run ends; once none waits, it is", async () => {
+  const events = captureEvents();
+  const turn = gate();
+  gates.push(turn.open);
+  script("approve-1", async () => {
+    await turn.wait();
+    return { text: "Waiting for a person to approve the tool call." };
+  });
+  const s = scribe("approve-1");
+  await task("approve-1", "the approved one", "task-ap1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("approve-1", "fx:agent.session:task-ap1")).toMatchObject({ status: "awaiting_job" }));
+  const [row] = await s.sessions();
+  // A tool effect of this session, keyed "<session>:<callId>" (Task 6 makes these), parked for a person.
+  const effectId = `fx:gateway.tool:${row!.session}:call-1`;
+  await runInDurableObject(s, (_i, state) =>
+    state.storage.sql.exec(
+      "INSERT INTO _actors_outbox (id, kind, target, body, status, attempts, next_at, last_error, created_at, seq) VALUES (?, 'effect', 'gateway.tool', ?, 'awaiting_approval', 0, ?, NULL, ?, 0)",
+      effectId,
+      JSON.stringify({ name: "gateway.tool", key: `${row!.session}:call-1`, input: {}, causationId: "task-ap1", correlationId: "task-ap1" }),
+      Date.now() + 3_600_000,
+      Date.now(),
+    ),
+  );
+  turn.open();
+  // The run ends (pi has nothing pending for the session), and the look that follows finds the approval waiting.
+  const probedNotDone = () => events.filter((e) => e.kind === "job.probed" && e.effectKey === "task-ap1" && (e.detail as { done?: boolean }).done === false);
+  await eventually(async () => expect(probedNotDone().length).toBeGreaterThan(0));
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === row!.session)).toEqual([]));
+  await s.probeNow("task-ap1");
+  await eventually(async () => expect(probedNotDone().length).toBeGreaterThan(1));
+  expect(await jobRow("approve-1", "fx:agent.session:task-ap1")).toMatchObject({ status: "awaiting_job" });
+  expect(await s.failures()).toEqual([]);
+  // Once nothing awaits approval, the same look ends the session.
+  await runInDurableObject(s, (_i, state) => state.storage.sql.exec("UPDATE _actors_outbox SET status = 'denied' WHERE id = ?", effectId));
+  await s.probeNow("task-ap1");
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-ap1", reason: "ended without returning a result" } }]));
 });

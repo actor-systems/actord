@@ -103,6 +103,8 @@ export const system = defineSystem({
     { from: "@ingress", message: "scribe.hint", to: "Scribe" },
     { from: "@ingress", message: "scribe.halt", to: "Scribe" },
     { from: "Scribe", message: "scribe.done", to: "Scribe" },
+    // A second receiver of Scribe's returns message, as an app that forwards results would have: the result still goes to Scribe.
+    { from: "Scribe", message: "scribe.done", to: "Probe" },
     { from: "Scribe", message: "agent.failed", to: "Scribe" },
     { from: "Scribe", message: "agent.exhausted", to: "Scribe" },
   ],
@@ -208,6 +210,10 @@ export class Probe extends DurableObject<Env> {
     "probe.deny": ({ payload }, ctx) => {
       const ok = ctx.deny(payload.effect ?? "gateway.approval", payload.key, "not today", { by: payload.by });
       ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.key, ok ? 1 : 0);
+    },
+    // Scribe's returns message has a route here too ([agent-returns-second-route]); the agent runtime never uses it.
+    "scribe.done": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `scribe.done:${payload.summary}`);
     },
     "approval.decided": ({ payload }, ctx) => {
       const ok = applyDecision(ctx, payload);
