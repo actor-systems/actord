@@ -2,11 +2,12 @@
 // (test-runtime/src/agent.ts).
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
-import { type DurableObjectStorageLike, Workspace } from "@cloudflare/computer";
+import { type BackendHandle, type DurableObjectStorageLike, Workspace, type WorkspaceBackend } from "@cloudflare/computer";
 import type { GitClient } from "@cloudflare/computer/git";
 import { afterEach, expect, it } from "vitest";
 import { gitClone, gitPushEffect } from "../src/agents/git.ts";
 import { RegistryReadGateway, type ScriptedRequest, type ScriptedTurn, workspaceFor, workspaceTools } from "../src/agents/index.ts";
+import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { type ActorEvent, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { captureEvents, eventually, expireJobs, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
 import { computer, containerBackend } from "../src/system.ts";
@@ -1364,6 +1365,46 @@ const noComputerd = () => new Response("the stub has no computerd", { status: 50
 /** What the container's egress was handed to, once each: Computer connects again once after a failed connect. */
 const intercepts = (stub: ContainerStub) => [...new Set(stub.egress.map((e) => `${e.kind} ${e.host ?? ""}`.trim()))];
 
+/**
+ * A command backend of the test's own (Computer's public WorkspaceBackend), for what the stub can't show: a command
+ * that is running. Each exec starts a run that stays open until the test ends it (`exit`) or loses it (`lose`: its
+ * event stream fails, as when the container's connection breaks mid-command). Nothing syncs: the files stay in vfs_*.
+ */
+class HeldBackend implements WorkspaceBackend {
+  readonly id = "container";
+  readonly type = "test-held";
+  readonly description = "A Linux shell (a stand-in the test drives).";
+  readonly runs: Array<{ source: string; exit(code: number, stdout: string): void; lose(error: Error): void }> = [];
+  async connect(): Promise<BackendHandle> {
+    const shell = {
+      exec: async (input: { source: string; id?: string }) => {
+        const id = input.id ?? `run-${this.runs.length + 1}`;
+        let events!: ReadableStreamDefaultController<unknown>;
+        const stream = new ReadableStream({ start: (c) => void (events = c) });
+        this.runs.push({
+          source: input.source,
+          exit(code, stdout) {
+            events.enqueue({ id, seq: 0, name: "stdout", value: new TextEncoder().encode(stdout) });
+            events.enqueue({ id, seq: 1, name: "exit", code });
+            events.close();
+          },
+          lose: (error) => events.error(error),
+        });
+        return { id, events: stream };
+      },
+      getExec: async () => {
+        throw new Error("the container was destroyed");
+      },
+      killExec: async () => {},
+      disposeExec: async () => {},
+    };
+    return { rpc: { shell, sync: {} } as unknown as BackendHandle["rpc"], sync: "none", close: async () => {} };
+  }
+}
+const toolCall = (tools: ToolRegistration[], name: string, args: unknown, callId: string): Promise<ToolExecutionResult> =>
+  tools.find((t) => t.name === name)!.execute(args as never, { callId } as never, { abortSignal: new AbortController().signal } as never);
+const outputText = (r: ToolExecutionResult) => (r.output ?? []).map((c) => ("text" in c ? c.text : "")).join("");
+
 /** Hold the `nth` write to `path` in the instance's workspace once it has landed, until `g` opens: a tool cut off after its change. */
 function holdWrite(instance: Builder, path: string, nth: number, g: ReturnType<typeof gate>): void {
   const workspace = instance.actor.workspace!;
@@ -1474,6 +1515,30 @@ it("[egress-registry-read] the gateway passes GET and HEAD to the npm and yarn r
   expect(seen[0]!.headers.get("accept")).toBe("application/json");
 });
 
+it("[egress-registry-read] the gateway builds the upstream request from the URL: the container's Host and other headers outside a short list stay behind", async () => {
+  const seen: Request[] = [];
+  const gateway = new RegistryReadGateway({ fetch: async (r) => (seen.push(r), new Response("from the registry")) });
+  const headers = { host: "example.com", "x-forwarded-host": "example.com", forwarded: "host=example.com", "x-custom": "1", accept: "application/vnd.npm.install-v1+json", "accept-encoding": "gzip", "user-agent": "npm/11", "if-none-match": '"etag"', "npm-command": "ci", "npm-otp": "123456" };
+  expect((await gateway.fetch(new Request("https://registry.npmjs.org/zod", { headers }))).status).toBe(200);
+  expect(seen.map((r) => r.url)).toEqual(["https://registry.npmjs.org/zod"]);
+  expect(Object.fromEntries(seen[0]!.headers)).toEqual({ accept: "application/vnd.npm.install-v1+json", "accept-encoding": "gzip", "user-agent": "npm/11", "if-none-match": '"etag"' });
+});
+
+it("[egress-registry-read] the gateway doesn't follow a registry's redirect: the 3xx goes back to the container, and its target isn't fetched", async () => {
+  const seen: string[] = [];
+  // Behaves as fetch does with each redirect mode: "follow" would fetch the Location as well.
+  const upstream = async (request: Request): Promise<Response> => {
+    seen.push(request.url);
+    if (new URL(request.url).host !== "registry.npmjs.org") return new Response("from elsewhere");
+    if (request.redirect === "follow") return upstream(new Request("https://elsewhere.example/zod.tgz"));
+    return new Response(null, { status: 302, headers: { location: "https://elsewhere.example/zod.tgz" } });
+  };
+  const response = await new RegistryReadGateway({ fetch: upstream }).fetch(new Request("https://registry.npmjs.org/zod/-/zod-4.0.0.tgz"));
+  expect(response.status).toBe(302);
+  expect(response.headers.get("location")).toBe("https://elsewhere.example/zod.tgz");
+  expect(seen).toEqual(["https://registry.npmjs.org/zod/-/zod-4.0.0.tgz"]);
+});
+
 it("[egress-registry-read] what the container sends reaches the actor's gateway through WorkspaceProxy: GET to the registry passes, PUT and other hosts get 403", async () => {
   await runInDurableObject(builder("egress-1"), async (instance: Builder) => {
     instance.container.ports.set(8080, computerd(noComputerd));
@@ -1530,7 +1595,7 @@ it("[workspace-edit-survives-restart] a write, then an edit cut off by a restart
   expect(resultText(edit)).toMatch(/interrupted/);
 }, 20_000);
 
-it("[workspace-container-lost-mid-command] the container is destroyed while an exec waits on it: earlier edits stay in vfs_*, and the model sees the command as interrupted", async () => {
+it("[workspace-container-lost-at-connect] the container is destroyed while an exec waits for it to connect: earlier edits stay in vfs_*, and the model sees the command as interrupted", async () => {
   const connecting = gate();
   gates.push(connecting.open);
   const path = "/workspace/app.txt";
@@ -1561,4 +1626,43 @@ it("[workspace-container-lost-mid-command] the container is destroyed while an e
   // The file is in the object's SQLite (Computer's vfs_ tables), not on the container's disk.
   const sizes = await runInDurableObject(builder("lost-1"), (_i, state) => state.storage.sql.exec<{ size: number }>("SELECT n.size FROM vfs_dirents d JOIN vfs_nodes n ON n.inode = d.child_inode WHERE d.name = 'app.txt'").toArray());
   expect(sizes).toEqual([{ size: 3 }]);
+});
+
+it("[workspace-container-lost-mid-command] the container is lost while an exec runs: earlier edits stay in vfs_*, and the model sees the command as interrupted", async () => {
+  // Scribe's object has no workspace of its own, so this one is the only one on its tables.
+  await runInDurableObject(scribe("ws-running-lost"), async (_i, state) => {
+    const backend = new HeldBackend();
+    const tools = workspaceTools(new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, backends: [backend] }), ["workspace.*"]);
+    const path = "/workspace/app.txt";
+    expect((await toolCall(tools, "write", { path, content: "v1\n" }, "c1")).isError).toBeFalsy();
+    expect((await toolCall(tools, "edit", { path, edits: [{ oldText: "v1", newText: "v2" }] }, "c2")).isError).toBeFalsy();
+    let settled = false;
+    const exec = toolCall(tools, "exec", { command: "npm test" }, "c3").finally(() => (settled = true));
+    await eventually(async () => expect(backend.runs.map((r) => r.source)).toEqual(["npm test"]));
+    // Started, and still running: no result yet.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    backend.runs[0]!.lose(new Error("RPC session was shut down: the container was destroyed"));
+    const result = await exec;
+    expect(result.isError).toBe(true);
+    expect(outputText(result)).toMatch(/^exec was interrupted: the container was lost before the command finished \(.*the container was destroyed.*\)\. It may have partly run\./);
+    // The edits are in the object's SQLite (Computer's vfs_ tables), whatever the container did.
+    const sizes = state.storage.sql.exec<{ size: number }>("SELECT n.size FROM vfs_dirents d JOIN vfs_nodes n ON n.inode = d.child_inode WHERE d.name = 'app.txt'").toArray();
+    expect(sizes).toEqual([{ size: 3 }]);
+    expect(await new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike }).fs.readFile(path, "utf8")).toBe("v2\n");
+  });
+});
+
+it("[workspace-container-lost-mid-command] an exec that runs to its end gives the model its output, not an interruption", async () => {
+  await runInDurableObject(scribe("ws-running-ok"), async (_i, state) => {
+    const backend = new HeldBackend();
+    const tools = workspaceTools(new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, backends: [backend] }), ["workspace.exec"]);
+    const exec = toolCall(tools, "exec", { command: "npm test" }, "c1");
+    await eventually(async () => expect(backend.runs).toHaveLength(1));
+    backend.runs[0]!.exit(0, "3 passed\n");
+    const result = await exec;
+    expect(result.isError).toBeFalsy();
+    expect(outputText(result)).toContain("3 passed");
+    expect(outputText(result)).not.toMatch(/interrupted/);
+  });
 });

@@ -161,11 +161,14 @@ function withLostContainers(workspace: Workspace): Workspace {
 
 /** The registries a registry-read workspace may read from. */
 const REGISTRIES = new Set(["registry.npmjs.org", "registry.yarnpkg.com"]);
+/** The request headers a registry read needs, and the only ones forwarded: no Host, no credentials (npm-otp included). */
+const FORWARDED = new Set(["accept", "accept-encoding", "if-modified-since", "if-none-match", "range", "user-agent"]);
 
 /**
- * The registry-read egress gateway: GET and HEAD to https://registry.npmjs.org and https://registry.yarnpkg.com pass,
- * without the request's credentials; any other method or host gets 403. Redirects come back to the container, whose
- * next request is checked again. `fetch` is where passing requests go (default: the global fetch).
+ * The registry-read egress gateway: GET and HEAD to https://registry.npmjs.org and https://registry.yarnpkg.com pass;
+ * any other method or host gets 403. The request upstream is built from the URL, with only the headers a read needs
+ * (never Host or credentials). A redirect isn't followed: it goes back to the container, whose next request is checked
+ * again. `fetch` is where passing requests go (default: the global fetch).
  */
 export class RegistryReadGateway {
   readonly #upstream: (request: Request) => Promise<Response>;
@@ -180,8 +183,8 @@ export class RegistryReadGateway {
     if (!read || url.protocol !== "https:" || !REGISTRIES.has(url.host) || url.username !== "" || url.password !== "") {
       return new Response(`actord's registry-read egress allows only GET and HEAD to https://${[...REGISTRIES].join(" and https://")}.\n`, { status: 403 });
     }
-    const headers = new Headers(request.headers);
-    for (const name of ["authorization", "proxy-authorization", "cookie"]) headers.delete(name);
+    const headers = new Headers();
+    for (const [name, value] of request.headers) if (FORWARDED.has(name)) headers.set(name, value);
     return this.#upstream(new Request(url, { method: request.method, headers, redirect: "manual" }));
   }
 }
