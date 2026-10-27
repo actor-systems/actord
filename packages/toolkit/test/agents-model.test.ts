@@ -95,6 +95,14 @@ describe("agent check rules", () => {
   it("AGENT_RETURNS_MISSING", () => {
     expect(codes(project(build({ returns: null })))).toEqual(["error:AGENT_RETURNS_MISSING"]);
   });
+  it("ACTOR_BUDGET_MISSING: an agent with no budget is told to declare usd, turns and wallClock", () => {
+    const missing = checkProject(project(build({ budget: null }))).filter((d) => d.code === "ACTOR_BUDGET_MISSING");
+    expect(missing).toHaveLength(1);
+    expect(missing[0]!.fix).toMatch(/usd/);
+    expect(missing[0]!.fix).toMatch(/turns/);
+    expect(missing[0]!.fix).toMatch(/wallClock/);
+    expect(missing[0]!.fix).not.toMatch(/maxAttempts|timeoutMs/);
+  });
   it("AGENT_BUDGET_INCOMPLETE: usd, turns and wallClock are all needed", () => {
     expect(codes(project(build({ budget: { usd: 5, turns: 40 } })))).toEqual(["error:AGENT_BUDGET_INCOMPLETE"]);
   });
@@ -119,9 +127,9 @@ describe("agent check rules", () => {
     const noInput = { description: "Open a PR", idempotency: "key" } as EffectSpec;
     expect(codes(project(build({ effects: { "open-pr": noInput } })))).toEqual(["error:AGENT_TOOL_INPUT_MISSING"]);
   });
-  it("AGENT_TOOL_APPROVAL_RESULT_MISSING: a tool that needs a person's approval declares a result message", () => {
+  it("AGENT_TOOL_APPROVAL_RESULT_MISSING warns: a tool that needs a person's approval has its result steered in by the probe without a result message (R20)", () => {
     const approved = { ...tool, approval: "human" } as EffectSpec;
-    expect(codes(project(build({ effects: { "open-pr": approved } })))).toEqual(["error:AGENT_TOOL_APPROVAL_RESULT_MISSING"]);
+    expect(codes(project(build({ effects: { "open-pr": approved } })))).toEqual(["warning:AGENT_TOOL_APPROVAL_RESULT_MISSING"]);
     expect(codes(project(build({ effects: { "open-pr": { ...approved, result: "task.done" } as EffectSpec } })))).toEqual([]);
     // Only the actor's tools count: an effect it requests itself may go without.
     expect(codes(project(build({ tools: ["workspace.*"], effects: { "open-pr": approved } })))).toEqual([]);
@@ -141,11 +149,17 @@ describe("agent check rules", () => {
       expect(codes(project(withLocal([bad]))), bad).toEqual(["error:AGENT_LOCAL_ONLY_INVALID"]);
     expect(codes(project(withLocal(["/node_modules", "**/*.log", "/build/**"])))).toEqual([]);
   });
-  it("AGENT_CONTAINER_CONFIG_MISSING: needs a containers entry for the class with scheduling_policy durable_object", () => {
+  it("AGENT_CONTAINER_CONFIG_MISSING: needs a containers entry for the class with scheduling_policy durable_object and images, not image (R17)", () => {
     const sys = build();
+    const images = { app: { dockerfile: "./Dockerfile" } };
     expect(codes(project(sys, {}, {}))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
-    expect(codes(project(sys, {}, { containers: [{ class_name: "Other", scheduling_policy: "durable_object" }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
-    expect(codes(project(sys, {}, { containers: [{ class_name: "Coder" }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
+    expect(codes(project(sys, {}, { containers: [{ class_name: "Other", scheduling_policy: "durable_object", images }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
+    expect(codes(project(sys, {}, { containers: [{ class_name: "Coder", images }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
+    // wrangler rejects image for a container the Durable Object schedules, and needs images.
+    expect(codes(project(sys, {}, { containers: [{ class_name: "Coder", scheduling_policy: "durable_object" }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
+    expect(codes(project(sys, {}, { containers: [{ class_name: "Coder", scheduling_policy: "durable_object", image: "./Dockerfile" }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
+    expect(codes(project(sys, {}, { containers: [{ class_name: "Coder", scheduling_policy: "durable_object", image: "./Dockerfile", images }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
+    expect(codes(project(sys, {}, { containers: [{ class_name: "Coder", scheduling_policy: "durable_object", images }] }))).toEqual([]);
   });
   it("AGENT_NAME_RESERVED: agent.session and every agent.session.* name", () => {
     expect(codes(project(build({ extraEffects: { "agent.session": tool } })))).toEqual(["error:AGENT_NAME_RESERVED"]);

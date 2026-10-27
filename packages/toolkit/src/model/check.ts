@@ -67,7 +67,7 @@ function checkAgent(project: Project, m: Manifest, a: Manifest["actors"][number]
     if (!a.effects.includes(t) || !effects.has(t)) add("error", "AGENT_TOOL_UNDECLARED", `${a.name} → ${t}`, `${a.name} lists tool "${t}", which is neither workspace.* nor an effect in its effects`, `Declare ${t} under effects and list it in ${a.name}'s effects, or remove the tool.`);
     else if (effects.get(t)!.input === undefined) add("error", "AGENT_TOOL_INPUT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} but declares no input, so the agent can't be told its parameters`, "Add input: a schema of the tool's parameters.");
     else if (effects.get(t)!.approval === "human" && effects.get(t)!.result === null)
-      add("error", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome only from the job's probe, not from a result message`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
+      add("warning", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome from the job's probe, up to a probe period after it settles`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
   }
   if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
     add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, "Add backend: containerBackend({ image }) to the workspace.");
@@ -75,8 +75,11 @@ function checkAgent(project: Project, m: Manifest, a: Manifest["actors"][number]
     if (localOnlyInvalid(pattern)) add("error", "AGENT_LOCAL_ONLY_INVALID", `${a.name} localOnly ${pattern}`, `localOnly pattern "${pattern}" would be rejected by Computer: it must start with "/" or "**/", use only * and **, and avoid {}[]?\\,`, 'Write it as "/dir" or "**/*.log".');
   if (workspace?.backend) {
     const entry = project.config?.containers?.find((c) => c.class_name === a.name);
-    if (!entry || entry.scheduling_policy !== "durable_object")
-      add("error", "AGENT_CONTAINER_CONFIG_MISSING", a.name, `${a.name} runs commands in a container, but ${project.configFile ?? "wrangler.jsonc"} has no containers entry for class ${a.name} with scheduling_policy "durable_object"`, `Add containers: [{ "class_name": "${a.name}", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "${workspace.backend.image}" } } }] (wrangler rejects "image" for a container the Durable Object schedules).`);
+    const file = project.configFile ?? "wrangler.jsonc";
+    // wrangler rejects `image` for a container the Durable Object schedules, and needs `images`.
+    const wrong = !entry || entry.scheduling_policy !== "durable_object" ? `has no containers entry for class ${a.name} with scheduling_policy "durable_object"` : entry.image !== undefined ? `gives class ${a.name}'s container "image", which wrangler rejects for scheduling_policy "durable_object"` : entry.images === undefined ? `gives class ${a.name}'s container no "images"` : null;
+    if (wrong)
+      add("error", "AGENT_CONTAINER_CONFIG_MISSING", a.name, `${a.name} runs commands in a container, but ${file} ${wrong}`, `Add containers: [{ "class_name": "${a.name}", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "${workspace.backend.image}" } } }] (wrangler rejects "image" for a container the Durable Object schedules).`);
   }
   if (a.instructions !== undefined && !existsSync(join(project.root, a.instructions)))
     add("error", "AGENT_INSTRUCTIONS_MISSING", a.name, `${a.name}'s instructions file ${a.instructions} doesn't exist next to system.ts`, `Create ${a.instructions}, or fix the path.`);
@@ -103,7 +106,7 @@ export function checkProject(project: Project): Diagnostic[] {
     if (a.justification.length === 0)
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
-      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, a.kind === "agent" ? 'Add budget: { usd, turns, wallClock } (such as { usd: 5, turns: 40, wallClock: "30m" }) so each session is bounded.' : "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
     // The manifest writes an absent maxTokens, maxAttempts and timeoutMs as null.
     for (const [field, v] of Object.entries(a.budget ?? {})) {
       if (v === null) continue;
