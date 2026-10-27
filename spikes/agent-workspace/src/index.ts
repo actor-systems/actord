@@ -84,7 +84,9 @@ const PRICE = { input: 0.3, cacheRead: 0.006, output: 1.2 };
 /** Never synced into the object. Patterns are relative to the mount, /workspace. */
 const LOCAL_ONLY = ["**/node_modules", "/dist"];
 const REGISTRY = "registry.npmjs.org";
-/** Written by the platform once the backend registers its HTTPS intercept; the image points NODE_EXTRA_CA_CERTS at it. */
+/** Written by the platform once the backend registers its HTTPS intercept. The image's ENV names it in
+ * NODE_EXTRA_CA_CERTS, but the first run showed computerd's commands don't get the image's ENV, so a command that
+ * needs it sets it itself. */
 const EGRESS_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
 const BRANCH = "factory/spike-5";
 const IDENTITY = { name: "actord spike 5", email: "spike-5@actord.dev" };
@@ -412,12 +414,12 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     if (!(await this.#cloned())) throw new Error("no clone yet: POST /clone first");
     const switched = this.#useLocalOnly(ignore);
     const container = await this.#connect();
-    const probe = await this.#run(job, "node --version; npm --version; uname -r; nproc; head -2 /proc/meminfo; df -h / | tail -1", { cwd: REPO, timeoutMs: 120_000, source: "spike" });
+    const probe = await this.#run(job, "node --version; npm --version; uname -r; nproc; head -2 /proc/meminfo; df -h / | tail -1; echo \"inherited NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-unset}\"", { cwd: REPO, timeoutMs: 120_000, source: "spike" });
     this.#registryJob = job;
     let npmCi: ExecSummary;
     try {
       // The CA appears once the HTTPS intercept is registered; give it up to 10 seconds, as Cloudflare's sandbox does.
-      npmCi = await this.#run(job, `timeout 10 sh -c 'until [ -s ${EGRESS_CA} ]; do sleep 0.2; done'; npm ci --no-audit --no-fund --loglevel=warn`, { cwd: REPO, timeoutMs: INSTALL_TIMEOUT_MS, source: "spike" });
+      npmCi = await this.#run(job, `timeout 10 sh -c 'until [ -s ${EGRESS_CA} ]; do sleep 0.2; done'; NODE_EXTRA_CA_CERTS=${EGRESS_CA} npm ci --no-audit --no-fund --loglevel=warn`, { cwd: REPO, timeoutMs: INSTALL_TIMEOUT_MS, source: "spike" });
     } finally {
       this.#registryJob = null;
     }
