@@ -119,7 +119,8 @@ export class Probe extends DurableObject<Env> {
       if (payload.twice) ctx.effect(payload.effect, { key: payload.key }, { key: payload.key });
       if (payload.fail) throw new Error("requested then failed");
     },
-    "probe.outcome": ({ payload }, ctx) => {
+    "probe.outcome": async ({ payload }, ctx) => {
+      if (payload.key.startsWith("slow-")) await (globalThis as { __probeGate?: Promise<void> }).__probeGate;
       ctx.sql.exec("INSERT INTO outcomes (key, status, error, usage) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET status = excluded.status, error = excluded.error, usage = excluded.usage", payload.key, payload.status, payload.error ?? null, payload.usage ? JSON.stringify(payload.usage) : null);
     },
     "probe.timer.set": ({ payload }, ctx) => {
@@ -135,6 +136,9 @@ export class Probe extends DurableObject<Env> {
     "probe.timer.fired": ({ payload }, ctx) => {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
+      // A "slow-…" timer sends its outcome to the instance "<key>-gate", whose handler waits for the test to open
+      // the gate: delivering it holds this instance's drive, but not its storage ([lifecycle-alarm-not-held]).
+      if (payload.key.startsWith("slow-")) ctx.send("probe.outcome", { key: payload.key, status: "confirmed" }, { key: `${ctx.key}-gate` });
       // Timers that act on other timers when they fire: kill-<k> cancels timer k, reset-<k> sets k again to
       // deliver "<k>-new", and rearm<…> sets itself again once.
       if (payload.key.startsWith("kill-")) ctx.cancelTimer(payload.key.slice("kill-".length));

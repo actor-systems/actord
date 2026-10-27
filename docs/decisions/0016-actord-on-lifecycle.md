@@ -29,12 +29,21 @@ overwrite each other's wakes, so actord has to become one of `Lifecycle`'s capab
    function, `earliestWake()`, takes the minimum over every source of a wake (pending outbox rows and the
    schedule), and one method, `arm(when)`, points the job there, or cancels it when nothing is due.
 3. **`onStart` recovers orphaned effects, arms the schedule and arms the job; `onJob` runs `drive()`**, the
-   old `alarm()` body: the schedule's tick, inbox retention, then the outbox. It is only partly bounded.
-   Effect attempts, job probes and cancels run in the background, but `drive()` awaits each schedule tick,
-   each due timer and each outbox delivery, including deliveries to other actors, and the shared alarm's
-   dispatch waits for it. A slow receiver therefore delays the other capabilities' jobs on the object, and
-   Lifecycle warns once a dispatch runs past 30 s. Returning from `onJob` at once, with `drive()` running as
-   tracked alarm work (`trackAlarmWork`), is left for plan 3, when a harness shares the alarm.
+   old `alarm()` body: the schedule's tick, inbox retention, then the outbox.
+   - *Amended (2026-10-27, #45 and #41):* `onJob` hands `drive()` to Lifecycle as tracked alarm work
+     (`trackAlarmWork`) and returns at once with `{ rescheduleAt: now + 30 s }`.
+   - Before this, `drive()` awaited each schedule tick, each due timer and each outbox delivery, including
+     deliveries to other actors. The shared alarm's dispatch waited for it, so a slow receiver delayed every
+     other capability's job on the object.
+   - Lifecycle applies the backstop outcome only if the job wasn't pushed or cancelled during the dispatch.
+     `drive()` ends by re-arming through `arm()`, so its own wake wins, and the backstop remains only when a drive
+     fails or is lost with its isolate.
+   - `drive()` is single-flight: a call that arrives mid-drive shares the running drive, which then makes one
+     more pass.
+   - A drive that throws is recorded as a `note` (`drive failed: …`) and runs again at the backstop.
+   - `onJobError` keeps the job at the backstop too, so Lifecycle never deletes it after a failed dispatch.
+   - Outside an alarm, `onJob` still awaits `drive()`.
+   - Tests: `[lifecycle-alarm-not-held]` and `[drive-throws-keeps-wake]`.
 4. **`receive()` and `drive()` await `ready()` first**, since RPC and the test helpers reach the object
    without a platform event.
 5. **A drain releases its guard before it arms the job.** Arming now always awaits storage, and a row
