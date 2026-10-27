@@ -716,6 +716,25 @@ it("[job-cancel-honest] a confirmed cancel fails the job, an unconfirmed one is 
   expect(await probe("jc-none").outcomes()).toMatchObject([{ key: "jc-none", status: "in_doubt", error: "cancel not confirmed" }]);
 });
 
+it("[job-cancel-usage] what a cancel reports it used arrives with the result, confirmed or not", async () => {
+  overrideEffect("gateway.job", {
+    start: async (input, c) => {
+      c.reportUsage({ inputTokens: 1 });
+      return { runId: (input as { key: string }).key };
+    },
+    cancel: async (h, c) => {
+      c.reportUsage({ inputTokens: 2, costUsd: 0.25 });
+      return (h as { runId: string }).runId === "jcu-yes";
+    },
+  });
+  for (const k of ["jcu-yes", "jcu-no"]) await startJob(k);
+  await settle(env, system);
+  for (const k of ["jcu-yes", "jcu-no"]) await cancelJob(k);
+  await settle(env, system);
+  expect(await probe("jcu-yes").outcomes()).toMatchObject([{ key: "jcu-yes", status: "failed", error: "cancelled", usage: { inputTokens: 3, costUsd: 0.25 } }]);
+  expect(await probe("jcu-no").outcomes()).toMatchObject([{ key: "jcu-no", status: "in_doubt", error: "cancel not confirmed", usage: { inputTokens: 3, costUsd: 0.25 } }]);
+});
+
 it("[job-restart-awaiting] a restart while waiting neither re-starts the job nor loses it", async () => {
   let starts = 0;
   overrideEffect("gateway.job", { start: async () => ({ runId: `r-${++starts}` }) });

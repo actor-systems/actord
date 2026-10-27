@@ -936,39 +936,131 @@ it("[agent-exhausted-wallclock] a session past its wallClock is exhausted while 
   expect(await s.done()).toEqual([]);
 });
 
-it("[agent-exhausted-after-restart] the turns budget reached while the instance restarts is found by the probe, and agent.exhausted is delivered once", async () => {
+it("[agent-exhausted-after-restart] the turns budget reached while the instance restarts is enforced from its start: at most one request past the limit, and agent.exhausted once", async () => {
   overrideBudget("Scribe", { turns: 3 });
   const cut = gate();
-  const held = gate();
-  gates.push(cut.open, held.open);
+  gates.push(cut.open);
   let calls = 0;
   script("turns-restart-1", async (r) => {
     calls++;
-    // The third request is cut off by the restart; pi asks again once it resumes the run. The one after that is held.
+    // The third request is cut off by the restart; pi asks again once it resumes the run, by itself.
     if (calls === 3) await cut.wait();
-    if (calls >= 5) await held.wait();
     return noteEvery(r);
   });
   await task("turns-restart-1", "the restarted one", "task-tr1");
   await reached(cut);
   await abortAllDurableObjects();
   await settle(env, system);
-  // The resumed run finishes its third turn and asks for a fourth, which is held. No watcher survived the restart.
-  await reached(held);
+  // No look is asked for: the instance's start watches the session again, counting the two turns before the restart.
   const s = scribe("turns-restart-1");
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
   const [row] = await s.sessions();
   const session = row!.session as string;
-  expect(await s.failures()).toEqual([]);
-  await s.probeNow("task-tr1");
-  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
   expect((await s.failures())[0]).toMatchObject({ payload: { session, key: "task-tr1", budget: "turns" } });
   await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
   // Another look, and the rest of the system's work, deliver nothing more.
   await s.probeNow("task-tr1");
   await settle(env, system);
   expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
-  expect(calls).toBe(5);
+  // Two turns, the cut-off request and its resumption (the third turn), and at most one request past the limit.
+  expect(calls).toBeGreaterThanOrEqual(4);
+  expect(calls).toBeLessThanOrEqual(5);
   expect(await jobRow("turns-restart-1", "fx:agent.session:task-tr1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
+  expect(await s.watched()).toEqual([]);
+});
+
+it("[agent-stop-reports-usage] a session stopped mid-run settles with what it spent, though no look had reported it", async () => {
+  const turn = gate();
+  gates.push(turn.open);
+  script("stop-usage-1", async (r) => {
+    if (r.turn === 0) return { ...call("note_keyed", { text: "paid" }), usage: { input: 50, output: 5, costUsd: 0.1 } };
+    await turn.wait();
+    return finish({ summary: "too late" });
+  });
+  const s = scribe("stop-usage-1");
+  await task("stop-usage-1", "the paid one", "task-su1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("stop-usage-1", "fx:agent.session:task-su1")).toMatchObject({ status: "awaiting_job" }));
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-usage-1", id: "halt-su1" })).toMatchObject({ status: "handled" });
+  const [row] = await s.sessions();
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-su1", reason: "stopped", usage: { inputTokens: 50, outputTokens: 5, costUsd: 0.1 } } }]), 5000);
+  expect(await s.job("task-su1")).toMatchObject({ settledBy: "cancel", usage: { inputTokens: 50, outputTokens: 5, costUsd: 0.1 } });
+});
+
+it("[agent-guard-not-after-settle] a look that ends after its session's job settled doesn't watch the session again", async () => {
+  const turn = gate();
+  const look = gate();
+  gates.push(turn.open, look.open);
+  script("guard-late-1", async () => {
+    await turn.wait();
+    return finish({ summary: "too late" });
+  });
+  const s = scribe("guard-late-1");
+  await task("guard-late-1", "the stale look", "task-gl1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("guard-late-1", "fx:agent.session:task-gl1")).toMatchObject({ status: "awaiting_job" }));
+  expect(await s.watched()).toEqual(["task-gl1"]);
+  // The next look reads pi's work (the held run), then waits, while a stop settles the job.
+  await runInDurableObject(s, (instance: Scribe) => {
+    const harness = instance.actor.harness;
+    const pending = harness.pending.bind(harness);
+    let held = false;
+    harness.pending = async (options) => {
+      const found = await pending(options);
+      if (!held && options?.session) {
+        held = true;
+        await look.wait();
+      }
+      return found;
+    };
+  });
+  await s.probeNow("task-gl1");
+  await reached(look);
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "guard-late-1", id: "halt-gl1" })).toMatchObject({ status: "handled" });
+  await eventually(async () => expect((await s.failures()).map((f) => f.payload.reason)).toEqual(["stopped"]), 5000);
+  expect(await s.watched()).toEqual([]);
+  // The look goes on with what it read before the stop: the run looked busy. It must not watch a settled session.
+  look.open();
+  await settle(env, system);
+  expect(await s.watched()).toEqual([]);
+});
+
+it("[agent-budget-watch-fails] a budget watcher pi refuses is noted and dropped, and the next look watches the session again", async () => {
+  const events = captureEvents();
+  const turn = gate();
+  gates.push(turn.open);
+  script("watch-fail-1", async () => {
+    await turn.wait();
+    return finish({ summary: "watched" });
+  });
+  const s = scribe("watch-fail-1");
+  // pi refuses to watch the session's events until the test lets it through: the harness hands out a stand-in for pi,
+  // which reaches the real one for everything except pi's event views, which don't know it.
+  const refusing = globalThis as { __refuseEvents?: boolean };
+  refusing.__refuseEvents = true;
+  try {
+    await runInDurableObject(s, (instance: Scribe) => {
+      const harness = instance.actor.harness;
+      const open = harness.pi.bind(harness);
+      harness.pi = async () => {
+        const pi = await open();
+        return refusing.__refuseEvents ? new Proxy(pi, { get: (target, prop) => ((v) => (typeof v === "function" ? v.bind(target) : v))(Reflect.get(target, prop, target)) }) : pi;
+      };
+    });
+    await task("watch-fail-1", "the unwatched one", "task-wf1");
+    await reached(turn);
+    const failed = () => events.filter((e) => e.kind === "note" && e.actor === "Scribe:watch-fail-1" && e.reason?.startsWith("budget watcher failed: "));
+    await eventually(async () => expect(failed()).toMatchObject([{ effect: "agent.session", effectKey: "task-wf1" }]));
+    expect(await s.watched()).toEqual([]);
+    refusing.__refuseEvents = false;
+    await s.probeNow("task-wf1");
+    await eventually(async () => expect(await s.watched()).toEqual(["task-wf1"]));
+  } finally {
+    delete refusing.__refuseEvents;
+  }
+  turn.open();
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["watched"]), 5000);
+  expect(await s.watched()).toEqual([]);
 });
 
 it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for approval: the session is exhausted, the effect stays parked, and its later result is a note", async () => {

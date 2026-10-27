@@ -145,6 +145,10 @@ export class Scribe extends DurableObject<Env> {
   probeNow(key: string) {
     return this.actor.probeNow("agent.session", key);
   }
+  /** The job keys of the sessions whose budget this instance watches in memory. */
+  watched(): string[] {
+    return this.actor.watched();
+  }
   outbox() {
     return this.actor.outbox();
   }

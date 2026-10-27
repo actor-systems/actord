@@ -1218,7 +1218,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   /**
    * Ask the adapter to cancel a job marked cancelling, in the background, bounded by the effect's timeout.
-   * Only a confirmed cancel fails the job; false, a throw, a timeout or no cancel() leaves it in doubt.
+   * Only a confirmed cancel fails the job; false, a throw, a timeout or no cancel() leaves it in doubt. What the
+   * cancel reports it used (the work up to its stop) is added to the job's usage either way.
    */
   function startCancel(id: string): void {
     if (inflight.has(id)) return;
@@ -1228,21 +1229,30 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const { timeoutMs } = resolveBudget(row.body.name);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`cancel timed out after ${timeoutMs}ms`)), timeoutMs);
+    const reported: EffectUsage = {};
+    let open = true;
+    const reportUsage = (u: EffectUsage) => {
+      if (open) addUsage(reported, u);
+    };
     const run: Promise<void> = (async () => {
       let confirmed = false;
       let error: string | null = null;
       try {
         if (typeof adapter?.cancel !== "function") throw new Error(`the adapter for ${row.body.name} has no cancel()`);
-        confirmed = (await Promise.race([adapter.cancel(row.body.handle, { key: row.body.key, signal: controller.signal }), aborted(controller.signal)])) === true;
+        confirmed = (await Promise.race([adapter.cancel(row.body.handle, { key: row.body.key, signal: controller.signal, reportUsage }), aborted(controller.signal)])) === true;
       } catch (err) {
         error = messageOf(err);
       } finally {
+        open = false;
         clearTimeout(timer);
       }
       const current = cancellingJob(sql, id);
       if (!current) return;
-      if (confirmed) finishEffect(current, current.body, "failed", null, "cancelled", { settledBy: "cancel" });
-      else finishEffect(current, current.body, "in_doubt", null, "cancel not confirmed", { settledBy: "cancel", ...(error ? { cancelError: error } : {}) });
+      const usage: EffectUsage = { ...current.body.usage };
+      addUsage(usage, reported);
+      const req = { ...current.body, usage };
+      if (confirmed) finishEffect(current, req, "failed", null, "cancelled", { settledBy: "cancel" });
+      else finishEffect(current, req, "in_doubt", null, "cancel not confirmed", { settledBy: "cancel", ...(error ? { cancelError: error } : {}) });
     })()
       .catch((err) => emit({ kind: "note", at: now(), actor: self, effect: row.body.name, effectKey: row.body.key, reason: `cancel runner failed: ${messageOf(err)}` }))
       .finally(() => {

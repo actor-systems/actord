@@ -16,7 +16,7 @@ export interface JobAdapter<I = unknown, H = unknown, O = unknown> {
   /** Ask whether the job has finished. Runs only when the effect declares `probe: { every }`. */
   probe?(handle: H, ctx: { key: string; signal: AbortSignal; reportUsage(u: EffectUsage): void }): Promise<JobProbe<O>>;
   /** Ask the destination to stop the job. Return true only when it confirms the job won't complete. */
-  cancel?(handle: H, ctx: { key: string; signal: AbortSignal }): Promise<boolean>;
+  cancel?(handle: H, ctx: { key: string; signal: AbortSignal; reportUsage(u: EffectUsage): void }): Promise<boolean>;
 }
 
 export type JobProbe<O = unknown> = { done: false } | { done: true; status: "confirmed"; value: O } | { done: true; status: "failed"; error: string };

@@ -203,6 +203,8 @@ export interface AgentRuntimeOptions<S extends AnySystem = AnySystem> extends Ru
 
 export interface AgentRuntime extends ActorRuntime {
   readonly harness: PiHarness;
+  /** @internal for tests: the job keys of the sessions whose budget this instance watches in memory. */
+  watched(): string[];
 }
 
 /** The messages an agent actor's `on` maps to a verb: agentRuntime handles them itself. */
@@ -264,6 +266,7 @@ const NOT_STEERED = "the session has ended; not steered";
 
 const defaultRender = (type: string, payload: unknown) => `${type}\n\n${JSON.stringify(payload, null, 2)}`;
 const text = (t: string): ToolExecutionResult["output"] => [{ type: "text", text: t }];
+const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 /** A request's outcome from its outbox row, as its result message would carry it; null while it hasn't settled. */
 function settledOutcome(fx: { status: string; body: string; last_error: string | null }): Pick<Settled, "status" | "value" | "error"> | null {
   if (fx.status === "confirmed") return { status: "confirmed", value: (JSON.parse(fx.body) as { outcome?: unknown }).outcome };
@@ -349,7 +352,13 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   // Filled once the runtime exists, below: the effect tools request through it. pi reads it only once it opens.
   const registry = createRegistry();
   const harness = new PiHarness({
-    harness: ({ storage, context, onWake }) => Harness.open(storage, { models, registry, onWake }, context),
+    harness: async ({ storage, context, onWake }) => {
+      const pi = await Harness.open(storage, { models, registry, onWake }, context);
+      // pi resumes its sessions' runs once this returns: watch their budgets first, so none runs on unwatched. A
+      // failure here is noted per session (the watcher's onError), never a failure to open pi.
+      await guardWaiting(pi).catch((err) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, reason: `watching waiting sessions' budgets failed: ${messageOf(err)}` }));
+      return pi;
+    },
     defaults: { model, ...(reasoning ? { thinkingLevel: THINKING[reasoning] } : {}) },
   });
 
@@ -391,35 +400,72 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   };
   /**
    * In memory, per running session: its budget watcher and its wallClock timer, both of which ask for a look. Armed
-   * when the start returns, and again by a look that finds none (after a restart); disarmed once the job is settled.
+   * when the start returns; for every waiting session when pi opens (an instance's start), before pi resumes their runs;
+   * and by a look that finds none (its watcher failed). Disarmed once the job is settled or being cancelled.
    */
   const guards = new Map<string, () => void>();
-  const look = (key: string) => runtime.probeNow(SESSION, key).catch((err) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, effectKey: key, reason: `look at a session's budget failed: ${String(err)}` }));
-  const guard = (key: string, session: string, startedAt: number) => {
-    if (guards.has(key)) return;
+  const note = (key: string, reason: string) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, effectKey: key, reason });
+  const look = (key: string) => runtime.probeNow(SESSION, key).catch((err) => note(key, `look at a session's budget failed: ${messageOf(err)}`));
+  /** Whether a session's job may still spend: started or waiting, not settled or being cancelled. Read fresh. */
+  const unsettled = (key: string) => ["running", "awaiting_job"].includes(jobStatus(key) ?? "");
+  /** Resolves once the session's watcher counts (or has failed). `pi`: the pi the harness factory has just opened. */
+  const guard = (key: string, session: string, startedAt: number, pi?: Harness): Promise<void> => {
+    // Never for a settled job: nothing would disarm it.
+    if (guards.has(key) || !unsettled(key)) return Promise.resolve();
     const b = budget();
-    const unwatch = watchBudget(harness, session, b, async (which) => {
-      markExhausted(key, which);
-      // The look aborts it too, so one failed abort here still ends the session.
-      await harness.abort({ session }).catch((err) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, effectKey: key, reason: `abort of an exhausted session failed: ${String(err)}` }));
-      await look(key);
-    });
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // Looks once the wallClock has passed by this instance's clock: a timer that fires early, or a step of a long
-    // wallClock, waits again.
-    const atWallClock = () => {
-      const left = startedAt + b.wallClockMs - now();
-      if (left > 0) timer = setTimeout(atWallClock, Math.min(left, MAX_TIMER_MS));
-      else void look(key);
-    };
-    atWallClock();
-    guards.set(key, () => {
-      guards.delete(key);
+    const dispose = () => {
+      if (guards.get(key) === dispose) guards.delete(key);
       unwatch();
       clearTimeout(timer);
-    });
+    };
+    const unwatch = watchBudget(
+      pi ?? harness,
+      session,
+      b,
+      async (which) => {
+        // Settled meanwhile: there is nothing to stop, and its row stays as it settled.
+        if (!unsettled(key)) return dispose();
+        markExhausted(key, which);
+        // The look aborts it too, so one failed abort here still ends the session. Through the pi the factory opened,
+        // when there is one: until the instance has started, the harness's methods wait, and pi's run doesn't.
+        const aborting = pi ? pi.conversation(Number(session) as ConversationId, BACKGROUND_CONTEXT).then((c) => c?.abort(BACKGROUND_CONTEXT)) : harness.abort({ session });
+        await aborting.catch((err) => note(key, `abort of an exhausted session failed: ${messageOf(err)}`));
+        await look(key);
+      },
+      // Dropped, so the next look that finds the session still running watches it again.
+      (err) => {
+        note(key, `budget watcher failed: ${messageOf(err)}`);
+        dispose();
+      },
+    );
+    // Looks once the wallClock has passed by this instance's clock: a timer that fires early, or a step of a long
+    // wallClock, waits again. Always from a timer, so a look is never asked for from inside the instance's start.
+    const left = () => startedAt + b.wallClockMs - now();
+    const arm = () => {
+      timer = setTimeout(() => (left() > 0 ? arm() : void look(key)), Math.min(Math.max(0, left()), MAX_TIMER_MS));
+    };
+    arm();
+    guards.set(key, dispose);
+    return unwatch.ready;
   };
   const unguard = (key: string) => guards.get(key)?.();
+  /**
+   * When pi opens: watch every session whose job waits, before pi resumes their runs by itself (a restart). A watcher
+   * of a pi that closed (pi reopens after a storage failure) is replaced.
+   */
+  const guardWaiting = async (pi: Harness) => {
+    const waiting = sql.exec<{ key: string; session: string; started_at: number }>(
+      "SELECT s.key, s.session, s.started_at FROM _actors_agent_sessions s JOIN _actors_outbox o ON o.id = ? || s.key WHERE o.status = 'awaiting_job' AND s.session IS NOT NULL",
+      `fx:${SESSION}:`,
+    );
+    await Promise.all(
+      waiting.toArray().map((row) => {
+        unguard(row.key);
+        return guard(row.key, row.session, row.started_at, pi);
+      }),
+    );
+  };
 
   const sessionJob: JobAdapter<{ prompt: string }, SessionHandle> = {
     async start(input, { key }) {
@@ -454,12 +500,17 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       const waits = openWaits(handle.session);
       const pending = await harness.pending({ session: handle.session });
       const spent = await spentBy(harness, handle.session);
-      reportUsage(unreported(key, spent.usage));
       const row = rowByKey(key);
       const settle = async (outcome: JobProbe) => {
         unguard(key);
-        // A session that ends without its result must stop spending, whatever it was doing.
-        if (outcome.done && outcome.status === "failed") await harness.abort({ session: handle.session });
+        let final = spent;
+        if (outcome.done && outcome.status === "failed") {
+          // A session that ends without its result must stop spending, whatever it was doing; what the request the
+          // abort cut off spent counts too.
+          await harness.abort({ session: handle.session });
+          final = await spentBy(harness, handle.session);
+        }
+        reportUsage(unreported(key, final.usage));
         return outcome;
       };
       if (row?.result != null) return settle({ done: true, status: "confirmed", value: JSON.parse(row.result) as unknown });
@@ -471,13 +522,22 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       const owed = row && waits.length > 0 ? await steerSettled(row, waits) : waits;
       // A session being stopped has no work left by design: its cancel, not this look, settles it.
       if (pending.length > 0 || owed.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") {
-        if (row) guard(key, handle.session, row.started_at); // a restart lost them
+        reportUsage(unreported(key, spent.usage));
+        if (row) guard(key, handle.session, row.started_at); // again, if its watcher failed; never once the job has settled
         return { done: false };
       }
       return settle({ done: true, status: "failed", error: "ended without returning a result" });
     },
-    async cancel(handle) {
-      return harness.abort({ session: handle.session });
+    async cancel(handle, { key, reportUsage }) {
+      unguard(key);
+      const aborted = await harness.abort({ session: handle.session });
+      // No look reports what the session spent since the last one, the request the abort cut off included: this does.
+      try {
+        reportUsage(unreported(key, (await spentBy(harness, handle.session)).usage));
+      } catch (err) {
+        note(key, `what a stopped session spent couldn't be read: ${messageOf(err)}`);
+      }
+      return aborted;
     },
   };
 
@@ -715,7 +775,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   registry.install({ name: "actord.agent", tools: [finishTool(), ...effectTools(runtime, system, actor, toolSession)] });
   for (const extension of extensions) registry.install(extension);
   host.lifecycle.use(harness);
-  return { ...runtime, harness };
+  return { ...runtime, harness, watched: () => [...guards.keys()] };
 }
 
 /** Workers AI through the `AI` binding: the actor's pinned model id, in a pi-ai registry of its own. */
