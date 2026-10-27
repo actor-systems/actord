@@ -42,10 +42,12 @@ Vitest integration.
    - Computer 0.8.0's push drops `corsProxy`, so isomorphic-git falls back to `http.corsProxy` from `.git/config`,
      which the agent can write through `exec`. So a push from a repo whose config sets one is refused, before the
      token is minted and again just before the push (`[git-push-url-pinned]`).
-   - The same two checks refuse a repo whose `.git` or `.git/config` is a symlink (`lstat`). The agent can make one
-     through `exec` (`mv .git meta && ln -s meta .git`), and a `write` to its target, `meta/config`, would pass
-     decision 3's guard while changing the config the push reads. So the guard covers a symlinked gitdir by refusing
-     the push, not the write.
+   - The same two checks require `.git` to be a plain directory, with a `.git/config` that isn't a symlink
+     (`lstat`); anything else, a missing `.git` included, is refused. Through `exec` the agent could make `.git` a
+     symlink (`mv .git meta && ln -s meta .git`) or a `gitdir:` file (`printf 'gitdir: meta' > .git`), which
+     isomorphic-git follows, or link the config. A `write` to the target, `meta/config`, would then pass decision 3's
+     guard while changing the config the push reads. So the guard covers a redirected gitdir by refusing the push, not
+     the write.
    - Authentication is Basic `x-access-token:<token>` only, as GitHub Actions sends it. Spike 5: GitHub's git
      endpoint answers Bearer with `401`, and Basic landed the push.
    - The token is the app's `token()`, called for each push attempt and each clone. It goes to the git client as an

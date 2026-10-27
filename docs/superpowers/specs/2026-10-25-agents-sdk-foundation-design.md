@@ -406,7 +406,7 @@ actors: {
 - **Amended (2026-10-27, plan 3, decision 0022; spikes 2, 4 and 5, `docs/evidence/`):**
   - Computer ships no replay classification. The toolkit takes the Pi example's split: `read`, `ls`, `find`, `grep`, `write` and `delete` run again after a restart; `edit`, `exec` and `publish` come back to the model as interrupted. `write`, `edit` and `delete` refuse paths in a `.git` directory.
   - Computer has no egress allowlist. `egress: "registry-read"` is the toolkit's own gateway: `GET` and `HEAD` to the npm and Yarn registries pass, and everything else gets `403`.
-  - `localOnly` is required with a container backend: without it, `npm ci` took 7.8× as long and put 405 MB in the object. Commands never get the image's `ENV`, so the egress CA goes with every exec. The tools' exec timeout defaults to 10 minutes. Nothing is pulled from the container before a session resumes.
+  - `localOnly` is required with a container backend: without it, `npm ci` took 7.8× as long and put 405 MB in the object. Commands never get the image's `ENV`, so the egress CA goes with every exec through `workspace.runtime`. The tools' exec timeout defaults to 10 minutes. Nothing is pulled from the container before a session resumes.
   - Git authenticates with Basic `x-access-token` only: GitHub's git endpoint answers Bearer with `401`. The push URL is the app's, pinned, never the workspace's remote, and `corsProxy: ""` is passed. The default `allow` is any `factory/` branch; an app binds it to the instance's own branch.
   - The fallback isn't needed: spike 2 ran the install, the build and the tests through the Container backend.
 
