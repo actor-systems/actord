@@ -554,7 +554,7 @@ const waitingText = (effect: string, key: string, expiresAt: number) =>
   `Waiting for a person to approve ${effect} (request ${key}, expires ${new Date(expiresAt).toISOString()}). The result will arrive as a message; continue with other work or end your turn.`;
 /** Waits until pi has no work left in a session, then asks for a look at its job: the look a finished run gets. */
 async function runEnded(name: string, session: string, jobKey: string): Promise<void> {
-  await eventually(async () => expect((await scribe(name).pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await eventually(async () => expect((await scribe(name).pending()).filter((p) => p.session === session)).toEqual([]), 4000);
   await scribe(name).probeNow(jobKey);
 }
 
@@ -650,6 +650,7 @@ it("[agent-restart-mid-tool-unkeyed] a restart while an unkeyed tool's effect ru
   expect(runs).toBe(1);
 }, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-tool-approval] a tool that needs approval answers waiting at once; once approved, its result is steered in and the session finishes", async () => {
   const requests: ScriptedRequest[] = [];
   script("tool-approve-1", (r) => {
@@ -685,8 +686,9 @@ it("[agent-tool-approval] a tool that needs approval answers waiting at once; on
   // Steered in, and Scribe's own handler for the result message got it too, once.
   await settle(env, system);
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-tool-result-stale] an approved effect whose result arrives after its session was replaced is only a note: nothing is submitted to either session", async () => {
   const events = captureEvents();
   const requests: ScriptedRequest[] = [];
@@ -724,9 +726,10 @@ it("[agent-tool-result-stale] an approved effect whose result arrives after its 
   expect(await s.failures()).toEqual([]);
   // Noted as stale, and Scribe's own handler for the result message got it all the same, once.
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
-});
+}, 20_000);
 
 for (const [how, reason] of [["stopped", "the session was stopped"], ["replaced", "the session was replaced"]] as const) {
+  // see [crash-loop-parked]
   it(`[agent-${how === "stopped" ? "stop" : "replace"}-withdraws-approvals] a session ${how} while a tool waits for a person has that approval denied: a later approve changes nothing, and the effect never runs`, async () => {
     const events = captureEvents();
     const name = `withdraw-${how}`;
@@ -753,9 +756,10 @@ for (const [how, reason] of [["stopped", "the session was stopped"], ["replaced"
     expect(await s.noted()).toEqual([]);
     expect(await s.results()).toEqual([]);
     expect((await s.done()).map((d) => d.summary)).toEqual(how === "stopped" ? [] : ["second"]);
-  });
+  }, 20_000);
 }
 
+// see [crash-loop-parked]
 it("[agent-steer-while-awaiting-approval] a steer to a session idle on a tool that waits for a person reaches the model, and the session still finishes once the effect is approved", async () => {
   const requests: ScriptedRequest[] = [];
   script("steer-approve-1", (r) => {
@@ -765,7 +769,7 @@ it("[agent-steer-while-awaiting-approval] a steer to a session idle on a tool th
   });
   const s = scribe("steer-approve-1");
   await task("steer-approve-1", "the approved note", "task-sa1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 2500);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
@@ -773,16 +777,16 @@ it("[agent-steer-while-awaiting-approval] a steer to a session idle on a tool th
   expect(await jobRow("steer-approve-1", "fx:agent.session:task-sa1")).toMatchObject({ status: "awaiting_job" });
   const before = requests.length;
   expect(await ingress(env, system, "Scribe", "scribe.hint", { text: "use the revised checklist" }, { key: "steer-approve-1", id: "hint-sa1" })).toMatchObject({ status: "handled" });
-  await eventually(async () => expect(await jobRow("steer-approve-1", "fx:agent.session.steer:hint-sa1")).toMatchObject({ status: "confirmed" }), 4000);
-  await eventually(async () => expect(requests.slice(before).some((r) => users(r).some((u) => u.includes("use the revised checklist")))).toBe(true), 4000);
+  await eventually(async () => expect(await jobRow("steer-approve-1", "fx:agent.session.steer:hint-sa1")).toMatchObject({ status: "confirmed" }), 2500);
+  await eventually(async () => expect(requests.slice(before).some((r) => users(r).some((u) => u.includes("use the revised checklist")))).toBe(true), 2500);
   await runEnded("steer-approve-1", session, "task-sa1");
   expect(await jobRow("steer-approve-1", "fx:agent.session:task-sa1")).toMatchObject({ status: "awaiting_job" });
   expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key, value: { noted: "s" } });
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["approved"]), 4000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["approved"]), 2500);
   // The model that finished saw the steer too.
   expect(users(requests.at(-1)!).some((u) => u.includes("use the revised checklist"))).toBe(true);
   expect(await s.failures()).toEqual([]);
-});
+}, 20_000);
 
 it("[agent-tool-undeclared] only the effects in `tools` are offered, and requestEffect refuses an effect the actor doesn't list", async () => {
   const events = captureEvents();
@@ -811,6 +815,7 @@ it("[agent-tool-undeclared] only the effects in `tools` are offered, and request
   await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["listed"]), 4000);
 });
 
+// see [crash-loop-parked]
 it("[agent-tool-denied] a person's denial sends no result message, so the session's probe steers it in, and the model hears it failed", async () => {
   const requests: ScriptedRequest[] = [];
   script("tool-deny-1", (r) => {
@@ -829,8 +834,9 @@ it("[agent-tool-denied] a person's denial sends no result message, so the sessio
   await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["denied"]), 4000);
   expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.approved (request ${key}): failed denied by a person`);
   expect(await s.noted()).toEqual([]);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's own handler too; when that throws, the delivery is retried and the result is steered in once", async () => {
   const events = captureEvents();
   const requests: ScriptedRequest[] = [];
@@ -869,8 +875,9 @@ it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's 
   expect(await jobRow("tool-handler-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed", attempts: 1 });
   expect((await s.messages(session)).filter((e) => e.kind === "actord.effect_result")).toHaveLength(1);
   expect(users(requests.at(-1)!).filter((t) => t.startsWith("Result of"))).toHaveLength(1);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-tool-approval-no-result] an approved effect with no result message is steered in by the session's probe", async () => {
   const events = captureEvents();
   const requests: ScriptedRequest[] = [];
@@ -897,8 +904,9 @@ it("[agent-tool-approval-no-result] an approved effect with no result message is
   expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.silent (request ${key}): confirmed {"noted":"s"}`);
   expect(await jobRow("tool-silent-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed" });
   expect(await s.noted()).toEqual([{ effect: "note.silent", key, text: "s" }]);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-tool-result-steer-in-doubt] a result steer that ends in doubt gives up its wait, so the session ends instead of waiting out its deadline", async () => {
   const requests: ScriptedRequest[] = [];
   script("tool-steer-doubt-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_approved", { text: "q" }) : { text: "Waiting for the approval." }));
@@ -927,7 +935,7 @@ it("[agent-tool-result-steer-in-doubt] a result steer that ends in doubt gives u
   await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-tsd1", reason: "ended without returning a result" } }]), 4000);
   expect(await runInDurableObject(s, (_i, state) => state.storage.sql.exec("SELECT done_at FROM _actors_agent_waits WHERE key = ?", key).one().done_at)).toEqual(expect.any(Number));
   expect(await s.done()).toEqual([]);
-});
+}, 20_000);
 
 // ---- Budgets ----
 
@@ -1143,6 +1151,7 @@ it("[agent-budget-watch-fails] a budget watcher pi refuses is noted and dropped,
   expect(await s.watched()).toEqual([]);
 });
 
+// see [crash-loop-parked]
 it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for approval: the session is exhausted, the effect stays parked, and its later result is a note", async () => {
   const events = captureEvents();
   const requests: ScriptedRequest[] = [];
@@ -1171,7 +1180,7 @@ it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
   expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
   expect(requests).toHaveLength(2);
-});
+}, 20_000);
 
 /** The agent.* events of a session's key, from the captured events. */
 const agentEvents = (events: ActorEvent[], key: string) => events.filter((e) => e.kind.startsWith("agent.") && e.effectKey === key);
