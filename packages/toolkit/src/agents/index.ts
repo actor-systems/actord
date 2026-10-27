@@ -226,7 +226,10 @@ export interface AgentRuntimeOptions<S extends AnySystem = AnySystem> extends Ru
   container?: unknown;
   /** For a workspace whose egress is "registry-read": where the container's requests go; default: a RegistryReadGateway. */
   gateway?: Gateway;
-  /** Test seam: a command backend in place of the container's (Computer's WorkspaceBackend, with id "container"). */
+  /**
+   * @internal Test seam: a command backend in place of the container's (Computer's WorkspaceBackend, with id
+   * "container"). With it, the workspace's localOnly and its egress gateway don't apply, since no container is started.
+   */
   backend?: WorkspaceRegisteredBackend;
 }
 

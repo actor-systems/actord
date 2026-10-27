@@ -10,9 +10,11 @@
 // eviction no edit was lost and no sync was left pending (spike 4), and the next exec's sync brings back what an
 // interrupted command wrote.
 //
-// Each exec the tools run gets the workspace's timeout (10 minutes unless it declares execTimeoutMs; spike 2's longest
-// command was a 185 s install), and with registry-read egress, the gateway's CA: computerd's commands never see the
-// image's ENV, and Node refuses the gateway's certificate without NODE_EXTRA_CA_CERTS (spike 2).
+// With registry-read egress, every exec on the workspace, the tools' and the app's own, gets the gateway's CA:
+// computerd's commands never see the image's ENV, and Node refuses the gateway's certificate without
+// NODE_EXTRA_CA_CERTS (spike 2). Each exec the tools run also gets the workspace's timeout (10 minutes unless it declares
+// execTimeoutMs; spike 2's longest command was a 185 s install), and one whose result is lost once that has passed is
+// reported as timed out, not as a lost container.
 import {
   type DurableObjectStorageLike,
   type KillSignal,
@@ -36,19 +38,16 @@ export interface Gateway {
 /** The container backend's id: what exec runs on. */
 const CONTAINER = "container";
 
-/** Each Workspace's container backend, which the Durable Object's fetch hands computerd's connection and egress to. */
+/**
+ * By the Workspace workspaceFor returned (which may be a view of Computer's, below): its container backend, which the
+ * Durable Object's fetch hands computerd's connection and egress to, and the timeout the tools give its execs.
+ */
 const backends = new WeakMap<Workspace, ContainerBackend>();
-
-/** What every exec the tools run gets unless its caller says otherwise. */
-interface ExecDefaults {
-  timeoutMs: number;
-  env?: Record<string, string>;
-}
+const execTimeouts = new WeakMap<Workspace, number>();
+/** The tools' exec timeout for a workspace that declares none, or that workspaceFor didn't build. */
 const DEFAULT_EXEC_TIMEOUT_MS = 600_000;
 /** Where the platform puts the certificate the egress gateway's HTTPS interception presents. */
 const EGRESS_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
-/** Each Workspace's exec defaults, from its spec; a Workspace workspaceFor didn't build gets the timeout only. */
-const execDefaults = new WeakMap<Workspace, ExecDefaults>();
 
 /**
  * A Workspace in the host's SQLite for `spec`. With a container backend, `container` is the host built by Computer's
@@ -56,10 +55,23 @@ const execDefaults = new WeakMap<Workspace, ExecDefaults>();
  * container's requests come back to it. Egress is `none` unless the spec declares `registry-read`, which sends the
  * container's HTTP and HTTPS through `gateway` (default: a RegistryReadGateway).
  */
-export function workspaceFor(host: ActorHost, spec: WorkspaceSpec, options: { container?: unknown; gateway?: Gateway; binding?: string; backend?: WorkspaceRegisteredBackend } = {}): Workspace {
+export function workspaceFor(
+  host: ActorHost,
+  spec: WorkspaceSpec,
+  options: {
+    container?: unknown;
+    gateway?: Gateway;
+    binding?: string;
+    /**
+     * @internal Test seam: a command backend of the test's own (Computer's WorkspaceBackend, with id "container") in
+     * place of the container's, which needs a real container to run anything. With it, the spec's localOnly and its
+     * egress gateway don't apply, since no container is started; the exec env and timeout still do.
+     */
+    backend?: WorkspaceRegisteredBackend;
+  } = {},
+): Workspace {
   const registered: WorkspaceRegisteredBackend[] = [];
   let backend: ContainerBackend | undefined;
-  // Test seam: a backend of the test's own in place of the container's, which needs a real container to run anything.
   if (spec.backend && options.backend) registered.push(options.backend);
   else if (spec.backend) {
     const { container, binding } = options;
@@ -76,10 +88,36 @@ export function workspaceFor(host: ActorHost, spec: WorkspaceSpec, options: { co
     });
     registered.push(backend);
   }
-  const workspace = new Workspace({ storage: host.ctx.storage as unknown as DurableObjectStorageLike, git: createGitClient(), backends: registered });
+  const built = new Workspace({ storage: host.ctx.storage as unknown as DurableObjectStorageLike, git: createGitClient(), backends: registered });
+  const workspace = spec.egress === "registry-read" ? withExecEnv(built, { NODE_EXTRA_CA_CERTS: EGRESS_CA }) : built;
   if (backend) backends.set(workspace, backend);
-  execDefaults.set(workspace, { timeoutMs: spec.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS, ...(spec.egress === "registry-read" ? { env: { NODE_EXTRA_CA_CERTS: EGRESS_CA } } : {}) });
+  execTimeouts.set(workspace, spec.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS);
   return workspace;
+}
+
+/** A view of `workspace` with `runtime` in its place; everything else is read from it, its methods bound to it. */
+function withRuntime(workspace: Workspace, runtime: () => unknown): Workspace {
+  return new Proxy(workspace, {
+    get(target, prop) {
+      if (prop === "runtime") return runtime();
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+/** `workspace`, its runtime's exec giving every run `env` under the caller's own, key by key. */
+function withExecEnv(workspace: Workspace, env: Record<string, string>): Workspace {
+  return withRuntime(workspace, () => {
+    const runtime = workspace.runtime;
+    return new Proxy(runtime, {
+      get(target, prop) {
+        if (prop === "exec") return (source: string, options?: WorkspaceRuntimeExecOptions<"utf8">) => target.exec(source, { ...options, env: { ...env, ...options?.env } } as never);
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+  });
 }
 
 /**
@@ -94,8 +132,9 @@ export function workspaceFetch(workspace: Workspace, request: Request): Promise<
 /** Computer's Pi tools, and whether pi may run each again after a restart cut it off. A tool not listed is unsafe. */
 const REPLAY: Record<string, "safe" | "unsafe"> = { read: "safe", ls: "safe", find: "safe", grep: "safe", write: "safe", delete: "safe", edit: "unsafe", exec: "unsafe", publish: "unsafe" };
 
-/** Marks an exec whose container was lost, in the error Computer's exec tool turns into text. */
+/** Mark an exec whose container was lost, or whose result was lost once its timeout had passed, in the error Computer's exec tool turns into text. */
 const LOST = "[container lost] ";
+const TIMED_OUT = "[timed out] ";
 
 /**
  * Workspace tools for Pi with this plan's replay classification: read, ls, find, grep, write, delete "safe"; edit,
@@ -124,8 +163,8 @@ export function workspaceTools(workspace: Workspace, select: readonly string[]):
             return { isError: true, output: text(`${tool.name} refused: ${path} is in a .git directory, which these tools don't change. Run git through exec instead.`) };
           }
           const result = await execute({ id: api.callId, name: tool.name, arguments: args }, { abortSignal: context.abortSignal });
-          const lost = tool.name === "exec" ? lostReason(result.details) : undefined;
-          if (lost !== undefined) return { isError: true, output: text(interrupted(lost)) };
+          const failed = tool.name === "exec" ? execFailure(result.details) : undefined;
+          if (failed !== undefined) return { isError: true, output: text(failed) };
           return { output: result.content, isError: result.isError };
         },
       }),
@@ -165,13 +204,17 @@ async function inGitDir(workspace: Workspace, path: string): Promise<boolean> {
   }
   return false;
 }
-const interrupted = (reason: string) =>
-  `exec was interrupted: the container was lost before the command finished (${reason}). It may have partly run. Files written or edited before it are kept in the workspace; check what the command changes before you run it again.`;
-
-/** The reason an exec lost its container, from the result Computer's exec tool gives; undefined for any other result. */
-function lostReason(details: unknown): string | undefined {
+/** What the model is told of an exec that lost its container or timed out, from the result Computer's exec tool gives; undefined for any other result. */
+function execFailure(details: unknown): string | undefined {
   const error = (details as { error?: unknown } | null | undefined)?.error;
-  return typeof error === "string" && error.startsWith(LOST) ? error.slice(LOST.length) : undefined;
+  if (typeof error !== "string") return undefined;
+  if (error.startsWith(LOST)) {
+    return `exec was interrupted: the container was lost before the command finished (${error.slice(LOST.length)}). It may have partly run. Files written or edited before it are kept in the workspace; check what the command changes before you run it again.`;
+  }
+  if (error.startsWith(TIMED_OUT)) {
+    return `exec timed out: the command ran longer than ${Number(error.slice(TIMED_OUT.length)) / 1000} s (the workspace's execTimeoutMs) and was stopped. It may have partly run. Files written or edited before it are kept in the workspace.`;
+  }
+  return undefined;
 }
 
 /** Computer's names for a failure to reach the container (its WorkspaceTransportError), anywhere in the cause chain. */
@@ -183,39 +226,35 @@ function isTransportFailure(err: unknown): boolean {
 }
 
 /**
- * The workspace as the tools see it (exported for tests). Its exec gives each run the workspace's exec defaults, under
- * what the caller passes (the timeout, and env key by key), and marks a lost container: a start that fails to reach
- * the container, or a run whose result never arrives. The handle it returns has no event stream, so Computer's exec
- * tool waits for the result (it shows output only at the end). Runs are utf8, as that tool always asks.
+ * The workspace as the tools see it (exported for tests). Its exec gives each run the workspace's timeout unless the
+ * caller passes one, and marks a run that failed: a start that fails to reach the container, or a result that never
+ * arrives, is a lost container, unless the timeout had passed by then. How computerd ends a run that times out hasn't
+ * been seen, so that is told by the clock, not by the error. The handle it returns has no event stream, so Computer's
+ * exec tool waits for the result (it shows output only at the end). Runs are utf8, as that tool always asks.
  */
 export function toolWorkspace(workspace: Workspace): Workspace {
-  const lost = (err: unknown) => new Error(`${LOST}${err instanceof Error ? err.message : String(err)}`);
-  const defaults = execDefaults.get(workspace) ?? { timeoutMs: DEFAULT_EXEC_TIMEOUT_MS };
+  const marked = (mark: string, detail: unknown) => new Error(`${mark}${detail instanceof Error ? detail.message : String(detail)}`);
+  const timeoutMs = execTimeouts.get(workspace) ?? DEFAULT_EXEC_TIMEOUT_MS;
   const runtime: Pick<Workspace["runtime"], "backends" | "exec"> = {
     backends: () => workspace.runtime.backends(),
     exec: (async (source: string, options?: WorkspaceRuntimeExecOptions<"utf8">) => {
-      const env = defaults.env ? { ...defaults.env, ...options?.env } : options?.env;
+      const limit = options?.timeoutMs ?? timeoutMs;
       let handle: WorkspaceRuntimeExecHandle<"utf8">;
       try {
-        handle = await workspace.runtime.exec(source, { ...options, encoding: "utf8", timeoutMs: options?.timeoutMs ?? defaults.timeoutMs, ...(env ? { env } : {}) });
+        handle = await workspace.runtime.exec(source, { ...options, encoding: "utf8", timeoutMs: limit });
       } catch (err) {
-        throw isTransportFailure(err) ? lost(err) : err;
+        throw isTransportFailure(err) ? marked(LOST, err) : err;
       }
+      const started = Date.now();
       return {
         id: handle.id,
         backend: handle.backend,
         kill: (signal?: KillSignal) => handle.kill(signal),
-        result: () => handle.result().catch((err: unknown) => Promise.reject(lost(err))),
+        result: () => handle.result().catch((err: unknown) => Promise.reject(Date.now() - started >= limit ? marked(TIMED_OUT, limit) : marked(LOST, err))),
       };
     }) as Workspace["runtime"]["exec"],
   };
-  return new Proxy(workspace, {
-    get(target, prop) {
-      if (prop === "runtime") return runtime;
-      const value: unknown = Reflect.get(target, prop, target);
-      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
-    },
-  });
+  return withRuntime(workspace, () => runtime);
 }
 
 /** The registries a registry-read workspace may read from. */

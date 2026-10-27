@@ -2109,3 +2109,64 @@ it("[workspace-container-lost-mid-command] the lost-container shape spike 2 saw:
   expect(await builder("held-lost").failures()).toEqual([]);
   expect(await builder("held-lost").readFile(path)).toBe("v1\n");
 });
+
+it("[workspace-egress-ca] an exec the app runs itself on a workspace from workspaceFor gets the CA too, under its own env; the timeout stays the tools'", async () => {
+  await runInDurableObject(scribe("ws-ca-direct"), async (instance: Scribe, state) => {
+    const host = { lifecycle: instance.lifecycle, ctx: state, env };
+    const on = (egress: "none" | "registry-read") => {
+      const held = new HeldBackend();
+      return { held, workspace: workspaceFor(host, computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"], egress }), { backend: held }) };
+    };
+    const direct = async ({ workspace, held }: ReturnType<typeof on>, options: { env?: Record<string, string> }) => {
+      const before = held.runs.length;
+      const handle = workspace.runtime.exec("npm ci", { encoding: "utf8", ...options });
+      await eventually(async () => expect(held.runs).toHaveLength(before + 1));
+      held.runs.at(-1)!.exit(0, "ok\n");
+      expect((await (await handle).result()).exitCode).toBe(0);
+      return held.runs.at(-1)!;
+    };
+    const read = on("registry-read");
+    const plain = await direct(read, {});
+    expect(plain.env).toEqual({ NODE_EXTRA_CA_CERTS: CA });
+    expect(plain.timeoutMs).toBeUndefined();
+    expect((await direct(read, { env: { NODE_EXTRA_CA_CERTS: "/mine.pem", A: "1" } })).env).toEqual({ NODE_EXTRA_CA_CERTS: "/mine.pem", A: "1" });
+    const none = on("none");
+    expect((await direct(none, { env: { A: "1" } })).env).toEqual({ A: "1" });
+    expect((await direct(none, {})).env).toBeUndefined();
+  });
+});
+
+it("[workspace-exec-timed-out] a run whose result is lost once its timeout has passed is reported as timed out; one lost sooner is a lost container", async () => {
+  await runInDurableObject(scribe("ws-timed-out"), async (instance: Scribe, state) => {
+    const host = { lifecycle: instance.lifecycle, ctx: state, env };
+    const on = (execTimeoutMs: number) => {
+      const held = new HeldBackend();
+      return { held, tools: workspaceTools(workspaceFor(host, computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"], execTimeoutMs }), { backend: held }), ["workspace.exec"]) };
+    };
+    const lost = new Error("RPC session was shut down");
+    // Past its 50 ms: however the run's end is reported, it ran too long.
+    const slow = on(50);
+    const timedOut = toolCall(slow.tools, "exec", { command: "npm test" }, "c1");
+    await eventually(async () => expect(slow.held.runs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 80));
+    slow.held.runs[0]!.lose(lost);
+    const late = await timedOut;
+    expect(late.isError).toBe(true);
+    expect(outputText(late)).toBe("exec timed out: the command ran longer than 0.05 s (the workspace's execTimeoutMs) and was stopped. It may have partly run. Files written or edited before it are kept in the workspace.");
+    // Well inside its 60 s: the container was lost.
+    const quick = on(60_000);
+    const cut = toolCall(quick.tools, "exec", { command: "npm test" }, "c2");
+    await eventually(async () => expect(quick.held.runs).toHaveLength(1));
+    quick.held.runs[0]!.lose(lost);
+    expect(outputText(await cut)).toMatch(/^exec was interrupted: the container was lost before the command finished \(RPC session was shut down\)\./);
+    // A run that ends, after its timeout or not, whatever its exit code, keeps Computer's own text.
+    const ended = on(50);
+    const exited = toolCall(ended.tools, "exec", { command: "npm test" }, "c3");
+    await eventually(async () => expect(ended.held.runs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 80));
+    ended.held.runs[0]!.exit(124, "terminated\n");
+    const text = outputText(await exited);
+    expect(text).toContain("terminated");
+    expect(text).not.toMatch(/timed out|interrupted/);
+  });
+});
