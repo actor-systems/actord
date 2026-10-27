@@ -247,7 +247,8 @@ export const checks = [
   },
   command("g2.contract.types", "G2", "Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors", "npx --no-install tsc -p tsconfig.contract.json", { cwd: "packages/toolkit" }),
   command("g2.fixtures.typecheck", "G2", "tsc passes on valid fixtures and fails where negative fixtures expect it", "node scripts/typecheck-fixtures.mjs"),
-  command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes", "npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts", { cwd: "packages/toolkit" }),
+  // Built first, so the shipped CLI and the bundles the isolation test scans are this tree's, however verify was run (--only included).
+  command("g2.cli.model", "G2", "Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes; agent check rules; agent libraries only in dist/agents.mjs", "npm run --silent build && npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts test/agents-model.test.ts test/bundle-isolation.test.ts", { cwd: "packages/toolkit" }),
   command("g2.negative.unchanged", "G2", "No file under fixtures/negative differs from the last commit", "git diff --exit-code --stat HEAD -- fixtures/negative && test -z \"$(git status --porcelain -- fixtures/negative)\""),
   command("g3.radar.typecheck", "G3", "Release Radar typechecks (wrangler types + tsc)", "npm run --silent typecheck -w release-radar"),
   command("g3.radar.check", "G3", "actord check passes on Release Radar (declaration, config, exports, manifest)", "node ../../plugins/claude/dist/actord.mjs check", { cwd: "examples/release-radar" }),
