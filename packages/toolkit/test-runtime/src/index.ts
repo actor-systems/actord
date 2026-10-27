@@ -2,9 +2,14 @@
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents/lifecycle";
 import { z } from "zod";
+import { agentExhausted, agentFailed } from "../../src/agents/index.ts";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
-import { defineSystem, inboundEmail, message, webhook } from "../../src/system.ts";
+import { computer, containerBackend, defineSystem, inboundEmail, message, pi, webhook } from "../../src/system.ts";
 import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
+
+export { Builder, Scribe } from "./agent.ts";
+// The container's egress and its computerd connection reach Builder through this entrypoint (ctx.exports).
+export { WorkspaceProxy } from "../../src/agents/index.ts";
 
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
@@ -12,6 +17,7 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
+    "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional(), at: z.enum(["infinity", "nan", "negative"]).optional() }) }),
@@ -26,6 +32,19 @@ export const system = defineSystem({
     "probe.approve": message({ version: 1, description: "A person approves a parked effect", payload: z.object({ key: z.string(), by: z.string() }) }),
     "probe.deny": message({ version: 1, description: "A person denies a parked effect", payload: z.object({ key: z.string(), by: z.string(), effect: z.enum(["gateway.approval", "gateway.job-approval"]).optional() }) }),
     "approval.decided": message({ version: 1, description: "A person answered an approval request", payload: approvalDecided }),
+    // Scribe, the agent actor (agent.ts). From @ingress, scribe.tick with delayMs sets a timer that delivers it again from @timer, without.
+    "scribe.tick": message({ version: 1, description: "Set a timer, or a timer fired", payload: z.object({ key: z.string(), delayMs: z.number().optional() }) }),
+    "scribe.task": message({ version: 1, description: "Start a session on a task", payload: z.object({ topic: z.string() }) }),
+    "scribe.hint": message({ version: 1, description: "Steer the running session", payload: z.object({ text: z.string() }) }),
+    "scribe.halt": message({ version: 1, description: "Stop the running session", payload: z.object({}) }),
+    // The refinement is beyond JSON Schema, so pi lets a blank summary through to finish, which the schema refuses.
+    "scribe.done": message({ version: 1, description: "The session's result", payload: z.object({ summary: z.string().refine((s) => s.trim() !== "", "summary must not be blank") }) }),
+    "agent.failed": message({ version: 1, description: "A session ended without a result", payload: agentFailed }),
+    "agent.exhausted": message({ version: 1, description: "A session ran out of budget", payload: agentExhausted }),
+    "scribe.noted": message({ version: 1, description: "A note effect's outcome", payload: Outcome }),
+    // Builder, the agent actor with a workspace (agent.ts).
+    "builder.task": message({ version: 1, description: "Start a session that changes files and runs a command", payload: z.object({ topic: z.string() }) }),
+    "builder.done": message({ version: 1, description: "The session's result", payload: z.object({ summary: z.string() }) }),
   },
   sources: {
     hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
@@ -44,6 +63,32 @@ export const system = defineSystem({
         { cron: "0 9 * * *", message: "probe.tick.daily" },
       ],
     },
+    Scribe: {
+      binding: "SCRIBE",
+      kind: "agent",
+      purpose: "Writes up a task as a Pi agent, beside actord in one Durable Object",
+      justification: ["state", "lifecycle"],
+      harness: pi(),
+      model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", reasoning: "high" },
+      on: { "scribe.task": "start", "scribe.hint": "steer", "scribe.halt": "stop" },
+      returns: "scribe.done",
+      budget: { usd: 1, turns: 10, wallClock: "10m" },
+      // note.hidden is an effect Scribe may request but not a tool: the model is never offered it.
+      effects: ["note.keyed", "note.plain", "note.approved", "note.silent", "note.hidden"],
+      tools: ["note.keyed", "note.plain", "note.approved", "note.silent"],
+    },
+    Builder: {
+      binding: "BUILDER",
+      kind: "agent",
+      purpose: "Changes files and runs commands in a Computer workspace, as a Pi agent",
+      justification: ["state", "lifecycle"],
+      harness: pi({ workspace: computer({ backend: containerBackend({ image: "./Dockerfile", instance: "standard-2" }), localOnly: ["**/node_modules", "/dist"], egress: "registry-read" }) }),
+      model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", reasoning: "high" },
+      on: { "builder.task": "start" },
+      returns: "builder.done",
+      budget: { usd: 1, turns: 10, wallClock: "10m" },
+      tools: ["workspace.*"],
+    },
   },
   effects: {
     "gateway.reconcilable": { description: "No key, but outcomes can be looked up", idempotency: "none", reconcile: true, result: "probe.outcome" },
@@ -55,11 +100,19 @@ export const system = defineSystem({
     "gateway.job": { description: "Long work, settled later", kind: "job", idempotency: "key", deadline: "1h", probe: { every: "1m" }, completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-plain": { description: "Long work whose start can't be retried", kind: "job", idempotency: "none", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-approval": { description: "Long work a person must approve first", kind: "job", idempotency: "key", approval: "human", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
+    // Scribe's tools (agent.ts registers recording adapters; tests override them to hang or fail).
+    "note.keyed": { description: "Write a note; a retry with the same key writes it once", idempotency: "key", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    "note.plain": { description: "Write a note; a retry may write it twice", idempotency: "none", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    "note.approved": { description: "Write a note a person must approve first", idempotency: "key", approval: "human", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    // No result message: only the session's probe can bring its outcome back to the session.
+    "note.silent": { description: "Write a note a person must approve first, with no result message", idempotency: "key", approval: "human", input: z.object({ text: z.string() }) },
+    "note.hidden": { description: "Write a note no tool offers", idempotency: "key", input: z.object({ text: z.string() }) },
     // Tests install approvalEmail with a fake send binding (overrideEffect); none is registered here.
     "notify.approval": { description: "Email the owner that an approval is waiting", idempotency: "none" },
   },
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
+    { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
     { from: "@ingress", message: "probe.timer.set", to: "Probe" },
@@ -74,6 +127,21 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.approve", to: "Probe" },
     { from: "@ingress", message: "probe.deny", to: "Probe" },
     { from: "@mail", message: "approval.decided", to: "Probe" },
+    { from: "@ingress", message: "scribe.tick", to: "Scribe" },
+    { from: "@timer", message: "scribe.tick", to: "Scribe" },
+    { from: "@ingress", message: "scribe.task", to: "Scribe" },
+    { from: "@ingress", message: "scribe.hint", to: "Scribe" },
+    { from: "@ingress", message: "scribe.halt", to: "Scribe" },
+    { from: "Scribe", message: "scribe.done", to: "Scribe" },
+    // A second receiver of Scribe's returns message, as an app that forwards results would have: the result still goes to Scribe.
+    { from: "Scribe", message: "scribe.done", to: "Probe" },
+    { from: "Scribe", message: "agent.failed", to: "Scribe" },
+    { from: "Scribe", message: "agent.exhausted", to: "Scribe" },
+    { from: "Scribe", message: "scribe.noted", to: "Scribe" },
+    { from: "@ingress", message: "builder.task", to: "Builder" },
+    { from: "Builder", message: "builder.done", to: "Builder" },
+    { from: "Builder", message: "agent.failed", to: "Builder" },
+    { from: "Builder", message: "agent.exhausted", to: "Builder" },
   ],
 });
 
@@ -111,6 +179,11 @@ export class Probe extends DurableObject<Env> {
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
+    // requestEffect is for code outside handlers. `after` calls it once the handler has awaited something.
+    "probe.nested": async ({ payload }) => {
+      if (payload.after) await Promise.resolve();
+      await this.actor.requestEffect("gateway.keyed", { key: payload.key }, { key: payload.key });
+    },
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });
     },
@@ -177,6 +250,10 @@ export class Probe extends DurableObject<Env> {
     "probe.deny": ({ payload }, ctx) => {
       const ok = ctx.deny(payload.effect ?? "gateway.approval", payload.key, "not today", { by: payload.by });
       ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.key, ok ? 1 : 0);
+    },
+    // Scribe's returns message has a route here too ([agent-returns-second-route]); the agent runtime never uses it.
+    "scribe.done": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `scribe.done:${payload.summary}`);
     },
     "approval.decided": ({ payload }, ctx) => {
       const ok = applyDecision(ctx, payload);

@@ -22,6 +22,8 @@ export interface DoctorData {
   summary: Record<FindingStatus, number>;
 }
 
+// The CLI's own floor: Node loads system.ts natively from 22.18. The package declares >=22.19, for the Pi packages
+// agent actors run on, and the fix below names that (spike 3, docs/evidence/spike-3-agents-in-workerd.md).
 const NODE_FLOOR = [22, 18, 0];
 const MODS_FLOOR = "2.1.287";
 const EVAL_FLOOR = "2.1.269";
@@ -38,7 +40,7 @@ export function doctor(cwd: string, env: NodeJS.ProcessEnv = process.env): Comma
           id: "node",
           status: "error",
           message: `Node.js ${process.versions.node} is older than 22.18, which loads system.ts natively`,
-          fix: "Install Node.js 22.18 or later (24 LTS recommended).",
+          fix: "Install Node.js 22.19 or later, the floor @actord/toolkit declares (24 LTS recommended).",
         },
   );
 

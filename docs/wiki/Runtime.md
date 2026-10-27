@@ -18,6 +18,13 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A webhook delivery is verified and delivered once | The HMAC of the raw body is checked first, in constant time. The provider's delivery id is the envelope id, so a redelivery is `duplicate`. Bad signature `401`, unmapped event `204`, invalid `400`, failed `500`; each refusal is a `source.*` event. Decision 0017 |
 | An email reply approves only for the owner, by plain code | In order: envelope sender and header `From` are the owner's (else no reply); no `dmarc=fail`; with `authserv` set, authenticated as `"pass"` (else no reply); not an auto-reply; one `Subject` and at most one `Message-ID`; then a valid, unexpired subject token and a first line of `approve` or `deny`. With authentication `unknown`, an effect declared `publishes: true` can't be approved by email. Every answer that gets this far is acknowledged by reply. Decision 0021 |
 | One notification per parked approval | The `approvals.notify` effect is queued with the row id `fx:<notify>:approval:<effect>:<effectKey>`, so parking again sends nothing new. If it fails, the effect stays parked and still expires |
+| An agent session starts once per start message, and settles once, as the actor's `returns` message, `agent.failed` or `agent.exhausted` | The session is the internal job effect `agent.session`, keyed by the start message's id, which is also Pi's `operationId`. The model calls `finish` with the `returns` payload, and the job's probe settles it: at once when `finish` asks, otherwise every 30 s. A start while a session runs replaces it, and the replaced session's result is only a note. Decision 0019 |
+| A session stops within two model requests of its `usd` (the one that crosses it, and one in flight), within one response of its `turns`, and at its `wallClock` | A watcher of Pi's events aborts the session from outside its run; a request's cost is known only when it ends. A timer and every probe check `wallClock`. The job's deadline is `wallClock` plus 10 minutes; past it the job is `in_doubt`, and the session is aborted. Decision 0019 |
+| A tool call is one effect request, and an unkeyed one never runs twice | The request is keyed `<session>:<callId>`, which Pi keeps across a restart. A keyed effect's rerun finds its row; any other is reported to the model as interrupted, and recorded `in_doubt`. Decision 0019 |
+| A tool that needs approval answers at once, and its result reaches the session later, or is a note once the session ended | The tool answers "waiting". The result is steered in as a user message, and the probe steers in a denial, which sends no result message. A stop or a replacement denies the session's open approvals. Decision 0019 |
+| A running session keeps the instructions it started with | The text is stored on the session row when it starts. Decision 0019 |
+| A workspace's edits outlive its container and restarts, and local-only paths never reach the object | Computer's `Workspace` in the object's SQLite; `localOnly` is Computer's `ignore`. A command cut off by a lost container is reported as one that "may have partly run", and never run again by itself. Decision 0022 |
+| A push authenticates from the Durable Object, and the token never enters the container | `gitPushEffect`: the app's pinned `https` URL, Basic `x-access-token`, a token minted for each attempt and scrubbed from errors, and `factory/` branches only by default. Decision 0022 |
 
 **Effect keys.** An effect key identifies one effect for the actor's lifetime. Requesting it again records `effect.duplicate` and runs nothing. A new attempt at the same logical work needs a new key, for example one that includes an attempt or generation number.
 
@@ -56,3 +63,51 @@ a route sender (`@github`), and routes deliver its messages like any other. Acto
 
 Not guaranteed: GitHub signs only the body, so a captured delivery replayed under a new `X-GitHub-Delivery` is
 treated as a new event. Keep the secret, use HTTPS, and keep handlers idempotent on business keys.
+
+## Agent actors
+
+An actor declared `kind: "agent"` runs a Pi session in its own Durable Object (decision 0019), with an optional
+Computer workspace (decision 0022). Import from `@actord/toolkit/agents`, the only entry point that loads Pi or
+Computer.
+
+- **The declaration.** `harness: pi({ workspace })`, `model: { id, reasoning }`, `instructions` (a file next to
+  `system.ts`), `tools`, `on`, `returns` and `budget: { usd, turns, wallClock }`.
+  - `tools` lists `workspace.*` or `workspace.<name>`, and effects in the actor's `effects`. Each effect tool needs
+    `input`, a Standard Schema, which the model is shown as the tool's parameters.
+  - `on` maps a message to `"start"`, `"steer"` or `"stop"`.
+  - Routes deliver each `on` message to the actor, and `returns`, `agent.failed` and `agent.exhausted` from the actor
+    to itself. Declare the last two with the exported schemas `agentFailed` and `agentExhausted`.
+- **The class.** `agentRuntime(host, system, actor, handlers, options)`. `handlers` cover every message except the
+  `on` messages, which drive sessions; a handler for a tool effect's result message is optional.
+  - `options.instructions` is the instructions text, imported as a wrangler Text module.
+  - `options.transcripts` is an R2 bucket. Each session's messages are written to
+    `transcripts/<actor>/<key>/<session>.json` when it ends.
+  - `options.render` turns an `on` message into a prompt. The default is the type, then the payload as indented JSON.
+  - The Worker needs the Workers AI binding, `AI`.
+- **A container workspace.** `computer({ backend: containerBackend({ image }), localOnly, egress, execTimeoutMs })`.
+  - The class extends Computer's `withWorkspaceContainer(...)` and passes `container: this` to `agentRuntime`.
+  - Its `fetch` returns `this.actor.fetch(request)`.
+  - **The Worker must export `WorkspaceProxy`** (re-exported by `@actord/toolkit/agents`). The container's computerd
+    connection and its egress reach the object through it.
+  - Wrangler's `containers` needs an entry for the class with `scheduling_policy: "durable_object"` and `images`.
+  - `localOnly` is required; `["**/node_modules"]` is the usual choice. `egress` is `"none"` unless it is
+    `"registry-read"`: `GET` and `HEAD` to the npm and Yarn registries. Each exec the tools run is given
+    `execTimeoutMs`, 10 minutes by default, as its timeout. A command outrunning it has never been observed live.
+- **Git.** `gitClone(workspace, { url, dir, token })` clones on the object's side. `gitPushEffect({ workspace, dir,
+  url, token, allow })` is the adapter for a push effect; declare it `idempotency: "key"`. `allow` defaults to any
+  `factory/` branch: bind it to the instance's own branch.
+- **Testing.** `scriptedModel(...)` in `options.model` replaces Workers AI with a script, and reports the tokens and
+  cost the script gives it. It ships in the agents bundle as a test seam, not for production. Containers don't run
+  under Cloudflare's Vitest integration, so container tests use a stub of `ctx.container`.
+- **Checks.** `actord check` reports an agent without `harness`, `model`, `returns` or a complete `budget`; an `on`
+  message with no route to it; a missing self-route; a tool that isn't a listed effect or lacks `input`; workspace
+  tools without a workspace; a container workspace without `localOnly`, with an invalid pattern or timeout, or
+  without wrangler's container entry; a missing instructions file; and a declared `agent.session` or
+  `agent.session.*` name. It warns when `workspace.exec` has no container to run on, and when an approval-gated tool
+  effect has no `result` message. Each has an `AGENT_*` code, except a missing budget (`ACTOR_BUDGET_MISSING`).
+
+Not guaranteed: `budget.usd` for a model pi-ai doesn't price (its cost is 0), or a pause in `wallClock` while a tool
+waits for a person. A session's `usd` counts the model cost pi-ai reports, not container seconds, so the factory
+counts container time itself. For every actor, a handler that yields to the event loop (awaits I/O or a timer) puts
+the rows other writers add meanwhile at risk: they join its transaction, and roll back if it throws (#80). Until #80
+lands, handlers must not await I/O. [Limitations](Limitations) has the rest.

@@ -260,7 +260,7 @@ function doctor(cwd, env = process.env) {
       id: "node",
       status: "error",
       message: `Node.js ${process.versions.node} is older than 22.18, which loads system.ts natively`,
-      fix: "Install Node.js 22.18 or later (24 LTS recommended)."
+      fix: "Install Node.js 22.19 or later, the floor @actord/toolkit declares (24 LTS recommended)."
     }
   );
   const source = env.ACTORD_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORD_LAUNCHER === "project-pin" ? "project pin" : "direct";
@@ -448,10 +448,28 @@ function outcomeOf(evs) {
   return "unknown";
 }
 var OUTCOME_MARK = { handled: "\u2713", duplicate: "\u2261", rejected: "\u2717", failed: "\u2717", undeliverable: "\u2717", "retry.exhausted": "\u2717", "in-flight": "\u2026", unknown: "?" };
+function agentOf(evs) {
+  const usageOf = (e) => e?.detail?.usage ?? null;
+  const ended = evs.find((e) => e.kind === "agent.ended");
+  const turns = evs.filter((e) => e.kind === "agent.turn");
+  const tools = {};
+  for (const e of evs) if (e.kind === "agent.tool") tools[String(e.detail?.tool)] = (tools[String(e.detail?.tool)] ?? 0) + 1;
+  const session = evs.find((e) => typeof e.detail?.session === "string")?.detail?.session;
+  return {
+    session: typeof session === "string" ? session : null,
+    turns: Math.max(0, ...turns.map((e) => Number(e.detail?.turn) || 0), Number(ended?.detail?.turns) || 0),
+    tools,
+    usage: usageOf(ended) ?? usageOf(turns.at(-1)),
+    outcome: typeof ended?.detail?.outcome === "string" ? ended.detail.outcome : null,
+    reason: ended?.reason ?? null,
+    transcript: typeof ended?.detail?.transcript === "string" ? ended.detail.transcript : null
+  };
+}
 function buildTrace(log, id2) {
   const byMessage = /* @__PURE__ */ new Map();
   const children = /* @__PURE__ */ new Map();
   const effectsBy = /* @__PURE__ */ new Map();
+  const agentBy = /* @__PURE__ */ new Map();
   for (const e of log.events) {
     if (e.messageId && e.kind !== "scheduled" && !(e.kind.startsWith("effect.") && !e.messageId)) {
       byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
@@ -460,6 +478,10 @@ function buildTrace(log, id2) {
     if (e.effect && e.effectKey && (e.kind.startsWith("effect.") || e.kind.startsWith("job."))) {
       const k = `${e.effect}:${e.effectKey}`;
       effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
+    }
+    if (e.kind.startsWith("agent.") && e.effect && e.effectKey) {
+      const k = `${e.effect}:${e.effectKey}`;
+      agentBy.set(k, [...agentBy.get(k) ?? [], e]);
     }
     if (e.kind === "retry.scheduled" && e.effect && e.effectKey) {
       const k = `${e.effect}:${e.effectKey}`;
@@ -510,6 +532,7 @@ function buildTrace(log, id2) {
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
         result: rid && !visited.has(rid) ? node(rid) : null,
+        ...agentBy.has(k) ? { agent: agentOf(agentBy.get(k)) } : {},
         ...started ? {
           job: {
             handle: started.detail?.handle ?? null,
@@ -556,6 +579,17 @@ function formatWait(ms) {
   const m = Math.floor(s / 60);
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
+function renderAgent(a, key) {
+  const tools = Object.entries(a.tools).map(([tool, n]) => `${tool} \xD7 ${n}`);
+  const parts = [
+    `${a.turns} turn${a.turns === 1 ? "" : "s"}`,
+    ...tools.length ? [tools.join(", ")] : ["no tool calls"],
+    ...a.usage ? [`${a.usage.inputTokens} in / ${a.usage.outputTokens} out \xB7 $${a.usage.costUsd.toFixed(4)}`] : [],
+    a.outcome ? `${a.outcome}${a.reason ? ` (${a.reason})` : ""}` : "still running",
+    ...a.transcript ? [`transcript ${a.transcript}`] : []
+  ];
+  return `agent.session ${key}: ${parts.join(" \xB7 ")}`;
+}
 function renderTrace(t, source) {
   if (!t.found || !t.root) {
     return `unknown: no recorded event has id ${t.target}.
@@ -592,6 +626,7 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
           const waited = e.job.waitedMs !== null ? ` after ${formatWait(e.job.waitedMs)}` : "";
           lines.push(`${inner}${isLast ? "   " : "\u2502  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}${waited}` : "not settled yet"}`);
         }
+        if (e.agent) lines.push(`${inner}${isLast ? "   " : "\u2502  "}  ${renderAgent(e.agent, e.key)}`);
         if (e.result) walk(e.result, inner + (isLast ? "   " : "\u2502  "), true, false);
       }
     });
@@ -1114,7 +1149,20 @@ function normalize(system) {
       message: s.message
     })),
     effects: [...a.effects ?? []].sort(),
-    budget: a.budget ? { maxAttempts: a.budget.maxAttempts, timeoutMs: a.budget.timeoutMs, maxTokens: a.budget.maxTokens ?? null } : null,
+    budget: a.budget ? {
+      maxAttempts: a.budget.maxAttempts ?? null,
+      timeoutMs: a.budget.timeoutMs ?? null,
+      maxTokens: a.budget.maxTokens ?? null,
+      ...a.budget.usd !== void 0 ? { usd: a.budget.usd } : {},
+      ...a.budget.turns !== void 0 ? { turns: a.budget.turns } : {},
+      ...a.budget.wallClock !== void 0 ? { wallClock: a.budget.wallClock } : {}
+    } : null,
+    ...a.harness ? { harness: JSON.parse(JSON.stringify(a.harness)) } : {},
+    ...a.model ? { model: { id: a.model.id, ...a.model.reasoning ? { reasoning: a.model.reasoning } : {} } } : {},
+    ...a.instructions !== void 0 ? { instructions: a.instructions } : {},
+    ...a.tools ? { tools: [...a.tools].sort() } : {},
+    ...a.on ? { on: { ...a.on } } : {},
+    ...a.returns !== void 0 ? { returns: a.returns } : {},
     receives: [...new Set(routes.filter((r) => r.to === name).map((r) => r.message))].sort(),
     sends: [...new Set(routes.filter((r) => r.from === name).map((r) => r.message))].sort()
   })).sort(byName);
@@ -1132,7 +1180,8 @@ function normalize(system) {
     deadline: e.deadline ?? null,
     probe: e.probe ? { every: e.probe.every } : null,
     completes: e.completes ? { message: e.completes.message } : null,
-    ...e.publishes === true ? { publishes: true } : {}
+    ...e.publishes === true ? { publishes: true } : {},
+    ...e.input ? { input: jsonSchemaOf(e.input) } : {}
   })).sort(byName);
   const sources = Object.entries(system.sources ?? {}).map(
     ([name, src]) => src.kind === "webhook" ? {
@@ -1184,6 +1233,55 @@ var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 var FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
 var RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
+var reservedAgentName = (name) => name === "agent.session" || name.startsWith("agent.session.");
+function localOnlyInvalid(pattern) {
+  return !(pattern.startsWith("/") || pattern.startsWith("**/")) || /[{}[\]?\\,]/.test(pattern) || /\*{3,}/.test(pattern);
+}
+function checkAgent(project, m, a, add) {
+  if (!a.harness) add("error", "AGENT_HARNESS_MISSING", a.name, `${a.name} is an agent but declares no harness`, "Add harness: pi({ workspace: computer() }).");
+  if (!a.model) add("error", "AGENT_MODEL_MISSING", a.name, `${a.name} is an agent but declares no model`, 'Add model: { id: "claude-opus-5-5" }.');
+  if (!a.returns) add("error", "AGENT_RETURNS_MISSING", a.name, `${a.name} is an agent but declares no returns message`, "Add returns: the message its final answer is delivered as.");
+  const b = a.budget;
+  if (b && (b.usd === void 0 || b.turns === void 0 || b.wallClock === void 0))
+    add("error", "AGENT_BUDGET_INCOMPLETE", a.name, `${a.name} is an agent whose budget lacks ${["usd", "turns", "wallClock"].filter((f) => b[f] === void 0).join(", ")}`, "An agent budget needs usd, turns and wallClock.");
+  const routedTo = (message) => m.routes.some((r) => r.message === message && r.to === a.name);
+  const selfRouted = (message) => m.routes.some((r) => r.message === message && r.from === a.name && r.to === a.name);
+  for (const message of Object.keys(a.on ?? {}))
+    if (!routedTo(message)) add("error", "AGENT_ON_UNROUTED", `${a.name} \u2190 ${message}`, `${a.name} reacts to ${message}, but no route delivers it to ${a.name}`, `Add a route that delivers ${message} to ${a.name}.`);
+  for (const message of [...a.returns ? [a.returns] : [], "agent.failed", "agent.exhausted"])
+    if (!selfRouted(message)) add("error", "AGENT_SELF_ROUTE_MISSING", `${a.name} \u2192 ${message}`, `${a.name} is told ${message} by its own session, but no route delivers it from ${a.name} to itself`, `Add { from: "${a.name}", message: "${message}", to: "${a.name}" }.`);
+  const effects = new Map(m.effects.map((e) => [e.name, e]));
+  const workspace = a.harness?.workspace;
+  for (const t of a.tools ?? []) {
+    if (t.startsWith("workspace.")) {
+      if (!workspace) add("error", "AGENT_WORKSPACE_TOOLS_WITHOUT_WORKSPACE", `${a.name} \u2192 ${t}`, `${a.name} lists ${t}, but its harness has no workspace`, "Add workspace: computer() to the harness, or remove the tool.");
+      continue;
+    }
+    if (!a.effects.includes(t) || !effects.has(t)) add("error", "AGENT_TOOL_UNDECLARED", `${a.name} \u2192 ${t}`, `${a.name} lists tool "${t}", which is neither workspace.* nor an effect in its effects`, `Declare ${t} under effects and list it in ${a.name}'s effects, or remove the tool.`);
+    else if (effects.get(t).input === void 0) add("error", "AGENT_TOOL_INPUT_MISSING", `${a.name} \u2192 ${t}`, `${t} is a tool of ${a.name} but declares no input, so the agent can't be told its parameters`, "Add input: a schema of the tool's parameters.");
+    else if (effects.get(t).approval === "human" && effects.get(t).result === null)
+      add("warning", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} \u2192 ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome from the job's probe, up to a probe period after it settles`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
+  }
+  if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
+    add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, 'Add backend: containerBackend({ image }) and localOnly: ["**/node_modules"] to the workspace.');
+  if (workspace?.backend && workspace.localOnly === void 0)
+    add("error", "AGENT_LOCAL_ONLY_MISSING", `${a.name} workspace`, "a workspace with a container backend must declare localOnly: without it, node_modules syncs into the Durable Object (spike 2: npm ci 7.8x slower, 405 MB in the object)", 'Add localOnly: ["**/node_modules"], or localOnly: [] to sync everything.');
+  const declared = project.system?.actors[a.name]?.harness?.workspace;
+  const timeout = declared ? declared.execTimeoutMs : workspace?.execTimeoutMs;
+  if (timeout !== void 0 && !(Number.isInteger(timeout) && timeout > 0))
+    add("error", "AGENT_EXEC_TIMEOUT_INVALID", `${a.name} execTimeoutMs ${String(timeout)}`, `execTimeoutMs ${String(timeout)} isn't a positive whole number of milliseconds, so no command could be given it as a timeout`, "Write it as a whole number of milliseconds, such as 600000 for 10 minutes.");
+  for (const pattern of workspace?.localOnly ?? [])
+    if (localOnlyInvalid(pattern)) add("error", "AGENT_LOCAL_ONLY_INVALID", `${a.name} localOnly ${pattern}`, `localOnly pattern "${pattern}" would be rejected by Computer: it must start with "/" or "**/", use only * and **, and avoid {}[]?\\,`, 'Write it as "/dir" or "**/*.log".');
+  if (workspace?.backend) {
+    const entry = project.config?.containers?.find((c) => c.class_name === a.name);
+    const file = project.configFile ?? "wrangler.jsonc";
+    const wrong = !entry || entry.scheduling_policy !== "durable_object" ? `has no containers entry for class ${a.name} with scheduling_policy "durable_object"` : entry.image !== void 0 ? `gives class ${a.name}'s container "image", which wrangler rejects for scheduling_policy "durable_object"` : entry.images === void 0 ? `gives class ${a.name}'s container no "images"` : null;
+    if (wrong)
+      add("error", "AGENT_CONTAINER_CONFIG_MISSING", a.name, `${a.name} runs commands in a container, but ${file} ${wrong}`, `Add containers: [{ "class_name": "${a.name}", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "${workspace.backend.image}" } } }] (wrangler rejects "image" for a container the Durable Object schedules).`);
+  }
+  if (a.instructions !== void 0 && !existsSync5(join4(project.root, a.instructions)))
+    add("error", "AGENT_INSTRUCTIONS_MISSING", a.name, `${a.name}'s instructions file ${a.instructions} doesn't exist next to system.ts`, `Create ${a.instructions}, or fix the path.`);
+}
 function checkProject(project) {
   const out = [];
   const add = (severity, code, subject, message, fix = null) => out.push({ code, severity, subject, message, fix });
@@ -1202,10 +1300,19 @@ function checkProject(project) {
     if (a.justification.length === 0)
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
-      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
-    for (const [field, v] of Object.entries(a.budget ?? {}))
-      if (v !== null && (!Number.isInteger(v) || v < 1))
+      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, a.kind === "agent" ? 'Add budget: { usd, turns, wallClock } (such as { usd: 5, turns: 40, wallClock: "30m" }) so each session is bounded.' : "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+    for (const [field, v] of Object.entries(a.budget ?? {})) {
+      if (v === null) continue;
+      if (field === "usd") {
+        if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.usd ${String(v)}, which isn't a positive finite number`, "Use a positive number of US dollars, such as 5.");
+      } else if (field === "wallClock") {
+        if (typeof v !== "string" || durationMs(v) === null) add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.wallClock ${String(v)}, which isn't a duration like 30m`, 'Use a duration such as "30m" or "2h".');
+      } else if (!Number.isInteger(v) || v < 1)
         add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.${field} ${String(v)}, which isn't a positive whole number`, "Use a positive integer.");
+    }
+    if (a.kind === "model-assisted" && a.budget && (a.budget.maxAttempts === null || a.budget.timeoutMs === null))
+      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is model-assisted but its budget lacks maxAttempts or timeoutMs`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+    if (a.kind === "agent") checkAgent(project, m, a, add);
     const scheduled = /* @__PURE__ */ new Set();
     for (const s of a.schedules) {
       if (s.cron !== null && !cronParses(s.cron)) add("error", "SCHEDULE_INVALID", a.name, `schedule cron "${s.cron}" isn't a valid cron expression like 0 9 * * *`);
@@ -1220,6 +1327,10 @@ function checkProject(project) {
     if (a.receives.length === 0)
       add("warning", "ACTOR_UNREACHABLE", a.name, `No route delivers anything to ${a.name}, so nothing can ever activate it`);
   }
+  for (const msg of m.messages)
+    if (reservedAgentName(msg.name)) add("error", "AGENT_NAME_RESERVED", msg.name, `${msg.name} is reserved for the agent runtime and can't be declared as a message`, "Rename it.");
+  for (const e of m.effects)
+    if (reservedAgentName(e.name)) add("error", "AGENT_NAME_RESERVED", e.name, `${e.name} is reserved for the agent runtime and can't be declared as an effect`, "Rename it.");
   const bindings = /* @__PURE__ */ new Map();
   for (const a of m.actors) bindings.set(a.binding, [...bindings.get(a.binding) ?? [], a.name]);
   for (const [b, names] of bindings) if (names.length > 1) add("error", "BINDING_DUPLICATE", b, `Binding ${b} is used by ${names.join(" and ")}`);
@@ -1500,9 +1611,49 @@ function diffActor(b, h, add) {
   }
   for (const e of h.effects.filter((e2) => !b.effects.includes(e2))) add("actor.effect.added", `${s} \u2192 ${e}`, "risky", `${s} may now request external effect ${e}`, { approval: true });
   for (const e of b.effects.filter((e2) => !h.effects.includes(e2))) add("actor.effect.removed", `${s} \u2192 ${e}`, "compatible", `${s} no longer requests ${e}`);
-  if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) add("actor.budget", s, "risky", `Model budget ${JSON.stringify(b.budget)} \u2192 ${JSON.stringify(h.budget)}`);
+  if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) {
+    const widened = budgetWidened(b.budget, h.budget);
+    add("actor.budget", s, widened ? "risky" : "compatible", `Model budget ${JSON.stringify(b.budget)} \u2192 ${JSON.stringify(h.budget)}`);
+  }
+  diffAgent(b, h, add);
   if (b.purpose !== h.purpose || JSON.stringify(b.justification) !== JSON.stringify(h.justification))
     add("actor.described", s, "compatible", "Purpose or justification changed");
+}
+var LIMITS = ["maxAttempts", "timeoutMs", "maxTokens", "usd", "turns"];
+function budgetWidened(b, h) {
+  if (!b || !h) return true;
+  const value = (x, f) => x[f] ?? null;
+  for (const f of LIMITS) {
+    const was = value(b, f);
+    const now = value(h, f);
+    if (was === now) continue;
+    if (f !== "usd" && f !== "turns") return true;
+    if (was === null || now === null || now > was) return true;
+  }
+  const wasMs = b.wallClock === void 0 ? null : durationMs(b.wallClock);
+  const nowMs = h.wallClock === void 0 ? null : durationMs(h.wallClock);
+  if (wasMs !== nowMs && (wasMs === null || nowMs === null || nowMs > wasMs)) return true;
+  return false;
+}
+function diffAgent(b, h, add) {
+  const s = h.name;
+  if (show(b.model ?? null) !== show(h.model ?? null))
+    add("agent.model", s, "risky", `Model ${show(b.model ?? null)} \u2192 ${show(h.model ?? null)}; sessions already running keep the model they started with`, { approval: b.model?.id !== h.model?.id });
+  const bt = b.tools ?? [];
+  const ht = h.tools ?? [];
+  for (const t of ht.filter((t2) => !bt.includes(t2))) add("agent.tool.added", `${s} \u2192 ${t}`, "risky", `${s} may now call tool ${t}`, { approval: true });
+  for (const t of bt.filter((t2) => !ht.includes(t2))) add("agent.tool.removed", `${s} \u2192 ${t}`, "compatible", `${s} no longer has tool ${t}`);
+  if ((b.instructions ?? null) !== (h.instructions ?? null))
+    add("agent.instructions", s, "compatible", `Instructions ${b.instructions ?? "none"} \u2192 ${h.instructions ?? "none"}; sessions pin the text they started with`);
+  const bo = b.on ?? {};
+  const ho = h.on ?? {};
+  for (const [message, verb] of Object.entries(ho)) {
+    if (!(message in bo)) add("agent.on.added", `${s} \u2190 ${message}`, "risky", `${s} now reacts to ${message} with ${verb}`);
+    else if (bo[message] !== verb) add("agent.on", `${s} \u2190 ${message}`, "breaking", `${message} used to ${bo[message]} the session and now does ${verb}; messages already on their way get the new verb`);
+  }
+  for (const message of Object.keys(bo)) if (!(message in ho)) add("agent.on.removed", `${s} \u2190 ${message}`, "risky", `${s} no longer reacts to ${message}`);
+  if (show(b.harness ?? null) !== show(h.harness ?? null)) add("agent.harness", s, "risky", `Harness ${show(b.harness ?? null)} \u2192 ${show(h.harness ?? null)}`);
+  if ((b.returns ?? null) !== (h.returns ?? null)) add("agent.returns", s, "risky", `Returns ${b.returns ?? "none"} \u2192 ${h.returns ?? "none"}`);
 }
 function diffMessage(b, h, add) {
   const s = h.name;
@@ -1520,8 +1671,8 @@ function diffMessage(b, h, add) {
     add("message.payload", s, finding.compatibility, finding.compatibility === "breaking" ? `${finding.detail}; keep accepting the old shape, or drain before deploying` : finding.detail);
   }
 }
-var ACTOR_FIELDS = /* @__PURE__ */ new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends"]);
-var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes"]);
+var ACTOR_FIELDS = /* @__PURE__ */ new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends", "harness", "model", "instructions", "tools", "on", "returns"]);
+var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes", "input"]);
 var SOURCE_FIELDS = /* @__PURE__ */ new Set(["name", "kind", "path", "verify", "events", "message"]);
 function unclassified(what, b, h, classified, add) {
   const bv = b;
@@ -1557,6 +1708,7 @@ function diffEffect(b, h, add) {
     add("effect.budget", s, "risky", `Budget ${show(b.budget ?? null)} \u2192 ${show(h.budget ?? null)}; it applies from the next attempt, including retries of effects already in flight`);
   if ((b.expires ?? null) !== (h.expires ?? null))
     add("effect.expires", s, "risky", `Approval expiry ${b.expires ?? "default (3d)"} \u2192 ${h.expires ?? "default (3d)"}; requests already waiting keep the expiry time they were given`);
+  if (show(b.input ?? null) !== show(h.input ?? null)) add("effect.input", s, "risky", "The parameters of the tool an agent sees for this effect changed");
   if (b.description !== h.description) add("effect.described", s, "compatible", "Description changed");
   if (b.idempotency !== h.idempotency)
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} \u2192 ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
@@ -1837,6 +1989,7 @@ function resolveRelative(dir, spec) {
 // src/model/mermaid.ts
 var id = (name) => (name.startsWith("@") ? `x_${name.slice(1)}` : `a_${name}`).replace(/[^A-Za-z0-9_]/g, "_");
 var label = (s) => s.replace(/&/g, "#amp;").replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;");
+var effectId = (name) => `e_${name}`.replace(/[^A-Za-z0-9_]/g, "_");
 function renderMermaid(m) {
   const version = new Map(m.messages.map((x) => [x.name, x.version]));
   const external = [...new Set(m.routes.map((r) => r.from).filter((f) => f.startsWith("@")))].sort();
@@ -1847,12 +2000,19 @@ function renderMermaid(m) {
     arrow.messages.push(label(`${r.message}@${version.get(r.message) ?? "?"}`));
     arrows.set(key, arrow);
   }
+  const effectNames = new Set(m.effects.map((e) => e.name));
+  const toolEffects = [...new Set(m.actors.flatMap((a) => a.kind === "agent" ? (a.tools ?? []).filter((t) => effectNames.has(t)) : []))].sort();
   const lines = [
     "flowchart LR",
     `  %% ${m.system.name}: ${m.actors.length} actor(s), ${m.routes.length} route(s). Generated by actord graph --format mermaid.`,
     ...external.map((e) => `  ${id(e)}(["${label(e)}"])`),
-    ...m.actors.map((a) => `  ${id(a.name)}["${label(a.name)}<br/>${label([a.kind, a.schedules.length ? a.schedules.map(scheduleLabel).join(" \xB7 ") : null].filter(Boolean).join(" \xB7 "))}"]`),
-    ...[...arrows.values()].map((a) => `  ${id(a.from)} -->|"${a.messages.join("<br/>")}"| ${id(a.to)}`)
+    ...m.actors.map((a) => {
+      const text = `${label(a.name)}<br/>${label([a.kind, a.schedules.length ? a.schedules.map(scheduleLabel).join(" \xB7 ") : null].filter(Boolean).join(" \xB7 "))}`;
+      return a.kind === "agent" ? `  ${id(a.name)}{{"${text}"}}` : `  ${id(a.name)}["${text}"]`;
+    }),
+    ...toolEffects.map((e) => `  ${effectId(e)}(["${label(e)}"])`),
+    ...[...arrows.values()].map((a) => `  ${id(a.from)} -->|"${a.messages.join("<br/>")}"| ${id(a.to)}`),
+    ...m.actors.flatMap((a) => a.kind === "agent" ? (a.tools ?? []).filter((t) => effectNames.has(t)).map((t) => `  ${id(a.name)} -.-> ${effectId(t)}`) : [])
   ];
   return lines.join("\n");
 }

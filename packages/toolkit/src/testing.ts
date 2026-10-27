@@ -1,15 +1,15 @@
 // @actord/toolkit/testing: helpers for tests that run in workerd with @cloudflare/vitest-plugin.
 // Import only from test files: it depends on the `cloudflare:test` module.
 import { listDurableObjectIds, runInDurableObject } from "cloudflare:test";
-import type { ActorEvent, ActorRuntime, EffectAdapter, FaultPoint, JobAdapter } from "./runtime/index.ts";
+import type { ActorEvent, ActorRuntime, BudgetOverride, EffectAdapter, FaultPoint, JobAdapter } from "./runtime/index.ts";
 import { expireJobRows } from "./runtime/jobs.ts";
 import { scheduleKey } from "./runtime/schedules.ts";
-import type { System } from "./system.ts";
+import { type Duration, durationMs, type System } from "./system.ts";
 
 interface Seams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter | JobAdapter>;
-  budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  budgets?: Record<string, BudgetOverride>;
   effectBudgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   runtimes: Map<string, ActorRuntime>;
   names: Map<string, string>;
@@ -43,9 +43,19 @@ export function overrideEffect(name: string, adapter: EffectAdapter | JobAdapter
   seams().effects[name] = adapter;
 }
 
-/** Shrink an actor's declared model budget for a test (for example a 50 ms timeout). */
-export function overrideBudget(actor: string, budget: { maxAttempts?: number; timeoutMs?: number }): void {
-  seams().budgets = { ...seams().budgets, [actor]: budget };
+/**
+ * Shrink an actor's declared budget for a test: a model-assisted actor's (for example a 50 ms timeout), or an agent's
+ * usd, turns and wallClock, which may also be given in milliseconds ("50ms"). Each field given wins over the declared one.
+ */
+export function overrideBudget(actor: string, budget: { maxAttempts?: number; timeoutMs?: number; usd?: number; turns?: number; wallClock?: Duration | `${number}ms` }): void {
+  const { wallClock, ...rest } = budget;
+  let wallClockMs: number | undefined;
+  if (wallClock !== undefined) {
+    const ms = /^(\d+(?:\.\d+)?)ms$/.exec(wallClock);
+    wallClockMs = ms ? Number(ms[1]) : (durationMs(wallClock) ?? undefined);
+    if (wallClockMs === undefined) throw new Error(`overrideBudget: wallClock ${JSON.stringify(wallClock)} isn't a duration like "50ms" or "30s"`);
+  }
+  seams().budgets = { ...seams().budgets, [actor]: { ...rest, ...(wallClockMs === undefined ? {} : { wallClockMs }) } };
 }
 
 /** Override one effect's budget for a test; it wins over the effect's own and its actor's. */
@@ -58,6 +68,19 @@ export function captureEvents(): ActorEvent[] {
   const events: ActorEvent[] = [];
   seams().events = events;
   return events;
+}
+
+/** Retry `check` until it passes, or throw its last failure after `ms`: for what real time decides, such as an alarm firing. */
+export async function eventually(check: () => Promise<void>, ms = 2000): Promise<void> {
+  const until = Date.now() + ms;
+  for (;;) {
+    try {
+      return await check();
+    } catch (err) {
+      if (Date.now() > until) throw err;
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
 }
 
 export function resetSeams(): void {

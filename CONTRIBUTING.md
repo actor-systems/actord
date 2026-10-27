@@ -23,7 +23,7 @@ place: a change to the core and to either plugin lands in one commit and one ver
 
 ## Setting up
 
-Node.js 22.18+ (CI uses 24), then:
+Node.js 22.19+ (CI uses 24), then:
 
 ```sh
 npm install
@@ -55,7 +55,8 @@ CI (`.github/workflows/verify.yml`) runs the offline lane on every push. Model-b
 
 - **Build what ships.** `npm run build -w @actord/toolkit` writes the CLI bundle, its version, and the toolkit
   tarball into both `plugins/claude/dist/` and `plugins/codex/dist/`. Commit them; CI checks that a fresh
-  build reproduces them byte for byte.
+  build reproduces them byte for byte. `npm test -w @actord/toolkit` builds first (its `pretest`), because the CLI
+  tests run the built bundles; a fresh clone has none.
 - **One version.** Bump `packages/toolkit/package.json` and both plugin manifests together; a test fails if
   they differ.
 - **Record decisions.** A change to the design gets a record in `docs/decisions/`, linked from

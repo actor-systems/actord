@@ -53,7 +53,7 @@ npx @actord/toolkit init my-app
 cd my-app && npm install && npm test
 ```
 
-Requires Node.js 22.18+. Updating, uninstalling, and requirements for each agent:
+Requires Node.js 22.19+. Updating, uninstalling, and requirements for each agent:
 [Getting started](https://github.com/actor-systems/actord/wiki/Getting-Started).
 
 ## What a system looks like

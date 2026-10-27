@@ -15,3 +15,12 @@ exports[`actord trace > follows a known message from its root cause through effe
               └─ effect notify.digest [wsdk-4.151.1]  ✓ confirmed
 "
 `;
+
+exports[`actord trace > shows an agent session as one node: turns, tool calls, usage, outcome and transcript > agent trace 1`] = `
+"trace task-1 · correlation task-1 · coverage: <log> (local only)
+  @ingress → Scribe:s  scribe.task  ✓ handled (task-1)  ◀ target
+  └─ effect agent.session [task-1]  ✓ confirmed
+       job {"session":"7"} settled by probe after 700ms
+       agent.session task-1: 2 turns · note_keyed × 2 · 20 in / 6 out · $0.0020 · confirmed · transcript transcripts/Scribe/task-1/7.json
+"
+`;

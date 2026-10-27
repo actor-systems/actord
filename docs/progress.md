@@ -22,7 +22,18 @@ style.
 
 **Plan 2 (sources and email approvals) is delivered on `plan2/sources-email`, not yet released.** Sources (GitHub
 webhook and inbound email), approval tokens, auto-notify, and email approvals, verified with real Gmail in spike 6;
-verified from a plain clone at `2be563e`: 61 pass, 0 fail, 0 blocked. Plan 3 is next: agent actors on Pi and Computer.
+verified from a plain clone at `2be563e`: 61 pass, 0 fail, 0 blocked.
+
+**Plan 3 (agent actors) is delivered on `plan3/agent-actors`, not yet released.** An actor declared `kind: "agent"`
+runs a Pi session in its own Durable Object, as the job effect `agent.session`: `on` messages start, steer and stop
+it, the effects it lists are its tools, `finish` returns the typed `returns` message, and actord enforces `usd`,
+`turns` and `wallClock` (decision 0019). Its workspace is Computer's, in the object's SQLite, with commands in a
+Cloudflare Container, registry-read egress through the toolkit's gateway, and clone and push from the object
+(decision 0022). Spikes 2, 4 and 5 ran on a real container and pushed to GitHub (`docs/evidence/spike-2-computer.md`,
+`spike-4-long-run.md`, `spike-5-push.md`). Verified from a plain clone at `b413bbb`, after the final review's fixes:
+60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312).
+The setup skills still name Node 22.18, as `actord doctor` accepts, and the plugin skills still teach the old style:
+both are plan 5's. Plan 4 is next: Clef and Clairic effects.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
@@ -74,6 +85,10 @@ verified from a plain clone at `2be563e`: 61 pass, 0 fail, 0 blocked. Plan 3 is 
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 
 ## Open issues
+- #80: a handler that awaits I/O lets other writers' rows join its transaction, and they roll back if it throws.
+  Until the fix (a macrotask sentinel that fails the delivery) lands after plan 3, handlers must not await I/O.
+- #79: Computer 0.8.0's push drops `corsProxy`, so `gitPushEffect` refuses a push when `.git/config` sets one; the
+  fix belongs upstream.
 - Eval runs deny the loopback port workerd needs (decision 0004), so agents in evals can't run their own
   workerd tests; kept workspaces are re-run on the host (`scripts/rerun-eval-workspaces.sh`).
 - The Desktop app's first `/actord-room` in a session can be flagged "isn't a command here"; it runs anyway.

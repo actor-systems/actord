@@ -3,25 +3,14 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
-import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { captureEvents, eventually, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { DurableObjectSqliteDatabase } from "@earendil-works/chord/sqlite/cloudflare";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
 const probe = (key: string) => env.PROBE.getByName(key);
 const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted" | "gateway.job-plain" | "gateway.job-approval") =>
   ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
-/** Retry `check` until it passes, or throw its last failure after `ms`: for what real time decides, such as an alarm firing. */
-async function eventually(check: () => Promise<void>, ms = 2000): Promise<void> {
-  const until = Date.now() + ms;
-  for (;;) {
-    try {
-      return await check();
-    } catch (err) {
-      if (Date.now() > until) throw err;
-    }
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
 
 it("[denied-capability] an effect the actor didn't declare is refused and nothing is queued", async () => {
   const r = await ingress(env, system, "Probe", "probe.misbehave", {}, { key: "deny" });
@@ -71,6 +60,153 @@ it("[approval-required] decide() releases or refuses a parked effect", async () 
   expect(runs).toBe(1);
 });
 
+it("[request-effect] requestEffect queues an effect from outside a handler as ctx.effect does, and answers with its state", async () => {
+  const events = captureEvents();
+  let runs = 0;
+  overrideEffect("gateway.keyed", {
+    run: async (_input, { key }) => {
+      if (key === "re-new") await new Promise((r) => setTimeout(r, 30)); // still running when requestEffect answers
+      return ++runs;
+    },
+  });
+  // A key a handler's ctx.effect already used: no second row, and nothing runs again.
+  await send("re-shared", "gateway.keyed");
+  await settle(env, system);
+  const p = probe("re-shared");
+  const ask = (name: string, key: string) =>
+    runInDurableObject(p, async (instance: { actor: { requestEffect(n: string, i: unknown, o: { key: string; causationId?: string; correlationId?: string }): Promise<Record<string, unknown> & { outcome?: Promise<unknown> }> } }) => {
+      try {
+        const state = await instance.actor.requestEffect(name, { key }, { key, causationId: "cause-1", correlationId: "corr-1" });
+        // The outcome promise is this instance's: wait for it here.
+        return state.outcome ? { status: state.status, outcome: await state.outcome } : state;
+      } catch (err) {
+        return { refused: (err as Error).message };
+      }
+    });
+  expect(await ask("gateway.keyed", "re-shared")).toEqual({ status: "confirmed", key: "re-shared", value: 1 });
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "re-shared")).toMatchObject([{ causationId: "cause-1", detail: { existingStatus: "confirmed" } }]);
+  // A new key: queued in its own transaction and tried; its outcome resolves once it settles. A fast one may answer settled.
+  expect(await ask("gateway.keyed", "re-new")).toEqual({ status: "running", outcome: { status: "confirmed", key: "re-new", value: 2 } });
+  expect(events.find((e) => e.kind === "effect.requested" && e.effectKey === "re-new")).toMatchObject({ causationId: "cause-1", correlationId: "corr-1" });
+  expect(await ask("gateway.keyed", "re-new")).toEqual({ status: "confirmed", key: "re-new", value: 2 });
+  expect(runs).toBe(2);
+  // An effect that needs a person parks at once; a denial then reads as failed, with its reason.
+  const before = Date.now();
+  const parked = (await ask("gateway.approval", "re-ap")) as { status: string; expiresAt: number };
+  expect(parked.status).toBe("awaiting_approval");
+  expect(parked.expiresAt).toBeGreaterThanOrEqual(before + 3 * 86_400_000);
+  expect(await p.decide("re-ap", "deny")).toMatchObject({ status: "denied" });
+  expect(await ask("gateway.approval", "re-ap")).toEqual({ status: "failed", key: "re-ap", error: "denied by a person" });
+  // An effect the actor doesn't list is refused, and nothing is queued. (The parked one asked for its approval as ctx.effect's would.)
+  expect(await ask("gateway.undeclared", "re-no")).toEqual({ refused: "Probe may not request effect gateway.undeclared: it isn't in its declared effects" });
+  expect((await runInDurableObject(p, (_i, st) => st.storage.sql.exec("SELECT id FROM _actors_outbox WHERE kind = 'effect' ORDER BY seq").toArray())).map((r) => r.id)).toEqual([
+    "fx:gateway.keyed:re-shared",
+    "fx:gateway.keyed:re-new",
+    "fx:gateway.approval:re-ap",
+    "fx:notify.approval:approval:gateway.approval:re-ap",
+  ]);
+});
+
+it("[request-effect-in-handler] requestEffect called from inside a handler is refused, so the delivery fails instead of hanging or running the effect before the handler commits", async () => {
+  const refusal = "requestEffect can't be called from inside a handler (it would wait on the delivery it is part of); use ctx.effect";
+  overrideEffect("gateway.keyed", { run: async () => "ran" });
+  // Called as the handler runs: refused at once.
+  expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-now" }, { key: "nest-now" })).toMatchObject({ status: "failed", error: refusal });
+  // Called after the handler has awaited: its transaction runs nested in the handler's, finds it open, and is refused.
+  expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-later", after: true }, { key: "nest-later" })).toMatchObject({ status: "failed", error: refusal });
+  for (const key of ["nest-now", "nest-later"]) {
+    expect(await runInDurableObject(probe(key), (_i, st) => st.storage.sql.exec("SELECT id FROM _actors_outbox WHERE kind = 'effect'").toArray())).toEqual([]);
+  }
+});
+
+it("[request-effect-beside-handler] a requestEffect made beside a handler, while its transaction is open, isn't refused: it runs after that transaction, whose rollback doesn't take it along", async () => {
+  let runs = 0;
+  overrideEffect("gateway.keyed", { run: async () => ++runs });
+  const gate = globalThis as { __probeGate?: unknown };
+  try {
+    const result = await runInDurableObject(probe("rq-wait"), async (instance: { actor: { receive(e: unknown): Promise<{ status: string }>; requestEffect(n: string, i: unknown, o: { key: string }): Promise<{ status: string; outcome?: Promise<unknown> }> } }, state) => {
+      const requested = () => state.storage.sql.exec("SELECT 1 FROM _actors_outbox WHERE id = 'fx:gateway.keyed:rq'").toArray().length > 0;
+      let asked: Promise<{ status: string; outcome?: Promise<unknown> }> | undefined;
+      let laterThanHandler: boolean | undefined;
+      // A probe.outcome for a "slow-…" key awaits __probeGate inside its transaction. Its then() runs beside it, as
+      // other code in the object would (pi's, say), not as the handler's own call: it requests an effect, and a little
+      // later fails the handler. No timers: the open transaction holds the object's input gate.
+      gate.__probeGate = {
+        then: (_resolve: () => void, reject: (err: Error) => void) => {
+          asked = instance.actor.requestEffect("gateway.keyed", { key: "rq" }, { key: "rq" });
+          void (async () => {
+            for (let i = 0; i < 100; i++) await Promise.resolve();
+            laterThanHandler = !requested(); // the request's transaction waits for the handler's
+            reject(new Error("the handler failed"));
+          })();
+        },
+      };
+      const receipt = await instance.actor.receive({ v: 1, id: "rq-wait-1", type: "probe.outcome", version: 1, from: "Probe:rq-wait", to: "Probe:rq-wait", correlationId: "rq-wait-1", causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-rq", status: "confirmed" } });
+      const answer = await asked!;
+      return { laterThanHandler, receipt: receipt.status, state: answer.outcome ? await answer.outcome : answer };
+    });
+    expect(result).toMatchObject({ laterThanHandler: true, receipt: "failed", state: { status: "confirmed", key: "rq", value: 1 } });
+  } finally {
+    delete gate.__probeGate;
+  }
+  expect(runs).toBe(1);
+  const rows = await runInDurableObject(probe("rq-wait"), (_i, st) => st.storage.sql.exec("SELECT id, status FROM _actors_outbox WHERE kind = 'effect'").toArray());
+  expect(rows).toEqual([{ id: "fx:gateway.keyed:rq", status: "confirmed" }]);
+  // Only the request's own result: the failed delivery recorded nothing.
+  expect(await probe("rq-wait").outcomes()).toEqual([{ key: "rq", status: "confirmed", error: null }]);
+});
+
+for (const yields of [false, true]) {
+  it(`[beside-transaction-nested] a transaction started beside an open handler transaction, from outside it (as pi's storage starts one), ${yields ? "runs inside it once the handler yields to the event loop, and the handler's throw rolls its write back" : "doesn't start within the 500 microtasks the handler awaits before it throws, and commits after the rollback"}`, async () => {
+    const gate = globalThis as { __probeGate?: unknown };
+    const name = `nest-${yields ? "yields" : "microtasks"}`;
+    try {
+      const result = await runInDurableObject(probe(name), async (instance: { actor: { receive(e: unknown): Promise<{ status: string }> } }, state) => {
+        state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
+        const db = new DurableObjectSqliteDatabase(state.storage);
+        const log: string[] = [];
+        // Registered here, outside any transaction: the write starts in this context, as pi's run starts its own.
+        let start!: () => void;
+        let ran!: () => void;
+        const running = new Promise<void>((r) => (ran = r));
+        const written = new Promise<void>((r) => (start = r)).then(() =>
+          db
+            .transaction(async (t) => {
+              log.push("beside runs");
+              await t.run("INSERT INTO beside (v) VALUES ('pi')");
+              ran();
+            })
+            .then(() => log.push("beside committed")),
+        );
+        // The slow probe.outcome handler awaits this inside its transaction: it starts the write, then fails. A handler
+        // that yields waits for the write to run (or 2 s), as one awaiting I/O would; one that doesn't waits 500 microtasks.
+        gate.__probeGate = {
+          then: (_resolve: () => void, reject: (err: Error) => void) => {
+            start();
+            const waited = yields ? Promise.race([running, new Promise((r) => setTimeout(r, 2_000))]) : (async () => { for (let i = 0; i < 500; i++) await Promise.resolve(); })();
+            void waited.then(() => {
+              log.push("handler throws");
+              reject(new Error("the handler failed"));
+            });
+          },
+        };
+        const receipt = await instance.actor.receive({ v: 1, id: `${name}-1`, type: "probe.outcome", version: 1, from: `Probe:${name}`, to: `Probe:${name}`, correlationId: `${name}-1`, causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-nest", status: "confirmed" } });
+        await written;
+        return { receipt: receipt.status, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
+      });
+      expect(result.receipt).toBe("failed");
+      if (yields) {
+        // Nested: it ran before the handler threw, its own commit resolved, and the handler's rollback took its row.
+        expect(result).toMatchObject({ log: ["beside runs", "handler throws", "beside committed"], rows: [] });
+      } else {
+        expect(result).toMatchObject({ log: ["handler throws", "beside runs", "beside committed"], rows: ["pi"] });
+      }
+    } finally {
+      delete gate.__probeGate;
+    }
+  });
+}
+
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
   for (const [key, effect] of [["orph-plain", "gateway.plain"], ["orph-keyed", "gateway.keyed"]] as const) {
     overrideEffect(effect, { run: () => new Promise(() => {}) }); // hangs until the crash below
@@ -96,6 +232,7 @@ it("[heartbeat-armed] while an effect runs, actord keeps a wake at most 30 s awa
   expect(due).toBeLessThanOrEqual(Date.now() + 30_000);
 });
 
+// Restart loops drive every instance in the file on each settle(), so they need more than vitest's 5 s default on a slow runner.
 it("[crash-loop-parked] a keyed effect interrupted 5 times is parked in doubt and not run again", async () => {
   let runs = 0;
   // Count only this key: an earlier test's hung instance shares the override and is recovered by the aborts too.
@@ -108,8 +245,9 @@ it("[crash-loop-parked] a keyed effect interrupted 5 times is parked in doubt an
   await settle(env, system, { rounds: 2 });
   expect(runs).toBe(5);
   expect(await probe("park").outcomes()).toMatchObject([{ key: "park", status: "in_doubt", error: "parked: interrupted 5 times without settling" }]);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[job-parked-with-early-outcome] a job start interrupted 5 times settles by the completion kept for it, not parked", async () => {
   overrideEffect("gateway.job", { start: (_i, c) => (c.key === "jpe" ? new Promise(() => {}) : Promise.resolve({ runId: "other" })) });
   await ingress(env, system, "Probe", "probe.job.start", { key: "jpe" }, { key: "jpe" });
@@ -117,7 +255,7 @@ it("[job-parked-with-early-outcome] a job start interrupted 5 times settles by t
   for (let i = 0; i < 5; i++) { await abortAllDurableObjects(); await settle(env, system, { rounds: 2 }); }
   expect(await probe("jpe").outcomes()).toMatchObject([{ key: "jpe", status: "confirmed" }]);
   expect(await jobRow("jpe")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
-});
+}, 20_000);
 
 it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the object's one alarm", async () => {
   let runs = 0;
@@ -632,6 +770,25 @@ it("[job-cancel-honest] a confirmed cancel fails the job, an unconfirmed one is 
   expect(await probe("jc-none").outcomes()).toMatchObject([{ key: "jc-none", status: "in_doubt", error: "cancel not confirmed" }]);
 });
 
+it("[job-cancel-usage] what a cancel reports it used arrives with the result, confirmed or not", async () => {
+  overrideEffect("gateway.job", {
+    start: async (input, c) => {
+      c.reportUsage({ inputTokens: 1 });
+      return { runId: (input as { key: string }).key };
+    },
+    cancel: async (h, c) => {
+      c.reportUsage({ inputTokens: 2, costUsd: 0.25 });
+      return (h as { runId: string }).runId === "jcu-yes";
+    },
+  });
+  for (const k of ["jcu-yes", "jcu-no"]) await startJob(k);
+  await settle(env, system);
+  for (const k of ["jcu-yes", "jcu-no"]) await cancelJob(k);
+  await settle(env, system);
+  expect(await probe("jcu-yes").outcomes()).toMatchObject([{ key: "jcu-yes", status: "failed", error: "cancelled", usage: { inputTokens: 3, costUsd: 0.25 } }]);
+  expect(await probe("jcu-no").outcomes()).toMatchObject([{ key: "jcu-no", status: "in_doubt", error: "cancel not confirmed", usage: { inputTokens: 3, costUsd: 0.25 } }]);
+});
+
 it("[job-restart-awaiting] a restart while waiting neither re-starts the job nor loses it", async () => {
   let starts = 0;
   overrideEffect("gateway.job", { start: async () => ({ runId: `r-${++starts}` }) });
@@ -1002,6 +1159,7 @@ it("[job-probe-done-while-cancelling] a probe that finds the job done while a ca
   expect(await resultRows("jpdc")).toBe(1);
 });
 
+// see [crash-loop-parked]
 it("[job-cancel-crash-loop] a cancel interrupted by 5 restarts is parked in doubt, and the actor hears it", async () => {
   let cancels = 0;
   // Count only this key: other tests' cancels are recovered by the aborts too.
@@ -1016,7 +1174,7 @@ it("[job-cancel-crash-loop] a cancel interrupted by 5 restarts is parked in doub
   await abortAllDurableObjects(); // parked is final: no further cancel
   await settle(env, system, { rounds: 2 });
   expect(cancels).toBe(5);
-});
+}, 20_000);
 
 it("[effect-runner-failure-result] an attempt that fails outside the runner's own handling still ends in doubt, and the actor hears it", async () => {
   const events = captureEvents();

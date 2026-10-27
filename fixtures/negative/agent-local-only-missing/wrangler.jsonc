@@ -1,0 +1,14 @@
+{
+  "name": "fixture-agent-local-only-missing",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "CODER", "class_name": "Coder" }
+    ]
+  },
+  "exports": {
+    "Coder": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "containers": [{ "class_name": "Coder", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "./Dockerfile" } } }]
+}

@@ -18,3 +18,7 @@ export const Kick = message({
   description: "Someone asked for an immediate ping",
   payload: z.object({ reason: z.string() }),
 });
+
+export const AgentFailed = message({ version: 1, description: "The agent failed", payload: z.object({}) });
+
+export const AgentExhausted = message({ version: 1, description: "The agent ran out of budget", payload: z.object({}) });

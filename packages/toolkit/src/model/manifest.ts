@@ -1,7 +1,7 @@
 // The normalized system model. Every view (check, graph, diff, the Room, eval graders) reads this, never
 // system.ts directly. Arrays are sorted and keys ordered so identical input gives identical bytes.
 import { sortKeys } from "../cli/output.ts";
-import { durationMs, type System } from "../system.ts";
+import { durationMs, type HarnessSpec, type System } from "../system.ts";
 
 export const MANIFEST_FILE = "actord.manifest.json";
 export const MANIFEST_SCHEMA_VERSION = 1;
@@ -26,7 +26,14 @@ export interface ManifestActor {
   justification: string[];
   schedules: ManifestSchedule[];
   effects: string[];
-  budget: { maxAttempts: number; timeoutMs: number; maxTokens: number | null } | null;
+  budget: { maxAttempts: number | null; timeoutMs: number | null; maxTokens: number | null; usd?: number; turns?: number; wallClock?: string } | null;
+  /** The fields below are present only when an agent actor declares them. */
+  harness?: HarnessSpec;
+  model?: { id: string; reasoning?: string };
+  instructions?: string;
+  tools?: string[];
+  on?: Record<string, string>;
+  returns?: string;
   receives: string[];
   sends: string[];
 }
@@ -65,6 +72,8 @@ export interface ManifestEffect {
   completes: { message: string } | null;
   /** Present only when true: the effect makes something public. */
   publishes?: true;
+  /** Present only when declared: JSON Schema of the parameters of the tool an agent sees for this effect. */
+  input?: Record<string, unknown> | null;
 }
 
 export interface ManifestSource {
@@ -115,7 +124,22 @@ export function normalize(system: System): Manifest {
         message: s.message,
       })),
       effects: [...(a.effects ?? [])].sort(),
-      budget: a.budget ? { maxAttempts: a.budget.maxAttempts, timeoutMs: a.budget.timeoutMs, maxTokens: a.budget.maxTokens ?? null } : null,
+      budget: a.budget
+        ? {
+            maxAttempts: a.budget.maxAttempts ?? null,
+            timeoutMs: a.budget.timeoutMs ?? null,
+            maxTokens: a.budget.maxTokens ?? null,
+            ...(a.budget.usd !== undefined ? { usd: a.budget.usd } : {}),
+            ...(a.budget.turns !== undefined ? { turns: a.budget.turns } : {}),
+            ...(a.budget.wallClock !== undefined ? { wallClock: a.budget.wallClock } : {}),
+          }
+        : null,
+      ...(a.harness ? { harness: JSON.parse(JSON.stringify(a.harness)) as HarnessSpec } : {}),
+      ...(a.model ? { model: { id: a.model.id, ...(a.model.reasoning ? { reasoning: a.model.reasoning } : {}) } } : {}),
+      ...(a.instructions !== undefined ? { instructions: a.instructions } : {}),
+      ...(a.tools ? { tools: [...a.tools].sort() } : {}),
+      ...(a.on ? { on: { ...a.on } } : {}),
+      ...(a.returns !== undefined ? { returns: a.returns } : {}),
       receives: [...new Set(routes.filter((r) => r.to === name).map((r) => r.message))].sort(),
       sends: [...new Set(routes.filter((r) => r.from === name).map((r) => r.message))].sort(),
     }))
@@ -138,6 +162,7 @@ export function normalize(system: System): Manifest {
       probe: e.probe ? { every: e.probe.every } : null,
       completes: e.completes ? { message: e.completes.message } : null,
       ...(e.publishes === true ? { publishes: true as const } : {}),
+      ...(e.input ? { input: jsonSchemaOf(e.input) } : {}),
     }))
     .sort(byName);
   const sources = Object.entries(system.sources ?? {})
@@ -169,7 +194,8 @@ export function normalize(system: System): Manifest {
   };
 }
 
-function jsonSchemaOf(schema: unknown): Record<string, unknown> | null {
+/** JSON Schema (draft 2020-12) of a Standard Schema's input, keys sorted; null when the library can't export one. Agent tools' parameters use it too. */
+export function jsonSchemaOf(schema: unknown): Record<string, unknown> | null {
   const std = (schema as { "~standard"?: { jsonSchema?: { input: (o: { target: string }) => Record<string, unknown> } } })?.["~standard"];
   if (!std?.jsonSchema) return null;
   try {

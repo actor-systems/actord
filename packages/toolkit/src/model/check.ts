@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseCronExpression } from "cron-schedule";
 import type { Project } from "./load.ts";
-import { durationMs } from "../system.ts";
+import { type ActorSpec, durationMs } from "../system.ts";
 import { MANIFEST_FILE, type Manifest, serializeManifest } from "./manifest.ts";
 
 function cronParses(expr: string): boolean {
@@ -32,6 +32,66 @@ const FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
 /** Senders the runtime writes itself: the fixed route senders, and "@rpc" for a decision made through decide(). */
 const RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
 
+/** agent.session and every agent.session.* name: the agent runtime's internal effects and messages (src/agents), which win over declared ones. */
+const reservedAgentName = (name: string) => name === "agent.session" || name.startsWith("agent.session.");
+
+type AddFn = (severity: Severity, code: string, subject: string | null, message: string, fix?: string | null) => void;
+
+/** Computer rejects an ignore pattern unless it starts with "/" or "**\/", uses only * and **, and has none of {}[]?\, . */
+function localOnlyInvalid(pattern: string): boolean {
+  return !(pattern.startsWith("/") || pattern.startsWith("**/")) || /[{}[\]?\\,]/.test(pattern) || /\*{3,}/.test(pattern);
+}
+
+function checkAgent(project: Project, m: Manifest, a: Manifest["actors"][number], add: AddFn) {
+  if (!a.harness) add("error", "AGENT_HARNESS_MISSING", a.name, `${a.name} is an agent but declares no harness`, "Add harness: pi({ workspace: computer() }).");
+  if (!a.model) add("error", "AGENT_MODEL_MISSING", a.name, `${a.name} is an agent but declares no model`, 'Add model: { id: "claude-opus-5-5" }.');
+  if (!a.returns) add("error", "AGENT_RETURNS_MISSING", a.name, `${a.name} is an agent but declares no returns message`, "Add returns: the message its final answer is delivered as.");
+  const b = a.budget;
+  if (b && (b.usd === undefined || b.turns === undefined || b.wallClock === undefined))
+    add("error", "AGENT_BUDGET_INCOMPLETE", a.name, `${a.name} is an agent whose budget lacks ${(["usd", "turns", "wallClock"] as const).filter((f) => b[f] === undefined).join(", ")}`, "An agent budget needs usd, turns and wallClock.");
+
+  const routedTo = (message: string) => m.routes.some((r) => r.message === message && r.to === a.name);
+  const selfRouted = (message: string) => m.routes.some((r) => r.message === message && r.from === a.name && r.to === a.name);
+  for (const message of Object.keys(a.on ?? {}))
+    if (!routedTo(message)) add("error", "AGENT_ON_UNROUTED", `${a.name} ← ${message}`, `${a.name} reacts to ${message}, but no route delivers it to ${a.name}`, `Add a route that delivers ${message} to ${a.name}.`);
+  for (const message of [...(a.returns ? [a.returns] : []), "agent.failed", "agent.exhausted"])
+    if (!selfRouted(message)) add("error", "AGENT_SELF_ROUTE_MISSING", `${a.name} → ${message}`, `${a.name} is told ${message} by its own session, but no route delivers it from ${a.name} to itself`, `Add { from: "${a.name}", message: "${message}", to: "${a.name}" }.`);
+
+  const effects = new Map(m.effects.map((e) => [e.name, e]));
+  const workspace = a.harness?.workspace;
+  for (const t of a.tools ?? []) {
+    if (t.startsWith("workspace.")) {
+      if (!workspace) add("error", "AGENT_WORKSPACE_TOOLS_WITHOUT_WORKSPACE", `${a.name} → ${t}`, `${a.name} lists ${t}, but its harness has no workspace`, "Add workspace: computer() to the harness, or remove the tool.");
+      continue;
+    }
+    if (!a.effects.includes(t) || !effects.has(t)) add("error", "AGENT_TOOL_UNDECLARED", `${a.name} → ${t}`, `${a.name} lists tool "${t}", which is neither workspace.* nor an effect in its effects`, `Declare ${t} under effects and list it in ${a.name}'s effects, or remove the tool.`);
+    else if (effects.get(t)!.input === undefined) add("error", "AGENT_TOOL_INPUT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} but declares no input, so the agent can't be told its parameters`, "Add input: a schema of the tool's parameters.");
+    else if (effects.get(t)!.approval === "human" && effects.get(t)!.result === null)
+      add("warning", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome from the job's probe, up to a probe period after it settles`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
+  }
+  if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
+    add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, 'Add backend: containerBackend({ image }) and localOnly: ["**/node_modules"] to the workspace.');
+  if (workspace?.backend && workspace.localOnly === undefined)
+    add("error", "AGENT_LOCAL_ONLY_MISSING", `${a.name} workspace`, "a workspace with a container backend must declare localOnly: without it, node_modules syncs into the Durable Object (spike 2: npm ci 7.8x slower, 405 MB in the object)", 'Add localOnly: ["**/node_modules"], or localOnly: [] to sync everything.');
+  // From the declaration, not the manifest, whose JSON writes NaN and Infinity as null.
+  const declared = (project.system?.actors[a.name] as ActorSpec | undefined)?.harness?.workspace;
+  const timeout: unknown = declared ? declared.execTimeoutMs : workspace?.execTimeoutMs;
+  if (timeout !== undefined && !(Number.isInteger(timeout) && (timeout as number) > 0))
+    add("error", "AGENT_EXEC_TIMEOUT_INVALID", `${a.name} execTimeoutMs ${String(timeout)}`, `execTimeoutMs ${String(timeout)} isn't a positive whole number of milliseconds, so no command could be given it as a timeout`, "Write it as a whole number of milliseconds, such as 600000 for 10 minutes.");
+  for (const pattern of workspace?.localOnly ?? [])
+    if (localOnlyInvalid(pattern)) add("error", "AGENT_LOCAL_ONLY_INVALID", `${a.name} localOnly ${pattern}`, `localOnly pattern "${pattern}" would be rejected by Computer: it must start with "/" or "**/", use only * and **, and avoid {}[]?\\,`, 'Write it as "/dir" or "**/*.log".');
+  if (workspace?.backend) {
+    const entry = project.config?.containers?.find((c) => c.class_name === a.name);
+    const file = project.configFile ?? "wrangler.jsonc";
+    // wrangler rejects `image` for a container the Durable Object schedules, and needs `images`.
+    const wrong = !entry || entry.scheduling_policy !== "durable_object" ? `has no containers entry for class ${a.name} with scheduling_policy "durable_object"` : entry.image !== undefined ? `gives class ${a.name}'s container "image", which wrangler rejects for scheduling_policy "durable_object"` : entry.images === undefined ? `gives class ${a.name}'s container no "images"` : null;
+    if (wrong)
+      add("error", "AGENT_CONTAINER_CONFIG_MISSING", a.name, `${a.name} runs commands in a container, but ${file} ${wrong}`, `Add containers: [{ "class_name": "${a.name}", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "${workspace.backend.image}" } } }] (wrangler rejects "image" for a container the Durable Object schedules).`);
+  }
+  if (a.instructions !== undefined && !existsSync(join(project.root, a.instructions)))
+    add("error", "AGENT_INSTRUCTIONS_MISSING", a.name, `${a.name}'s instructions file ${a.instructions} doesn't exist next to system.ts`, `Create ${a.instructions}, or fix the path.`);
+}
+
 export function checkProject(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
   const add = (severity: Severity, code: string, subject: string | null, message: string, fix: string | null = null) =>
@@ -53,11 +113,20 @@ export function checkProject(project: Project): Diagnostic[] {
     if (a.justification.length === 0)
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
-      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
-    // The manifest writes an absent maxTokens as null.
-    for (const [field, v] of Object.entries(a.budget ?? {}))
-      if (v !== null && (!Number.isInteger(v) || (v as number) < 1))
+      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, a.kind === "agent" ? 'Add budget: { usd, turns, wallClock } (such as { usd: 5, turns: 40, wallClock: "30m" }) so each session is bounded.' : "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+    // The manifest writes an absent maxTokens, maxAttempts and timeoutMs as null.
+    for (const [field, v] of Object.entries(a.budget ?? {})) {
+      if (v === null) continue;
+      if (field === "usd") {
+        if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.usd ${String(v)}, which isn't a positive finite number`, "Use a positive number of US dollars, such as 5.");
+      } else if (field === "wallClock") {
+        if (typeof v !== "string" || durationMs(v) === null) add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.wallClock ${String(v)}, which isn't a duration like 30m`, 'Use a duration such as "30m" or "2h".');
+      } else if (!Number.isInteger(v) || (v as number) < 1)
         add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.${field} ${String(v)}, which isn't a positive whole number`, "Use a positive integer.");
+    }
+    if (a.kind === "model-assisted" && a.budget && (a.budget.maxAttempts === null || a.budget.timeoutMs === null))
+      add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is model-assisted but its budget lacks maxAttempts or timeoutMs`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+    if (a.kind === "agent") checkAgent(project, m, a, add);
     const scheduled = new Set<string>();
     for (const s of a.schedules) {
       if (s.cron !== null && !cronParses(s.cron)) add("error", "SCHEDULE_INVALID", a.name, `schedule cron "${s.cron}" isn't a valid cron expression like 0 9 * * *`);
@@ -72,6 +141,10 @@ export function checkProject(project: Project): Diagnostic[] {
     if (a.receives.length === 0)
       add("warning", "ACTOR_UNREACHABLE", a.name, `No route delivers anything to ${a.name}, so nothing can ever activate it`);
   }
+  for (const msg of m.messages)
+    if (reservedAgentName(msg.name)) add("error", "AGENT_NAME_RESERVED", msg.name, `${msg.name} is reserved for the agent runtime and can't be declared as a message`, "Rename it.");
+  for (const e of m.effects)
+    if (reservedAgentName(e.name)) add("error", "AGENT_NAME_RESERVED", e.name, `${e.name} is reserved for the agent runtime and can't be declared as an effect`, "Rename it.");
   const bindings = new Map<string, string[]>();
   for (const a of m.actors) bindings.set(a.binding, [...(bindings.get(a.binding) ?? []), a.name]);
   for (const [b, names] of bindings) if (names.length > 1) add("error", "BINDING_DUPLICATE", b, `Binding ${b} is used by ${names.join(" and ")}`);

@@ -6,10 +6,75 @@
 - **A larger install.** `@actord/toolkit` requires `agents` 0.30.1 (pinned) as a peer dependency. With its
   dependencies and required peers, that adds about 170 packages to every project that installs the toolkit: this
   repository's lockfile grew from 197 to 348 packages when the runtime moved onto the Agents SDK. This is accepted
-  (#12), because the runtime is a Lifecycle capability of that SDK. Agent actors will add Pi and
-  `@cloudflare/computer`.
+  (#12), because the runtime is a Lifecycle capability of that SDK.
+  - **Agent actors add more**, as optional peers: Pi (`@earendil-works/pi-durable`, `pi-ai` and `chord`, 1.4.0),
+    `@cloudflare/computer` 0.8.0, `@platformatic/vfs` 0.4.0 and zod. With pi-ai's provider SDKs (OpenAI, Anthropic,
+    Google, AWS Bedrock) and their helpers, Pi and Computer grew this repository's lockfile from 356 to 439 packages
+    (spike 3). npm warns that two of them, `@google/genai` and `protobufjs`, have install scripts.
+  - **`@platformatic/vfs` isn't imported by the toolkit.** It is a peer of Computer's git client, which loads it
+    lazily and fails without it.
+  - Accepted on the same ruling (#12): an app without agent actors installs none of them.
 - **Local evidence only.** Tests run in workerd through Cloudflare's Vitest integration; `actord events` and
-  `actord trace` read logs from local runs and never see production. Nothing was deployed to Cloudflare.
+  `actord trace` read logs from local runs and never see production. The suites deploy nothing. Spikes 2, 4, 5 and 6
+  ran on Workers the owner deployed for them, and their evidence is in `docs/evidence/`.
+- **No container runs in tests.** Under `@cloudflare/vitest-plugin` 1.4.7 a Durable Object has no `ctx.container`:
+  the plugin turns containers off, so neither a `containers` entry nor Computer's `ContainerBackend` gets one
+  (spike 3). Container tests run against a stub of `ctx.container` (`start`, `getTcpPort`, `destroy`, `running`),
+  not a real container. What a real container does when it is lost, when a command runs long, or during an install
+  was seen only in spikes 2 and 4, on one image, one instance size and one region. A command outrunning
+  `execTimeoutMs` has never been observed live: the spikes' longest ran 185 s. Tracked: none.
+- **The Container backend is experimental.** Computer marks its Container backend, its sync protocol and computerd
+  "unsuitable for production use"; its filesystem, git client and Pi tools are stable. The toolkit pins Computer at
+  exactly 0.8.0. An upgrade can change what the spikes measured, so it needs the spikes' checks again, by hand.
+  Computer doesn't accept unsolicited pull requests, so fixes go through its issues. Tracked: none.
+- **Container commands don't get the image's `ENV`.** computerd gives a command only `HOME`, `OLDPWD`, `PATH`, `PWD`
+  and that exec's own `env` (spike 2). Anything a command needs goes in that exec's `env`. With `registry-read`, the
+  toolkit passes `NODE_EXTRA_CA_CERTS` on every exec through `workspace.runtime` itself, but a client that ignores it
+  (curl, pip) still distrusts the gateway until the image adds its certificate to the system bundle, which needs a
+  start command. Tracked: none.
+- **An exec through `workspace.stub()` doesn't get the egress CA.** The toolkit adds `NODE_EXTRA_CA_CERTS` to every
+  exec through `workspace.runtime`, but Computer's RPC stub (`workspace.stub()`, for handing the workspace to another
+  Worker) runs execs on the unwrapped Workspace. Pass `NODE_EXTRA_CA_CERTS` in such an exec's `env`. Tracked: none.
+- **Large tarballs through the registry gateway.** In spike 2, the `workerd` and `wrangler` tarballs arrived corrupt
+  once ("zlib: invalid distance too far back"), and npm's retry fixed them. The cause is unknown: the gateway's
+  streaming or the HTTPS interception. If it happens again, the gateway may need to buffer a tarball before
+  answering. Tracked: none.
+- **`@actord/toolkit/agents` loads Computer and zod at import.** So every app with an agent actor installs
+  `@cloudflare/computer` and zod, even one whose agents have no workspace. Every planned agent has a workspace, so
+  phase one pays nothing for it; splitting out an `agents/workspace` entry point would end it. Tracked: none.
+- **A budget can overshoot by two model requests.** actord aborts a session from outside its run once its `turns` or
+  `usd` is reached (Pi has no budgets, and a Pi hook can't stop a run), and a request's cost is known only when it
+  ends. So the overshoot is at most two model requests: the one that crosses the limit, and one already in flight when
+  the abort lands. For `turns`, that is at most one response past the limit. In the tests, `usd: 1` with $0.40
+  requests stopped between $1.20 and $1.60. Tracked: none.
+- **`budget.usd` counts only model cost that pi-ai prices.** For a model it doesn't price, pi-ai reports a cost of 0,
+  so the `usd` budget is silently unenforced. The pinned model, DeepSeek V4.1 Flash, is priced. A model swap could
+  switch the `usd` budget off with no error; `turns` and `wallClock` still hold. A session's `usd` counts the model
+  cost pi-ai reports, not container seconds, so the factory counts container time itself. Tracked: none.
+- **Approvals come back as user messages.** A Pi tool can't defer its result, so a tool that needs approval answers
+  "waiting" at once, and the result arrives later as a user message (`Result of <effect> (request <key>): …`), not
+  as the tool's result. The model reads it as new input in the conversation, and may have moved on or ended its turn
+  by then. The session's `wallClock` keeps running while it waits: the session's job ends at `wallClock` plus 10
+  minutes, though the approval stays open for its expiry (3 days by default), so a later approval's result is only a
+  note. An app whose approvals take long needs a longer `wallClock`. Tracked: none.
+- **A handler must not await I/O.** `[beside-transaction-nested]` pins that a transaction started beside an open
+  handler transaction, once the handler yields to the event loop, runs inside it, and the handler's throw rolls its
+  write back. Pi's session store, Computer's vfs sync-back, Lifecycle's job rows and actord's drain settlements are
+  writers that start such transactions, so their rows are at risk while a handler awaits I/O or a timer. A tool's
+  effect request made in that window is refused (`REQUESTED_IN_HANDLER`). This applies to every actor. Nothing
+  enforces the rule yet: #80 makes such a handler fail loudly, after plan 3.
+- **The `corsProxy` residual.** Computer 0.8.0's push ignores the `corsProxy` it is passed, and reads `http.corsProxy`
+  from the workspace's `.git/config`, which the agent can write with `exec`. The toolkit refuses a push when one is
+  set, checking just before the push, and only storage, never the network, runs between that check and Computer's
+  read. If a write ever landed in between, one push's `Authorization` header could go through a proxy the agent
+  named. The owner accepted the gap; #79 researches the fix in Computer.
+- **Transcripts hold everything the model saw.** A session's transcript in R2 has every tool argument and result, so
+  it holds the workspace contents the model read or wrote. The bucket needs restricted access and a retention policy;
+  the toolkit sets neither. Tracked: none.
+- **A deploy reaches a busy agent late.** A running Durable Object keeps its version until it restarts. In spike 4 a
+  deploy reached a busy agent object five minutes late, between two commands, and earlier objects stayed on their
+  first version through several deploys. To roll new code to a running agent now, the object must restart (spike 4
+  evicted it with `ctx.abort()`). Tracked: none.
 - **Inside Claude Code's default sandbox, workerd tests can't run** (the sandbox denies the loopback port
   Miniflare needs), so `actord verify` reports `blocked` there rather than passing (decision 0004).
 - **Measured contribution is modest and uneven.** Two release eval runs on this version: mean `Δ` +0.09 and

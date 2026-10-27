@@ -14,7 +14,7 @@ codex plugin list --json
 
 For a local checkout, run `codex plugin marketplace add /absolute/path/to/actord` instead. The root
 `.agents/plugins/marketplace.json` points directly at `./plugins/codex`; there is no filtered adapter build.
-Node.js 22.18+, npm, tar, and Codex with plugin CLI support are required (tested CLI 0.164.0).
+Node.js 22.19+, npm, tar, and Codex with plugin CLI support are required (tested CLI 0.164.0).
 Start a fresh Codex chat after installation. Invoke `setup-actor-project`, `design-actor-system`,
 `implement-actor-behavior`, `verify-actor-reliability`, `inspect-actor-system`, or `evolve-actor-system`.
 

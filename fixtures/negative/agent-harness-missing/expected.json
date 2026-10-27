@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "AGENT_HARNESS_MISSING"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

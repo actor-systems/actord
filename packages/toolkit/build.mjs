@@ -33,6 +33,8 @@ await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), ru
 await build({ ...library, entryPoints: { testing: join(here, "src/testing.ts") }, platform: "neutral", external: ["cloudflare:test", "agents", "agents/*"] });
 // The Worker's source handlers deliver through the runtime, so the same packages stay the project's own.
 await build({ ...library, entryPoints: { sources: join(here, "src/sources/index.ts") }, platform: "neutral", external: ["agents", "agents/*", "cloudflare:workers"] });
+// Agent actors run on the project's own Pi and Computer, optional peers that only this entry point imports.
+await build({ ...library, entryPoints: { agents: join(here, "src/agents/index.ts") }, platform: "neutral", external: ["agents", "agents/*", "@earendil-works/*", "@cloudflare/computer", "@cloudflare/computer/*", "cloudflare:*"] });
 await build({ ...library, entryPoints: { vitest: join(here, "src/vitest.ts") }, platform: "node" });
 execFileSync("npx", ["--no-install", "tsc", "-p", join(here, "tsconfig.build.json")], { cwd: here, stdio: "inherit" });
 // Declarations keep the source's relative ".ts" specifiers; projects resolve ".js" to ".d.ts" reliably.

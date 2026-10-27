@@ -14,6 +14,7 @@ export interface WorkerConfig {
   exports?: Record<string, { type?: string; state?: string; storage?: string; renamed_to?: string }>;
   migrations?: unknown[];
   vars?: Record<string, unknown>;
+  containers?: Array<{ class_name: string; scheduling_policy?: string; image?: string; images?: unknown }>;
   send_email?: Array<{ name: string; destination_address?: string; allowed_destination_addresses?: string[] }>;
 }
 
