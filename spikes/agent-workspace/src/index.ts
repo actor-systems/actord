@@ -50,6 +50,32 @@ type SpikeEnv = Env & { SPIKE_TOKEN?: string; GITHUB_APP_ID?: string; GITHUB_APP
 const REPOSITORY = "actor-systems/actord";
 /** Where the clone comes from and the push goes, always: never `origin` from the clone's .git/config, which the agent can write. */
 const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
+/** The model's tools that change files: they refuse git's own (see inGitDir). */
+const GIT_WRITERS = new Set(["write", "edit", "delete"]);
+
+/** Whether `path`, with ".", ".." and the symlinks that exist resolved (from "/"), names a .git directory or a path in one. */
+async function inGitDir(workspace: Workspace, path: string): Promise<boolean> {
+  const rest = path.split("/");
+  const at: string[] = [];
+  for (let links = 0; rest.length > 0; ) {
+    const part = rest.shift()!;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      at.pop();
+      continue;
+    }
+    if (part.toLowerCase() === ".git") return true;
+    at.push(part);
+    const here = `/${at.join("/")}`;
+    if (!(await workspace.fs.lstat(here).catch(() => null))?.isSymbolicLink) continue;
+    if (++links > 40) return true; // a loop: refused rather than followed
+    const target = await workspace.fs.readlink(here);
+    at.pop();
+    if (target.startsWith("/")) at.length = 0;
+    rest.unshift(...target.split("/"));
+  }
+  return false;
+}
 const REPO = "/workspace/actord";
 const BACKEND_ID = "container";
 const MODEL_ID = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
@@ -478,6 +504,12 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       // Bearer first, as the plan has it; if GitHub's git endpoint refuses that, Basic with x-access-token, as Actions does.
       const attempts: Array<{ scheme: string; ok: boolean; error: string | null; refs?: unknown }> = [];
       for (const [scheme, authorization] of [["bearer", `Bearer ${token}`], ["basic", `Basic ${basic}`]] as const) {
+        // Again just before each attempt: minting and a refused attempt wait on the network, when the container's
+        // writes can land. From here to the push's own read of the config there is only storage.
+        if (await git.configGet({ dir: REPO, path: "http.corsProxy" })) {
+          attempts.push({ scheme, ok: false, error: "refused: the clone's .git/config sets http.corsProxy" });
+          break;
+        }
         try {
           // The URL is pinned here, never read from .git/config's remote; corsProxy "" for a client that forwards it.
           const options: GitPushOptions & { corsProxy: string } = { dir: REPO, url: REPOSITORY_URL, ref: BRANCH, remoteRef: `refs/heads/${BRANCH}`, force: true, corsProxy: "", headers: { Authorization: authorization } };
@@ -691,6 +723,11 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       parameters: tool.parameters as ToolRegistration["parameters"],
       replay: REPLAY_SAFE.has(tool.name) ? "safe" : "unsafe",
       async execute(args, api, context) {
+        // These tools run here, beside /push: a .git/config written mid-push could name the proxy its token goes through.
+        const path = (args as { path?: unknown }).path;
+        if (GIT_WRITERS.has(tool.name) && typeof path === "string" && (await inGitDir(view, path))) {
+          return { output: [{ type: "text", text: `${tool.name} refused: ${path} is in a .git directory, which these tools don't change. Run git through exec instead.` }], isError: true };
+        }
         const { content, isError } = await execute({ id: api.callId, name: tool.name, arguments: args }, { abortSignal: context.abortSignal });
         return { output: content, isError };
       },

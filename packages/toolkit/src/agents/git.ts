@@ -73,8 +73,10 @@ function isAuthFailure(failure: unknown): boolean {
  * (non-fast-forward, network) surfaces as itself.
  *
  * Computer 0.8.0's push drops `corsProxy`, so isomorphic-git falls back to the repo's `http.corsProxy`: a push from a
- * repo whose config names one is refused before the token is minted. `corsProxy: ""` is passed as well, so a client
- * that forwards it closes the gap between that check and the push's own read of the config.
+ * repo whose config names one is refused, before the token is minted and again just before each attempt. Minting and
+ * a refused attempt wait on the network, when the container's writes can land; between the last check and the
+ * push's own read of the config there is only storage, so they can't. (pi's own file tools, which run here, refuse
+ * .git paths.) `corsProxy: ""` is passed as well, for a client that forwards it.
  */
 export function gitPushEffect(options: { workspace: () => Workspace; dir: string; url: string; token: () => Promise<string>; allow?: (branch: string) => boolean }): EffectAdapter<{ branch: string }, { branch: string; refs: unknown }> {
   const url = httpsUrl(options.url, "gitPushEffect's url");
@@ -83,12 +85,16 @@ export function gitPushEffect(options: { workspace: () => Workspace; dir: string
     async run({ branch }, { signal }) {
       if (typeof branch !== "string" || !allow(branch)) throw new EffectRejected("may push only factory/ branches");
       const git = options.workspace().git;
-      if (await git.configGet({ dir: options.dir, path: "http.corsProxy" })) throw new EffectRejected("the repo's .git/config sets http.corsProxy; refusing to push through it");
+      const unproxied = async () => {
+        if (await git.configGet({ dir: options.dir, path: "http.corsProxy" })) throw new EffectRejected("the repo's .git/config sets http.corsProxy; refusing to push through it");
+      };
+      await unproxied();
       const token = await options.token();
       const scrub = scrubber(token);
       let failure = "push was refused";
       for (const authorization of [`Bearer ${token}`, `Basic ${btoa(`x-access-token:${token}`)}`]) {
         signal.throwIfAborted();
+        await unproxied();
         let cause: unknown;
         try {
           const push: GitPushOptions & { corsProxy: string } = { dir: options.dir, url, ref: branch, remoteRef: `refs/heads/${branch}`, corsProxy: "", headers: { Authorization: authorization } };

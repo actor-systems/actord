@@ -1544,13 +1544,17 @@ async function plantedRepo(state: DurableObjectState, proxy: boolean, origin = "
   return workspace;
 }
 
-/** Record every outbound fetch in `fn` (answered 401, so a push stops at discovery) and restore fetch after. */
-async function outbound<T>(fn: () => Promise<T>): Promise<{ requests: Array<{ url: string; authorization: string | null }>; result: T | Error }> {
+/**
+ * Record every outbound fetch in `fn` (answered 401, so a push stops at discovery, once `before` has run for the
+ * request) and restore fetch after.
+ */
+async function outbound<T>(fn: () => Promise<T>, before?: (n: number) => Promise<void>): Promise<{ requests: Array<{ url: string; authorization: string | null }>; result: T | Error }> {
   const requests: Array<{ url: string; authorization: string | null }> = [];
   const real = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     requests.push({ url: request.url, authorization: request.headers.get("Authorization") });
+    await before?.(requests.length);
     return new Response("no", { status: 401, statusText: "Unauthorized" });
   }) as typeof fetch;
   try {
@@ -1580,6 +1584,55 @@ it("[git-push-url-pinned] a corsProxy in the workspace's .git/config refuses the
     expect(result).toBeInstanceOf(EffectRejected);
     expect((result as Error).message).toMatch(/http\.corsProxy/);
     expect(requests).toEqual([]);
+  });
+});
+
+it("[git-push-url-pinned] a corsProxy written while the token is minted refuses the push before any request leaves", async () => {
+  await runInDurableObject(scribe("git-proxied-mint"), async (_i, state) => {
+    const workspace = await plantedRepo(state, false);
+    const proxied = () => workspace.git.configSet({ dir: "/repo", path: "http.corsProxy", value: "https://evil.example" });
+    // Minting is a network call in production: the container's writes can land while it waits.
+    const push = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => (await proxied(), TOKEN) });
+    const { requests, result } = await outbound(() => push.run({ branch: "factory/one" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} }));
+    expect(requests).toEqual([]);
+    expect(result).toBeInstanceOf(EffectRejected);
+    expect((result as Error).message).toMatch(/http\.corsProxy/);
+  });
+});
+
+it("[git-push-url-pinned] a corsProxy written while Bearer is refused refuses the Basic attempt", async () => {
+  await runInDurableObject(scribe("git-proxied-basic"), async (_i, state) => {
+    const workspace = await plantedRepo(state, false);
+    const push = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
+    // The Bearer push's round trip is another wait the container's writes can land in.
+    const { requests, result } = await outbound(
+      () => push.run({ branch: "factory/one" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} }),
+      async (n) => void (n === 1 && (await workspace.git.configSet({ dir: "/repo", path: "http.corsProxy", value: "https://evil.example" }))),
+    );
+    expect(requests).toEqual([{ url: `${REPO}/info/refs?service=git-receive-pack`, authorization: `Bearer ${TOKEN}` }]);
+    expect(result).toBeInstanceOf(EffectRejected);
+  });
+});
+
+it("[workspace-git-dir-refused] pi's write, edit and delete refuse any path in a .git directory, however it is spelled", async () => {
+  await runInDurableObject(scribe("git-dir-tools"), async (_i, state) => {
+    const workspace = await plantedRepo(state, false);
+    await workspace.fs.symlink("/repo/.git", "/repo/g");
+    const tools = workspaceTools(workspace, ["workspace.*"]);
+    const run = (name: string, args: unknown) => tools.find((t) => t.name === name)!.execute(args as never, { callId: "c", conversationId: 1 } as never, { abortSignal: new AbortController().signal } as never);
+    const config = await workspace.fs.readFile("/repo/.git/config", "utf8");
+    for (const path of ["/repo/.git/config", "/repo/./.git/config", "/repo//.git/config", "/repo/sub/../.git/config", "/repo/.GIT/config", "/repo/g/config", "/repo/.git"]) {
+      for (const [name, args] of [["write", { path, content: "[http]\n\tcorsProxy = https://evil.example\n" }], ["edit", { path, edits: [{ oldText: "[core]", newText: "[http]\n\tcorsProxy = https://evil.example\n[core]" }] }], ["delete", { path, recursive: true }]] as const) {
+        const result = await run(name, args);
+        expect(result.isError, `${name} ${path}`).toBe(true);
+        expect(JSON.stringify(result.output), `${name} ${path}`).toContain(".git");
+      }
+    }
+    expect(await workspace.fs.readFile("/repo/.git/config", "utf8")).toBe(config);
+    expect(await workspace.git.configGet({ dir: "/repo", path: "http.corsProxy" })).toBeUndefined();
+    // Anything else is written as before.
+    expect((await run("write", { path: "/repo/notes.md", content: "hi\n" })).isError).toBeFalsy();
+    expect(await workspace.fs.readFile("/repo/notes.md", "utf8")).toBe("hi\n");
   });
 });
 

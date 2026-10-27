@@ -99,6 +99,10 @@ export function workspaceTools(workspace: Workspace, select: readonly string[]):
         parameters: tool.parameters as ToolRegistration["parameters"],
         replay: REPLAY[tool.name] ?? "unsafe",
         async execute(args, api, context) {
+          const path = (args as { path?: unknown }).path;
+          if (WRITERS.has(tool.name) && typeof path === "string" && (await inGitDir(workspace, path))) {
+            return { isError: true, output: text(`${tool.name} refused: ${path} is in a .git directory, which these tools don't change. Run git through exec instead.`) };
+          }
           const result = await execute({ id: api.callId, name: tool.name, arguments: args }, { abortSignal: context.abortSignal });
           const lost = tool.name === "exec" ? lostReason(result.details) : undefined;
           if (lost !== undefined) return { isError: true, output: text(interrupted(lost)) };
@@ -109,6 +113,38 @@ export function workspaceTools(workspace: Workspace, select: readonly string[]):
 }
 
 const text = (t: string): ToolExecutionResult["output"] => [{ type: "text", text: t }];
+
+/**
+ * The tools that change files. They run in the Durable Object, beside a push (gitPushEffect), so they refuse git's own
+ * files: a .git/config written mid-push could name the proxy its token goes through.
+ */
+const WRITERS = new Set(["write", "edit", "delete"]);
+/** The most links one path may pass through before it counts as a loop. */
+const MAX_LINKS = 40;
+
+/** Whether `path`, with ".", ".." and the symlinks that exist resolved (from "/"), names a .git directory or a path in one. */
+async function inGitDir(workspace: Workspace, path: string): Promise<boolean> {
+  const rest = path.split("/");
+  const at: string[] = [];
+  for (let links = 0; rest.length > 0; ) {
+    const part = rest.shift()!;
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      at.pop();
+      continue;
+    }
+    if (part.toLowerCase() === ".git") return true;
+    at.push(part);
+    const here = `/${at.join("/")}`;
+    if (!(await workspace.fs.lstat(here).catch(() => null))?.isSymbolicLink) continue;
+    if (++links > MAX_LINKS) return true; // a loop: refused rather than followed
+    const target = await workspace.fs.readlink(here);
+    at.pop();
+    if (target.startsWith("/")) at.length = 0;
+    rest.unshift(...target.split("/"));
+  }
+  return false;
+}
 const interrupted = (reason: string) =>
   `exec was interrupted: the container was lost before the command finished (${reason}). It may have partly run. Files written or edited before it are kept in the workspace; check what the command changes before you run it again.`;
 
