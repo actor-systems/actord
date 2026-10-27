@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { SELF, abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
@@ -205,6 +205,120 @@ for (const yields of [false, true]) {
       delete gate.__probeGate;
     }
   });
+}
+
+it("[storage-await-no-macrotask] a handler's awaits on Durable Object storage all finish before a macrotask queued as it started runs, so they don't hold its transaction open across an event-loop turn (#80)", async () => {
+  expect(await ingress(env, system, "Probe", "probe.storage", { key: "st" }, { key: "st" })).toMatchObject({ status: "handled" });
+  const rows = await runInDurableObject(probe("st"), (_i, s) => s.storage.sql.exec<{ crossed: string }>("SELECT crossed FROM storage_awaits").toArray());
+  expect(rows.map((r) => JSON.parse(r.crossed))).toEqual([
+    {
+      put: false,
+      "put-many": false,
+      get: false,
+      "get-many": false,
+      list: false,
+      delete: false,
+      "delete-many": false,
+      getAlarm: false,
+      setAlarm: false,
+      deleteAlarm: false,
+      sql: false,
+      "kv.get": false,
+      "kv.put": false,
+      "kv.delete": false,
+      transaction: false,
+      transactionSync: false,
+      getCurrentBookmark: false,
+      sync: false,
+      "lifecycle.jobs.push": false,
+    },
+  ]);
+  // The instrument works: in a transaction, the same sentinel has run once an await crosses a turn.
+  const crossed = await runInDurableObject(probe("st"), (_i, s) =>
+    (s.storage as unknown as { transaction<T>(f: () => Promise<T>): Promise<T> }).transaction(async () => {
+      let turned = false;
+      const sentinel = setTimeout(() => (turned = true), 0);
+      await scheduler.wait(1);
+      clearTimeout(sentinel);
+      return turned;
+    }),
+  );
+  expect(crossed).toBe(true);
+});
+
+// A beside writer (pi's session store, say) whose transaction is requested as the handler starts, or only once an I/O
+// callback arrives after the handler started; the handler awaits I/O, as one that fetches would. A macrotask queued as
+// the handler starts marks the first event-loop turn: the sentinel #80 races the handler against.
+for (const io of ["wait", "fetch"] as const) {
+  for (const beside of ["pending", "after-io"] as const) {
+    const what =
+      beside === "pending"
+        ? "a transaction requested beside the handler as it starts runs nested, and is told it committed, before a macrotask queued as the handler started; the handler's rollback takes its row"
+        : "a transaction that an I/O callback arriving after the handler started begins runs after a macrotask queued as the handler started";
+    it(`[sentinel-ordering] ${what} (the handler awaits ${io === "wait" ? "scheduler.wait(1)" : "a fetch"})`, async () => {
+      const gate = globalThis as { __probeGate?: unknown };
+      const name = `order-${io}-${beside}`;
+      const yieldTo = (): Promise<unknown> => (io === "wait" ? scheduler.wait(1) : SELF.fetch("https://probe/other").then((r) => r.text()));
+      try {
+        const result = await runInDurableObject(probe(name), async (instance: { actor: { receive(e: unknown): Promise<{ status: string; error?: string }> } }, state) => {
+          state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
+          const db = new DurableObjectSqliteDatabase(state.storage);
+          const log: string[] = [];
+          // Registered here, outside any transaction, as in [beside-transaction-nested].
+          let start!: () => void;
+          let ran!: () => void;
+          const running = new Promise<void>((r) => (ran = r));
+          const written = new Promise<void>((r) => (start = r)).then(() =>
+            db
+              .transaction(async (t) => {
+                log.push("beside runs");
+                await t.run("INSERT INTO beside (v) VALUES ('pi')");
+                ran();
+              })
+              .then(() => log.push("beside committed")),
+          );
+          let thrown!: () => void;
+          const handlerDone = new Promise<void>((r) => (thrown = r));
+          gate.__probeGate = {
+            then: (_resolve: () => void, reject: (err: Error) => void) => {
+              setTimeout(() => log.push("sentinel"), 0);
+              if (beside === "pending") start();
+              else
+                void yieldTo().then(() => {
+                  log.push("io callback");
+                  start();
+                });
+              // The handler's own I/O; then it waits for the beside write to run (or 2 s), and fails.
+              void yieldTo()
+                .then(() => Promise.race([running, new Promise((r) => setTimeout(r, 2_000))]))
+                .then(() => {
+                  log.push("handler throws");
+                  reject(new Error("the handler failed"));
+                  thrown();
+                });
+            },
+          };
+          const receipt = await instance.actor.receive({ v: 1, id: `${name}-1`, type: "probe.outcome", version: 1, from: `Probe:${name}`, to: `Probe:${name}`, correlationId: `${name}-1`, causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-order", status: "confirmed" } });
+          await written;
+          await handlerDone;
+          return { receipt, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
+        });
+        const at = (entry: string) => result.log.indexOf(entry);
+        expect(result.receipt).toMatchObject({ status: "failed", error: "the handler failed" });
+        if (beside === "pending") {
+          expect(at("beside runs")).toBeLessThan(at("sentinel"));
+          expect(at("beside committed")).toBeLessThan(at("sentinel"));
+        } else {
+          expect(at("sentinel")).toBeLessThan(at("io callback"));
+          expect(at("io callback")).toBeLessThan(at("beside runs"));
+        }
+        // Without a sentinel the handler holds its transaction open until it throws, so either way the write is lost.
+        expect(result.rows).toEqual([]);
+      } finally {
+        delete gate.__probeGate;
+      }
+    });
+  }
 }
 
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
