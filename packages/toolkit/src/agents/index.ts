@@ -757,6 +757,18 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   // ---- Handlers: the actor's `on` messages, its sessions' outcomes, and its tools' results ----
   type Ctx = HandlerContext<System, string>;
   const cancel = (c: Ctx, key: string) => c.cancelJob(SESSION as never, key);
+  /** Deny a stopped or replaced session's tool requests (keyed "<session>:<callId>") still waiting for a person. */
+  const withdrawApprovals = (c: Ctx, row: SessionRow, reason: string) => {
+    if (row.session === null) return; // no tool has run yet
+    const parked = c.sql
+      .exec<{ name: string; key: string }>(
+        "SELECT json_extract(body, '$.name') AS name, json_extract(body, '$.key') AS key FROM _actors_outbox WHERE kind = 'effect' AND status = 'awaiting_approval' AND substr(json_extract(body, '$.key'), 1, ?) = ?",
+        row.session.length + 1,
+        `${row.session}:`,
+      )
+      .toArray();
+    for (const fx of parked) c.deny(fx.name as never, fx.key, reason);
+  };
   const verbs: Record<string, (message: Message<System, string>, c: Ctx) => void> = {
     start(message, c) {
       if (rowByKey(message.id)) {
@@ -767,6 +779,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       if (current && LIVE.has(jobStatus(current.key) ?? "") && !cancel(c, current.key)) {
         c.note("replaced session hasn't started yet; its start stops it", { key: current.key });
       }
+      if (current) withdrawApprovals(c, current, "the session was replaced");
       const generation = (current?.generation ?? 0) + 1;
       c.sql.exec("INSERT INTO _actors_agent_sessions (key, session, operation, generation, instructions, started_at) VALUES (?, NULL, ?, ?, ?, ?)", message.id, message.id, generation, instructions, c.now());
       c.effect(SESSION as never, { prompt: render(message.type, message.payload) }, { key: message.id });
@@ -785,11 +798,14 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       if (!current || !LIVE.has(status ?? "")) c.note("no active session; nothing to stop", { type: message.type });
       // Its result is in: the probe settles the job with it, as a completion wins over a cancel.
       else if (current.result != null) c.note("the session already returned its result; nothing to stop", { key: current.key });
-      else if (current.stopped_at != null) c.note("stop already recorded", { key: current.key });
-      else if (!cancel(c, current.key)) {
-        // The start hasn't returned, so there is no job to cancel yet: keep the stop for the start to act on.
-        c.sql.exec("UPDATE _actors_agent_sessions SET stopped_at = ? WHERE key = ?", c.now(), current.key);
-        c.note("stop recorded; the session stops when its start runs", { key: current.key, job: status ?? null });
+      else {
+        if (current.stopped_at != null) c.note("stop already recorded", { key: current.key });
+        else if (!cancel(c, current.key)) {
+          // The start hasn't returned, so there is no job to cancel yet: keep the stop for the start to act on.
+          c.sql.exec("UPDATE _actors_agent_sessions SET stopped_at = ? WHERE key = ?", c.now(), current.key);
+          c.note("stop recorded; the session stops when its start runs", { key: current.key, job: status ?? null });
+        }
+        withdrawApprovals(c, current, "the session was stopped");
       }
     },
   };

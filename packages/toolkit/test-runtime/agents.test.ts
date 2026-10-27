@@ -687,9 +687,13 @@ it("[agent-tool-approval] a tool that needs approval answers waiting at once; on
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
 });
 
-it("[agent-tool-result-stale] an approval that resolves after its session was replaced is only a note: nothing is submitted to either session", async () => {
+it("[agent-tool-result-stale] an approved effect whose result arrives after its session was replaced is only a note: nothing is submitted to either session", async () => {
   const events = captureEvents();
   const requests: ScriptedRequest[] = [];
+  // Approved before the replacement, so the replacement doesn't withdraw it (R19); its run is held until then.
+  const running = gate();
+  gates.push(running.open);
+  overrideEffect("note.approved", { run: async (input) => (await running.wait(), { noted: (input as { text: string }).text }) });
   script("tool-stale-1", (r) => {
     requests.push(r);
     if ((users(r)[0] ?? "").includes('"second"')) return finish({ summary: "second" });
@@ -701,9 +705,12 @@ it("[agent-tool-result-stale] an approval that resolves after its session was re
   const [first] = await s.sessions();
   const key = `${first!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
   await runEnded("tool-stale-1", first!.session as string, "task-ts1");
+  const decided = s.decide(key, "approve");
+  await reached(running);
   await task("tool-stale-1", "second", "task-ts2");
   await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 4000);
-  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
+  running.open();
+  expect(await decided).toMatchObject({ status: "confirmed", key });
   await settle(env, system);
   expect(notes(events, "Scribe:tool-stale-1", "stale tool result")).toMatchObject([{ detail: { key, session: first!.session, generation: 1 } }]);
   expect((await s.outbox()).filter((r) => r.id.startsWith("fx:agent.session.steer:"))).toEqual([]);
@@ -718,6 +725,36 @@ it("[agent-tool-result-stale] an approval that resolves after its session was re
   // Noted as stale, and Scribe's own handler for the result message got it all the same, once.
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
 });
+
+for (const [how, reason] of [["stopped", "the session was stopped"], ["replaced", "the session was replaced"]] as const) {
+  it(`[agent-${how === "stopped" ? "stop" : "replace"}-withdraws-approvals] a session ${how} while a tool waits for a person has that approval denied: a later approve changes nothing, and the effect never runs`, async () => {
+    const events = captureEvents();
+    const name = `withdraw-${how}`;
+    const requests: ScriptedRequest[] = [];
+    script(name, (r) => {
+      requests.push(r);
+      if ((users(r)[0] ?? "").includes('"second"')) return finish({ summary: "second" });
+      return r.lastToolResults.length === 0 ? call("note_approved", { text: "w" }) : { text: "Waiting for the approval." };
+    });
+    const s = scribe(name);
+    await task(name, "first", `task-${how}1`);
+    await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
+    const [row] = await s.sessions();
+    const key = `${row!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+    expect(await effectRow(name, "note.approved", key)).toMatchObject({ status: "awaiting_approval" });
+    await runEnded(name, row!.session as string, `task-${how}1`);
+    if (how === "stopped") expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: name, id: `halt-${how}` })).toMatchObject({ status: "handled" });
+    else await task(name, "second", `task-${how}2`);
+    expect(await effectRow(name, "note.approved", key)).toMatchObject({ status: "denied", last_error: reason });
+    expect(events.filter((e) => e.kind === "effect.denied" && e.actor === `Scribe:${name}`)).toMatchObject([{ effect: "note.approved", effectKey: key, reason }]);
+    expect(await s.decide(key, "approve")).toMatchObject({ status: "denied", key });
+    await settle(env, system);
+    expect(await effectRow(name, "note.approved", key)).toMatchObject({ status: "denied", last_error: reason });
+    expect(await s.noted()).toEqual([]);
+    expect(await s.results()).toEqual([]);
+    expect((await s.done()).map((d) => d.summary)).toEqual(how === "stopped" ? [] : ["second"]);
+  });
+}
 
 it("[agent-tool-undeclared] only the effects in `tools` are offered, and requestEffect refuses an effect the actor doesn't list", async () => {
   const events = captureEvents();
