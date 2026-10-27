@@ -130,8 +130,8 @@ Until then, a handler must not await I/O.
   `PiHarness` opens its store from `lifecycle.storage`, so there is nothing to wrap, and the hazard isn't Pi's alone.
 
 ## Consequences
-- The overshoot past `usd` or `turns` is at most two model requests: the one that crosses the limit, and one already
-  in flight when the abort lands. After a restart, sessions whose start or cancel was in flight aren't watched until
+- The overshoot past `usd` is at most two model requests: the one that crosses the limit, and one already in flight
+  when the abort lands. Past `turns` it is one response. After a restart, sessions whose start or cancel was in flight aren't watched until
   that start runs again or the cancel settles.
 - `budget.usd` is enforced only for a model pi-ai prices. The pinned model is priced. For an unpriced one the
   cost stays 0, and the budget is silently unenforced. A session's `usd` counts the model cost pi-ai reports, not
