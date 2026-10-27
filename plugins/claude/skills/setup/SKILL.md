@@ -14,7 +14,7 @@ Rules that hold for this whole skill:
 
 ## Steps
 
-1. **Check the environment:** `actord doctor`. Fix `error` findings first (Node.js 22.19+ is required).
+1. **Check the environment:** `actord doctor`. Fix `error` findings first (Node.js 22.18+ is required).
 2. **Pick the directory.** Confirm it's empty or new; otherwise ask, and offer `--adopt`.
 3. **Scaffold:** `actord init <dir> --name <name>`. The starter is a complete two-actor system (Greeter →
    Guestbook) with tests, `actord.claims.json`, `.claude/skills/verify/SKILL.md`, `.claude/settings.json`
