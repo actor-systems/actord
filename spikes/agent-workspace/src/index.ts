@@ -401,7 +401,8 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     try {
       result = await this.harness.wait(operationId, { signal: AbortSignal.timeout(PROMPT_WAIT_MS) });
     } catch {
-      await this.harness.abort({ operationId });
+      // abort({ operationId }) only withdraws a queued operation; with no id, it stops the running one too.
+      await this.harness.abort();
       result = { status: "timed_out" };
     }
     const promptMs = Date.now() - started;
@@ -892,8 +893,9 @@ function openSpike(ctx: DurableObjectState, env: SpikeEnv): number {
   sql.exec("CREATE TABLE IF NOT EXISTS spike_snapshots (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, job INTEGER, boot INTEGER NOT NULL, reason TEXT NOT NULL, diff_sha256 TEXT, diff_bytes INTEGER, changed TEXT, todos_left INTEGER, pending TEXT, exec TEXT, sync TEXT, error TEXT)");
   const now = Date.now();
   const boot = sql.exec<{ id: number }>("INSERT INTO spike_boots (at, version, container_running) VALUES (?, ?, ?) RETURNING id", now, env.CF_VERSION_METADATA.id, ctx.container?.running ? 1 : 0).one().id;
-  // A long run is pi's, which resumes it; the watchdog closes that job. Any other job a reset cut off is over.
-  sql.exec("UPDATE spike_jobs SET status = 'interrupted', ended_at = ?, reset_by = ? WHERE status = 'running' AND boot < ? AND kind != 'long'", now, boot, boot);
+  // A long run is pi's, which resumes it, and the watchdog closes that job. One cut off before it reached pi (its options
+  // still empty) is over, like any other job a reset cut off.
+  sql.exec("UPDATE spike_jobs SET status = 'interrupted', ended_at = ?, reset_by = ? WHERE status = 'running' AND boot < ? AND (kind != 'long' OR options = '{}')", now, boot, boot);
   return boot;
 }
 
