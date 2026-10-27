@@ -435,6 +435,18 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS _actors_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)",
 ];
 
+/**
+ * A promise that rejects with `message` once a macrotask runs: setTimeout(0) runs at the next event-loop turn, after
+ * the microtasks queued before it. Clear it once the work it guards has settled, so no timer is left behind.
+ */
+function sentinel(message: string): { fired: Promise<never>; clear(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const fired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), 0);
+  });
+  return { fired, clear: () => clearTimeout(timer) };
+}
+
 /** FNV-1a (64-bit) as base36: short, deterministic ids derived from causal position. */
 export function deriveId(...parts: Array<string | number>): string {
   let h = 0xcbf29ce484222325n;
@@ -510,9 +522,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   // handler's own), and whether a handler's transaction closure is running. workerd runs a transaction started from
   // inside another's closure nested, at once. One started from elsewhere didn't start within 500 microtasks while the
   // open one awaited only microtasks ([beside-transaction-nested] shows no more than that), and runs nested in it once
-  // the open one yields to the event loop (awaits anything that isn't a microtask: I/O, a timer; #80). So a
-  // requestEffect whose own transaction finds this set was called from inside a handler, or beside one that yielded.
-  // Both refuse it.
+  // the open one yields to the event loop (awaits anything that isn't a microtask: I/O, a timer). A handler that yields
+  // fails its delivery at that turn (#80, deliver's sentinel), but a transaction already requested beside it runs first
+  // ([sentinel-ordering]). So a requestEffect whose own transaction finds this set was called from inside a handler,
+  // or beside one that yielded. Both refuse it.
   let inHandlerCall = false;
   let inHandlerTransaction = false;
   // Jobs probeNow asked to look at while a probe of theirs ran or their start hadn't returned: looked at once it does.
@@ -604,18 +617,31 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           return;
         }
         maybeFault(actorName, envelope.type, "before-handler");
+        const context = handlerContext(envelope, pending, notes, cancels);
         inHandlerTransaction = true;
+        // Queued before the handler runs, so it fires at the next event-loop turn, ahead of any timer the handler sets. A
+        // handler still unsettled then awaited I/O (a fetch, a timer), and its transaction would stay open across turns,
+        // where other writers' transactions run nested in it and its rollback takes their rows (#80). Microtasks and most
+        // storage awaits (the KV calls, alarms, sql, kv, transactionSync, Lifecycle's jobs.push) keep those writers out.
+        // A nested transaction(), sync(), getCurrentBookmark() and a Request or Response body read let a waiting one in,
+        // yet finish before this fires, so it misses them ([storage-await-no-macrotask]; #82).
+        const turn = sentinel(`${actorName}.${envelope.type}: handlers may not await I/O; use ctx.effect`);
         try {
           inHandlerCall = true;
           let handled: void | Promise<void>;
           try {
-            handled = handler({ ...envelope, payload: validated.value }, handlerContext(envelope, pending, notes, cancels));
+            handled = handler({ ...envelope, payload: validated.value }, context.ctx);
           } finally {
             inHandlerCall = false;
           }
-          await handled;
+          // When the sentinel wins, the handler is abandoned: it may still be running. The race has marked its promise
+          // handled, so a later rejection isn't reported as unhandled.
+          await Promise.race([handled, turn.fired]);
         } finally {
+          turn.clear();
           inHandlerTransaction = false;
+          // The delivery is over for the handler: one still running (abandoned above) or holding its ctx can't use it.
+          context.close();
         }
         maybeFault(actorName, envelope.type, "after-handler");
         sql.exec("INSERT INTO _actors_inbox (id, type, sender, handled_at) VALUES (?, ?, ?, ?)", envelope.id, envelope.type, envelope.from, now());
@@ -650,7 +676,28 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     return { messageId: e.id, type: e.type, version: e.version, from: e.from, to: e.to, correlationId: e.correlationId, causationId: e.causationId, attempt: e.attempt };
   }
 
-  function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>, cancels: string[]): HandlerContext<S, A> {
+  /**
+   * A handler's ctx, and how to close it once its delivery ends. Closed, every method throws, `sql.exec` included;
+   * `self`, `key` and `now` stay readable.
+   */
+  function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>, cancels: string[]): { ctx: HandlerContext<S, A>; close(): void } {
+    let open = true;
+    const live = () => {
+      if (!open) throw new Error(`${actorName}.${current.type}: this handler's delivery has ended; its ctx can't be used`);
+    };
+    // The native SqlStorage behind a Proxy, so the rest of it still works.
+    const liveSql = new Proxy(sql, {
+      get(target, prop) {
+        if (prop === "exec") {
+          return (...args: Parameters<SqlStorageLike["exec"]>) => {
+            live();
+            return target.exec(...args);
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
     let n = 0;
     const schedule = (dueAt: number, type: string, payload: unknown, timerKey: string) => {
       // A timer is a self-delivery from @timer, so the route @timer → type → this actor must exist.
@@ -660,12 +707,13 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       setTimer(sql, { key: timerKey, type, payload: JSON.stringify(payload), due_at: dueAt, causation_id: current.id, correlation_id: current.correlationId });
       notes.push({ kind: "timer.set", at: now(), actor: self, messageId: current.id, type, correlationId: current.correlationId, detail: { key: timerKey, dueAt } });
     };
-    return {
+    const ctx: HandlerContext<S, A> = {
       self,
       key,
-      sql,
+      sql: liveSql,
       now,
       send(type, payload, opts) {
+        live();
         const routes = system.routes.filter((r) => r.from === actorName && r.message === type);
         const to = (opts?.to as string | undefined) ?? (routes.length === 1 ? routes[0]!.to : undefined);
         if (!to || !routes.some((r) => r.to === to)) throw new Error(`${actorName} has no route for ${String(type)}${opts?.to ? ` to ${String(opts.to)}` : ""}; declare it in system.ts`);
@@ -687,9 +735,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         pending.push({ kind: "message", id, target: envelope.to, body: JSON.stringify(envelope), event: { kind: "sent", at: now(), actor: self, ...ids(envelope) } });
       },
       effect(name, input, opts) {
+        live();
         queueEffect(name as string, input, opts.key, { causationId: current.id, correlationId: current.correlationId }, pending, notes);
       },
       approve(name, effectKey, identity) {
+        live();
         const id = `fx:${name as string}:${effectKey}`;
         const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval' AND next_at > ?", id, now()).toArray()[0];
         if (!row) return false;
@@ -698,6 +748,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         return true;
       },
       deny(name, effectKey, reason, identity) {
+        live();
         const id = `fx:${name as string}:${effectKey}`;
         const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval' AND next_at > ?", id, now()).toArray()[0];
         if (!row) return false;
@@ -707,19 +758,23 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         return true;
       },
       after(delay, type, payload, opts) {
+        live();
         const ms = typeof delay === "number" ? delay : durationMs(delay);
         if (ms === null) throw new Error(`${actorName} set a timer with an invalid delay: ${String(delay)}`);
         schedule(now() + ms, type as string, payload, opts.key);
       },
       at(when, type, payload, opts) {
+        live();
         schedule(when, type as string, payload, opts.key);
       },
       cancelTimer(timerKey) {
+        live();
         if (!cancelTimer(sql, timerKey)) return false;
         notes.push({ kind: "timer.cancelled", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, detail: { key: timerKey } });
         return true;
       },
       settleJob(name, effectKey, outcome) {
+        live();
         const status = (outcome as { status?: unknown } | undefined)?.status;
         if (status !== "confirmed" && status !== "failed") throw new Error(`${actorName} settled job ${name as string} with status ${String(status)}; use "confirmed" or "failed"`);
         if (effectSpecOf(name as string)?.kind !== "job") return false;
@@ -738,6 +793,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         return true;
       },
       cancelJob(name, effectKey) {
+        live();
         const id = `fx:${name as string}:${effectKey}`;
         const row = awaitingJob(sql, id);
         if (!row || !markCancelling(sql, id, now())) return false;
@@ -746,9 +802,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         return true;
       },
       note(text, detail) {
+        live();
         notes.push({ kind: "note", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, reason: text, ...(detail ? { detail } : {}) });
       },
     };
+    return { ctx, close: () => void (open = false) };
   }
 
   /**

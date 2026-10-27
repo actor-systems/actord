@@ -17,9 +17,21 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
+    "probe.storage": message({ version: 1, description: "Await every storage API a handler can reach", payload: z.object({ key: z.string() }) }),
+    "probe.io": message({ version: 1, description: "Write, await something, then use ctx again", payload: z.object({ key: z.string(), io: z.enum(["wait", "timeout", "fetch", "storage", "microtasks"]) }) }),
     "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
+    // Its payload validates only once __probeHold settles: receive() awaits validation before the handler's transaction
+    // opens, so this holds a delivery in flight with no transaction open, and no await inside the handler ([lifecycle-alarm-not-held]).
+    "probe.held": message({
+      version: 1,
+      description: "A delivery that waits, before its handler, for the test",
+      payload: z.object({ key: z.string() }).refine(async () => {
+        await (globalThis as { __probeHold?: Promise<void> }).__probeHold;
+        return true;
+      }),
+    }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional(), at: z.enum(["infinity", "nan", "negative"]).optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
     "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
@@ -112,9 +124,12 @@ export const system = defineSystem({
   },
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
+    { from: "@ingress", message: "probe.storage", to: "Probe" },
+    { from: "@ingress", message: "probe.io", to: "Probe" },
     { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
+    { from: "Probe", message: "probe.held", to: "Probe" },
     { from: "@ingress", message: "probe.timer.set", to: "Probe" },
     { from: "@ingress", message: "probe.timer.cancel", to: "Probe" },
     { from: "@timer", message: "probe.timer.fired", to: "Probe" },
@@ -176,6 +191,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS pokes (id TEXT NOT NULL, cid TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS decided (payload TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS storage_awaits (key TEXT NOT NULL, crossed TEXT NOT NULL)");
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
@@ -183,6 +199,100 @@ export class Probe extends DurableObject<Env> {
     "probe.nested": async ({ payload }) => {
       if (payload.after) await Promise.resolve();
       await this.actor.requestEffect("gateway.keyed", { key: payload.key }, { key: payload.key });
+    },
+    // Awaits each storage API a handler can reach, through ctx or this, and a few other awaits. After each, it records
+    // whether a macrotask queued as the handler started has run (what #80's sentinel sees), and whether a transaction
+    // waiting beside the handler has run, nested in its transaction (the hazard itself). The test supplies the beside
+    // writers (__probeBeside): the first is requested from outside as the handler starts, and the next once one has run
+    // ([storage-await-no-macrotask]).
+    "probe.storage": async ({ payload }, ctx) => {
+      const beside = (globalThis as { __probeBeside?: { request(n: number): void; ran(n: number): boolean } }).__probeBeside!;
+      let turned = false;
+      const sentinel = setTimeout(() => (turned = true), 0);
+      let writer = 0;
+      beside.request(writer);
+      const s = this.ctx.storage;
+      const seen: Record<string, { turn: boolean; beside: boolean }> = {};
+      const step = async (api: string, call: () => unknown) => {
+        // A microtask first, so a writer just requested has asked for its transaction before the await under test.
+        await Promise.resolve();
+        await call();
+        const ran = beside.ran(writer);
+        seen[api] = { turn: turned, beside: ran };
+        if (ran) beside.request(++writer);
+      };
+      try {
+        await step("put", () => s.put("storage-probe", 1));
+        await step("put-many", () => s.put({ a: 1, b: 2 }));
+        await step("get", () => s.get("storage-probe"));
+        await step("get-many", () => s.get(["a", "b"]));
+        await step("list", () => s.list());
+        await step("delete", () => s.delete("a"));
+        await step("delete-many", () => s.delete(["b", "absent"]));
+        // Lifecycle owns the alarm: put it back as it was.
+        let alarm: number | null = null;
+        await step("getAlarm", async () => void (alarm = await s.getAlarm()));
+        await step("setAlarm", () => s.setAlarm(Date.now() + 86_400_000));
+        await step("deleteAlarm", () => s.deleteAlarm());
+        if (alarm !== null) await s.setAlarm(alarm);
+        await step("sql", () => ctx.sql.exec("SELECT COUNT(*) AS n FROM fired").toArray());
+        await step("kv.get", () => s.kv.get("storage-probe"));
+        await step("kv.put", () => s.kv.put("storage-probe-kv", 1));
+        await step("kv.delete", () => s.kv.delete("storage-probe-kv"));
+        await step("transaction", () => s.transaction(async () => s.get("storage-probe")));
+        await step("transactionSync", () => s.transactionSync(() => s.sql.exec("SELECT 1").toArray()));
+        await step("lifecycle.jobs.push", () => this.pinger.pingAt(Date.now() + 86_400_000));
+        await step("getCurrentBookmark", () => s.getCurrentBookmark());
+        await step("sync", () => s.sync());
+        // Not storage, but often awaited.
+        await step("Response.text", () => new Response("x").text());
+        await step("Response.json", () => new Response("{}").json());
+        await step("Request.json", () => new Request("https://probe/", { method: "POST", body: "{}" }).json());
+        await step("Blob.text", () => new Blob(["x"]).text());
+        await step("crypto.subtle.digest", () => crypto.subtle.digest("SHA-256", new TextEncoder().encode("x")));
+        // Not here: deleteAll() (it would delete actord's own tables), and getBookmarkForTime() and
+        // onNextSessionRestoreBookmark(), which local workerd refuses (no point-in-time recovery).
+      } finally {
+        clearTimeout(sentinel);
+      }
+      ctx.sql.exec("INSERT INTO storage_awaits (key, crossed) VALUES (?, ?)", payload.key, JSON.stringify(seen));
+    },
+    // Writes a row and queues a message and an effect, awaits `io`, then calls every ctx method again. What each later
+    // call did, and the ctx itself, go to globalThis.__probeIO[key] for the test to read: an abandoned handler (one
+    // whose delivery failed while it awaited) has no other way to report ([handler-io-fails-loudly], [handler-ctx-closed]).
+    "probe.io": async ({ payload: { key, io } }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:before`);
+      ctx.send("probe.outcome", { key: `${key}:sent-before`, status: "confirmed" }, { key: ctx.key });
+      ctx.effect("gateway.keyed", { key: `${key}:before` }, { key: `${key}:before` });
+      if (io === "wait") await scheduler.wait(1);
+      else if (io === "timeout") await new Promise((r) => setTimeout(r, 0));
+      else if (io === "fetch") await (globalThis as { __probeFetch?: () => Promise<unknown> }).__probeFetch!();
+      else if (io === "storage") {
+        await this.ctx.storage.put(`${key}:stored`, 1);
+        await this.ctx.storage.get(`${key}:stored`);
+      } else for (let i = 0; i < 500; i++) await Promise.resolve();
+      const tried: Record<string, string> = {};
+      const attempt = (name: string, call: () => unknown) => {
+        try {
+          call();
+          tried[name] = "ok";
+        } catch (err) {
+          tried[name] = (err as Error).message;
+        }
+      };
+      attempt("sql.exec", () => ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:after`));
+      attempt("send", () => ctx.send("probe.outcome", { key: `${key}:sent-after`, status: "confirmed" }, { key: ctx.key }));
+      attempt("effect", () => ctx.effect("gateway.keyed", { key: `${key}:after` }, { key: `${key}:after` }));
+      attempt("approve", () => ctx.approve("gateway.approval", key));
+      attempt("deny", () => ctx.deny("gateway.approval", key, "no"));
+      attempt("after", () => ctx.after(60_000, "probe.timer.fired", { key }, { key }));
+      attempt("at", () => ctx.at(Date.now() + 60_000, "probe.timer.fired", { key }, { key }));
+      attempt("cancelTimer", () => ctx.cancelTimer(key));
+      attempt("settleJob", () => ctx.settleJob("gateway.job", key, { status: "confirmed" }));
+      attempt("cancelJob", () => ctx.cancelJob("gateway.job", key));
+      attempt("note", () => ctx.note("after the await"));
+      const probeIO = ((globalThis as { __probeIO?: Record<string, unknown> }).__probeIO ??= {});
+      probeIO[key] = { tried, readable: { self: ctx.self, key: ctx.key, now: typeof ctx.now() }, ctx };
     },
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });
@@ -203,15 +313,18 @@ export class Probe extends DurableObject<Env> {
       else ctx.after(payload.delayMs, "probe.timer.fired", fired, { key: payload.key });
       if (payload.fail) throw new Error("set then fail");
     },
+    "probe.held": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO outcomes (key, status) VALUES (?, 'confirmed')", payload.key);
+    },
     "probe.timer.cancel": ({ payload }, ctx) => {
       ctx.cancelTimer(payload.key);
     },
     "probe.timer.fired": ({ payload }, ctx) => {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
-      // A "slow-…" timer sends its outcome to the instance "<key>-gate", whose handler waits for the test to open
-      // the gate: delivering it holds this instance's drive, but not its storage ([lifecycle-alarm-not-held]).
-      if (payload.key.startsWith("slow-")) ctx.send("probe.outcome", { key: payload.key, status: "confirmed" }, { key: `${ctx.key}-gate` });
+      // A "slow-…" timer sends probe.held to the instance "<key>-gate", whose delivery waits, in validation, for the
+      // test to open __probeHold: delivering it holds this instance's drive, but not its storage ([lifecycle-alarm-not-held]).
+      if (payload.key.startsWith("slow-")) ctx.send("probe.held", { key: payload.key }, { key: `${ctx.key}-gate` });
       // Timers that act on other timers when they fire: kill-<k> cancels timer k, reset-<k> sets k again to
       // deliver "<k>-new", and rearm<…> sets itself again once.
       if (payload.key.startsWith("kill-")) ctx.cancelTimer(payload.key.slice("kill-".length));

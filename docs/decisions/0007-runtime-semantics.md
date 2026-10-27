@@ -62,3 +62,36 @@ with the binding can call `receive`).
   forcing deliveries.
 - Approval decisions can arrive as messages: `ctx.approve(effect, key)` and `ctx.deny(effect, key, reason)`
   change the parked effect inside the handler's transaction; the approved effect runs after commit.
+
+## Amendment (#80): a handler that awaits I/O fails its delivery
+- **Problem:** decision 2 keeps handlers storage-only, but nothing enforced it. A handler whose transaction spans an
+  event-loop turn lets transactions started elsewhere in the object run nested in it
+  (`[beside-transaction-nested]`). Its rollback then takes their rows: pi's session store, Computer's vfs sync-back,
+  Lifecycle's job rows, actord's own drain settlements.
+- **Change:**
+  - **The sentinel.** The runtime queues a `setTimeout(0)` sentinel before calling the handler, and races the
+    handler against it.
+  - **When the sentinel fires first.** The transaction closure throws `<Actor>.<type>: handlers may not await I/O;
+    use ctx.effect`. The transaction rolls back, and the delivery fails like any other.
+  - **When the handler settles first.** The sentinel is cleared.
+  - **The closed ctx.** Once the delivery ends, the handler's `ctx` refuses every call, `sql.exec` included, with
+    `<Actor>.<type>: this handler's delivery has ended; its ctx can't be used`. `self`, `key` and `now` stay
+    readable.
+- **Verified in workerd.**
+  - **Storage.** No storage await a handler can reach outlasts the sentinel (`[storage-await-no-macrotask]`).
+    These also keep a writer waiting beside the handler out of its transaction, so a handler may await them: the
+    KV calls (`get`, `put`, `list`, `delete`), the alarm calls, `sql`, `kv`, `transactionSync` and Lifecycle's
+    `jobs.push`.
+  - **Awaits the sentinel misses.** These let a waiting writer run nested, and still finish before the sentinel: a
+    nested `transaction()`, `sync()`, `getCurrentBookmark()`, and `Request` and `Response` body reads (`text()`,
+    `json()`). If the handler then throws, the rollback takes that writer's rows, and the delivery fails with the
+    handler's own error (`[beside-transaction-nested]`). A handler must not await them. #82 proposes an exact
+    detector.
+  - **A transaction already requested.** One requested beside the handler runs nested before the sentinel, so the
+    failed delivery still rolls it back.
+  - **A transaction begun later.** One begun by I/O that arrives after the handler started runs after the rollback,
+    and commits. `[sentinel-ordering]` pins both.
+- **Breaking:** a handler that awaited I/O used to commit. It now fails its delivery on every attempt.
+  - A message dead-letters after 6 attempts.
+  - A timer is dropped with `retry.exhausted`.
+  - The I/O the handler started still runs on each attempt.
