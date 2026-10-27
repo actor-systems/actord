@@ -157,7 +157,7 @@ it("[request-effect-beside-handler] a requestEffect made beside a handler, while
 });
 
 for (const yields of [false, true]) {
-  it(`[beside-transaction-nested] a transaction started beside an open handler transaction, from outside it (as pi's storage starts one), ${yields ? "runs inside it once the handler yields to the event loop, and the handler's throw rolls its write back" : "waits while the handler awaits only microtasks, and survives the handler's throw"}`, async () => {
+  it(`[beside-transaction-nested] a transaction started beside an open handler transaction, from outside it (as pi's storage starts one), ${yields ? "runs inside it once the handler yields to the event loop, and the handler's throw rolls its write back" : "doesn't start within the 500 microtasks the handler awaits before it throws, and commits after the rollback"}`, async () => {
     const gate = globalThis as { __probeGate?: unknown };
     const name = `nest-${yields ? "yields" : "microtasks"}`;
     try {

@@ -843,10 +843,48 @@ it("[agent-tool-after-stop] a tool call in flight when its session is stopped re
     expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
     const [result] = toolResults(requests[1]!);
     expect(result).toMatchObject({ toolName: "note_approved", isError: true });
-    expect(text(result!)).toMatch(/stopped/);
+    expect(text(result!)).toBe("note.approved was not requested: this session was stopped (its job is being cancelled). End your turn.");
     abort.open();
     await settle(env, system);
     expect(await jobRow(name, "fx:agent.session:task-tg1")).toMatchObject({ status: "failed", lastError: "cancelled" });
+    expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
+    expect(await scribe(name).noted()).toEqual([]);
+  } finally {
+    delete shared.__scribeToolGates?.[name];
+  }
+}, 20_000);
+
+it("[agent-tool-after-replace] a tool call in flight when a new start replaces its session requests nothing, and the model hears the session was replaced by a new start", async () => {
+  const name = "toolgate-replace-1";
+  const requests: ScriptedRequest[] = [];
+  script(name, (r) => {
+    requests.push(r);
+    if ((users(r)[0] ?? "").includes('"second"')) return finish({ summary: "second" });
+    return r.turn === 0 ? call("note_approved", { text: "late" }) : { text: "ok" };
+  });
+  // The first session's call waits before it runs; the replacement's abort of pi waits too, so the call runs after the
+  // new start committed, while the first session's run goes on.
+  const inFlight = gate();
+  gates.push(inFlight.open);
+  shared.__scribeToolGates = { ...shared.__scribeToolGates, [name]: () => inFlight.wait() };
+  const abort = gate();
+  gates.push(abort.open);
+  await holdHarness(name, "abort", abort);
+  try {
+    await task(name, "the late tool", "task-tr1");
+    await reached(inFlight);
+    expect(await task(name, "second", "task-tr2")).toMatchObject({ status: "handled" });
+    expect(await jobRow(name, "fx:agent.session:task-tr1")).toMatchObject({ status: "cancelling" });
+    inFlight.open();
+    const answered = () => requests.find((r) => (users(r)[0] ?? "").includes("the late tool") && toolResults(r).length > 0);
+    await eventually(async () => expect(answered()).toBeDefined(), 4000);
+    expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
+    const [result] = toolResults(answered()!);
+    expect(result).toMatchObject({ toolName: "note_approved", isError: true });
+    expect(text(result!)).toBe("note.approved was not requested: this session was replaced by a new start. End your turn.");
+    abort.open();
+    await eventually(async () => expect((await scribe(name).done()).map((d) => d.summary)).toEqual(["second"]), 4000);
+    await settle(env, system);
     expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
     expect(await scribe(name).noted()).toEqual([]);
   } finally {

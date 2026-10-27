@@ -508,8 +508,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   const settleListeners = new Map<string, { key: string; resolvers: Array<(outcome: SettledOutcome) => void> }>();
   // Whether a handler is running synchronously at this instant (nothing else can be, so a requestEffect then is the
   // handler's own), and whether a handler's transaction closure is running. workerd runs a transaction started from
-  // inside another's closure nested, at once, and queues one started from elsewhere until the open one ends: so a
-  // requestEffect whose own transaction finds this set was called from inside a handler. Both refuse it.
+  // inside another's closure nested, at once. One started from elsewhere didn't start within 500 microtasks while the
+  // open one awaited only microtasks ([beside-transaction-nested] shows no more than that), and runs nested in it once
+  // the open one awaits I/O (#80). So a requestEffect whose own transaction finds this set was called from inside a
+  // handler, or beside one awaiting I/O. Both refuse it.
   let inHandlerCall = false;
   let inHandlerTransaction = false;
   // Jobs probeNow asked to look at while a probe of theirs ran or their start hadn't returned: looked at once it does.

@@ -19,7 +19,7 @@ while :; do
   dir=$(dirname -- "$dir")
 done
 if ! command -v node >/dev/null 2>&1; then
-  echo "actord: Node.js 22.18 or later is required (node was not found on PATH)" >&2
+  echo "actord: Node.js 22.19 or later is required (node was not found on PATH)" >&2
   exit 127
 fi
 ACTORD_LAUNCHER=plugin-bundle

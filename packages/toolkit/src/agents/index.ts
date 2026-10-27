@@ -67,7 +67,7 @@ import { jsonSchemaOf } from "../model/manifest.ts";
 import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectName, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
 import { reachedLimit, type SessionBudget, type SessionObserver, type Spent, spentBy, watchBudget } from "./budget.ts";
 import type { scriptedModel } from "./scripted-model.ts";
-import { effectTools, shown, type ToolSession } from "./tools.ts";
+import { effectTools, REPLACED, shown, type ToolSession } from "./tools.ts";
 import { type Gateway, workspaceFetch, workspaceFor, workspaceTools } from "./workspace.ts";
 
 export { type ScriptedRequest, type ScriptedTurn, scriptedModel } from "./scripted-model.ts";
@@ -361,7 +361,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   const halted = (key: string): string | null => {
     const row = rowByKey(key);
     if (row?.stopped_at != null) return STOPPED;
-    return row && latest()?.generation !== row.generation ? "replaced by a newer start" : null;
+    return row && latest()?.generation !== row.generation ? REPLACED : null;
   };
   /** Whether a tool effect of this session (keyed "<session>:<callId>") waits for a person. */
   const awaitingApproval = (session: string) =>
