@@ -19,7 +19,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | An email reply approves only for the owner, by plain code | In order: envelope sender and header `From` are the owner's (else no reply); no `dmarc=fail`; with `authserv` set, authenticated as `"pass"` (else no reply); not an auto-reply; one `Subject` and at most one `Message-ID`; then a valid, unexpired subject token and a first line of `approve` or `deny`. With authentication `unknown`, an effect declared `publishes: true` can't be approved by email. Every answer that gets this far is acknowledged by reply. Decision 0021 |
 | One notification per parked approval | The `approvals.notify` effect is queued with the row id `fx:<notify>:approval:<effect>:<effectKey>`, so parking again sends nothing new. If it fails, the effect stays parked and still expires |
 | An agent session starts once per start message, and settles once, as the actor's `returns` message, `agent.failed` or `agent.exhausted` | The session is the internal job effect `agent.session`, keyed by the start message's id, which is also Pi's `operationId`. The model calls `finish` with the `returns` payload, and the job's probe settles it: at once when `finish` asks, otherwise every 30 s. A start while a session runs replaces it, and the replaced session's result is only a note. Decision 0019 |
-| A session stops within one model request of its `turns` or `usd`, and at its `wallClock` | A watcher of Pi's events aborts the session from outside its run. A timer and every probe check `wallClock`. The job's deadline is `wallClock` plus 10 minutes; past it the job is `in_doubt`, and the session is aborted. Decision 0019 |
+| A session stops within two model requests of its `usd` (the one that crosses it, and one in flight), within one response of its `turns`, and at its `wallClock` | A watcher of Pi's events aborts the session from outside its run; a request's cost is known only when it ends. A timer and every probe check `wallClock`. The job's deadline is `wallClock` plus 10 minutes; past it the job is `in_doubt`, and the session is aborted. Decision 0019 |
 | A tool call is one effect request, and an unkeyed one never runs twice | The request is keyed `<session>:<callId>`, which Pi keeps across a restart. A keyed effect's rerun finds its row; any other is reported to the model as interrupted, and recorded `in_doubt`. Decision 0019 |
 | A tool that needs approval answers at once, and its result reaches the session later, or is a note once the session ended | The tool answers "waiting". The result is steered in as a user message, and the probe steers in a denial, which sends no result message. A stop or a replacement denies the session's open approvals. Decision 0019 |
 | A running session keeps the instructions it started with | The text is stored on the session row when it starts. Decision 0019 |
@@ -107,6 +107,7 @@ Computer.
   effect has no `result` message. Each has an `AGENT_*` code, except a missing budget (`ACTOR_BUDGET_MISSING`).
 
 Not guaranteed: `budget.usd` for a model pi-ai doesn't price (its cost is 0), or a pause in `wallClock` while a tool
-waits for a person. For every actor, a handler that awaits I/O lets other writers' rows join its transaction, and
-they roll back if it throws (#80). Until #80 lands, handlers must not await I/O. [Limitations](Limitations) has the
-rest.
+waits for a person. A session's `usd` counts the model cost pi-ai reports, not container seconds, so the factory
+counts container time itself. For every actor, a handler that yields to the event loop (awaits I/O or a timer) puts
+the rows other writers add meanwhile at risk: they join its transaction, and roll back if it throws (#80). Until #80
+lands, handlers must not await I/O. [Limitations](Limitations) has the rest.

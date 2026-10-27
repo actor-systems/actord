@@ -543,6 +543,7 @@ Every decision is recorded with:
   - *Amended (2026-10-27, plan 3, decision 0019):* actord enforces it, not the harness: Pi has no budgets, and a Pi hook can't stop a run. A session's `usd` counts the model cost pi-ai reports, and no container seconds, so the factory counts container time itself.
 - Each effect settles from the usage it reports. A reservation whose effect is `in_doubt` counts as fully spent.
 - The worst overshoot is one model call past a session's own budget.
+  - *Amended (2026-10-27, plan 3, decision 0019):* a request's cost is known only when it ends, so the overshoot is at most two model requests: the one that crosses the limit, and one already in flight when the abort lands.
 - Raising the cap is an explicit owner message.
 - This needs only the toolkit's per-effect budgets and usage reporting (§5.3). The ledger and reservations are factory code.
 - It gets its own fault test (§11).

@@ -37,25 +37,27 @@
 - **`@actord/toolkit/agents` loads Computer and zod at import.** So every app with an agent actor installs
   `@cloudflare/computer` and zod, even one whose agents have no workspace. Every planned agent has a workspace, so
   phase one pays nothing for it; splitting out an `agents/workspace` entry point would end it. Tracked: none.
-- **A budget can overshoot by one model request.** actord aborts a session from outside its run once its `turns` or
-  `usd` is reached (Pi has no budgets, and a Pi hook can't stop a run). So a session can spend up to one request past
-  its limit: the request that crosses it, or the one in flight when the abort lands. In the tests, `usd: 1` with $0.40
-  requests stopped at $1.20. Tracked: none.
+- **A budget can overshoot by two model requests.** actord aborts a session from outside its run once its `turns` or
+  `usd` is reached (Pi has no budgets, and a Pi hook can't stop a run), and a request's cost is known only when it
+  ends. So the overshoot is at most two model requests: the one that crosses the limit, and one already in flight when
+  the abort lands. For `turns`, that is at most one response past the limit. In the tests, `usd: 1` with $0.40
+  requests stopped between $1.20 and $1.60. Tracked: none.
 - **`budget.usd` counts only model cost that pi-ai prices.** For a model it doesn't price, pi-ai reports a cost of 0,
   so the `usd` budget is silently unenforced. The pinned model, DeepSeek V4.1 Flash, is priced. A model swap could
-  switch the `usd` budget off with no error; `turns` and `wallClock` still hold. A session reports no container
-  seconds either, so container time isn't in `usd`: an app that caps spend counts it itself. Tracked: none.
+  switch the `usd` budget off with no error; `turns` and `wallClock` still hold. A session's `usd` counts the model
+  cost pi-ai reports, not container seconds, so the factory counts container time itself. Tracked: none.
 - **Approvals come back as user messages.** A Pi tool can't defer its result, so a tool that needs approval answers
   "waiting" at once, and the result arrives later as a user message (`Result of <effect> (request <key>): …`), not
   as the tool's result. The model reads it as new input in the conversation, and may have moved on or ended its turn
   by then. The session's `wallClock` keeps running while it waits: the session's job ends at `wallClock` plus 10
   minutes, though the approval stays open for its expiry (3 days by default), so a later approval's result is only a
   note. An app whose approvals take long needs a longer `wallClock`. Tracked: none.
-- **A handler must not await I/O.** While a handler's transaction waits on I/O, other writers' rows join it: Pi's,
-  Computer's vfs sync-back, Lifecycle's job rows and actord's own settlements. If the handler then throws, they roll
-  back with it, and a tool's effect request made in that window is refused (`REQUESTED_IN_HANDLER`). It can lose an
-  agent's session messages, and it applies to every actor. Nothing enforces the rule yet: #80 makes such a handler
-  fail loudly, after plan 3.
+- **A handler must not await I/O.** `[beside-transaction-nested]` pins that a transaction started beside an open
+  handler transaction, once the handler yields to the event loop, runs inside it, and the handler's throw rolls its
+  write back. Pi's session store, Computer's vfs sync-back, Lifecycle's job rows and actord's drain settlements are
+  writers that start such transactions, so their rows are at risk while a handler awaits I/O or a timer. A tool's
+  effect request made in that window is refused (`REQUESTED_IN_HANDLER`). This applies to every actor. Nothing
+  enforces the rule yet: #80 makes such a handler fail loudly, after plan 3.
 - **The `corsProxy` residual.** Computer 0.8.0's push ignores the `corsProxy` it is passed, and reads `http.corsProxy`
   from the workspace's `.git/config`, which the agent can write with `exec`. The toolkit refuses a push when one is
   set, checking just before the push, and only storage, never the network, runs between that check and Computer's

@@ -53,9 +53,12 @@ Spike 3 (`docs/evidence/spike-3-agents-in-workerd.md`) showed the two can share 
 4. **actord enforces the budget (correction 2).** Pi has no budgets, and a Pi hook can't stop a run: its throw is only
    reported.
    - **`usd` and `turns`:** a watcher of the session's events (`turn_end`, `usage_changed`) marks the session
-     exhausted once its turns or cost reach the limit, aborts it from outside the run, and asks for a look. The
-     overshoot is at most the request in flight when the abort lands (`[agent-exhausted-turns]`,
-     `[agent-exhausted-usd]`). A turn is one model response.
+     exhausted once its turns or cost reach the limit, aborts it from outside the run, and asks for a look. A
+     request's cost is known only when it ends, so the overshoot is at most two model requests: the one that crosses
+     the limit, and one already in flight when the abort lands. For `turns`, that is at most one response past the
+     limit (`[agent-exhausted-turns]`, `[agent-exhausted-usd]`). A turn is one model response.
+   - **What `usd` counts:** the model cost pi-ai reports, not container seconds, so the factory counts container time
+     itself.
    - **`wallClock`:** a timer asks for a look once it has passed, counted from the start message, and every look checks
      it.
    - The watcher and the timer are in memory. When Pi opens after a restart, every waiting session is watched again
@@ -127,10 +130,12 @@ Until then, a handler must not await I/O.
   `PiHarness` opens its store from `lifecycle.storage`, so there is nothing to wrap, and the hazard isn't Pi's alone.
 
 ## Consequences
-- The overshoot past `usd` or `turns` is at most one model request. After a restart, sessions whose start or cancel
-  was in flight aren't watched until that start runs again or the cancel settles.
+- The overshoot past `usd` or `turns` is at most two model requests: the one that crosses the limit, and one already
+  in flight when the abort lands. After a restart, sessions whose start or cancel was in flight aren't watched until
+  that start runs again or the cancel settles.
 - `budget.usd` is enforced only for a model pi-ai prices. The pinned model is priced. For an unpriced one the
-  cost stays 0, and the budget is silently unenforced.
+  cost stays 0, and the budget is silently unenforced. A session's `usd` counts the model cost pi-ai reports, not
+  container seconds, so the factory counts container time itself.
 - `@actord/toolkit/agents` loads `@cloudflare/computer` and zod at import, so every agent app installs both, even
   without a workspace. The other entry points never load Pi or Computer: a test scans the built bundles.
 - Not guaranteed: `agent.ended` is recorded once per instance, by a guard in memory, so a restart in between can
