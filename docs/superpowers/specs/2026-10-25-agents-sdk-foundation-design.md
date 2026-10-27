@@ -127,7 +127,7 @@ The project is brand new and has no users, so breaking changes are acceptable.
   - [Blog post](https://blog.cloudflare.com/cloudflare-computer/), [repository](https://github.com/cloudflare/computer)
 - **Email.**
   - The Agents SDK sends mail through Cloudflare Email Service and can HMAC-sign routing headers.
-  - `createSecureReplyEmailResolver` checks the signature and its age on a reply (`agents/docs/agents/email.md`).
+  - `createSecureReplyEmailResolver` checks the signature and its age on a reply (`agents/docs/agents/email.md`). It reads custom headers on the incoming message, which a human reply from a mail client doesn't carry, so it suits agent-to-agent replies only (amended: see §8.2 and decision 0021).
   - Inbound mail reaches the Worker's `email()` handler.
 - **Chat SDK.** `agents/chat-sdk` stores [Chat SDK](https://chat-sdk.dev/) state durably. That makes future Telegram, Slack, Discord and Teams channels a matter of adapters.
 
@@ -247,8 +247,8 @@ A webhook arrives once per provider, at one URL. It needs a signature check and 
 sources: {
   github: webhook({
     path: "/hooks/github",
-    secret: "GITHUB_WEBHOOK_SECRET",                    // HMAC check (X-Hub-Signature-256) before anything else
-    id: (req) => req.headers.get("x-github-delivery"),  // becomes the envelope id, so redeliveries are dropped
+    verify: "github",
+    secret: "GITHUB_WEBHOOK_SECRET",                    // names an env entry; HMAC check (X-Hub-Signature-256) before anything else
     events: {
       "issues.opened": { message: "issue.opened", key: (e) => issueKey(e.repository, e.issue.number), map: (e) => ({ ... }) },
       "pull_request_review.submitted": { message: "pr.reviewed", key: (e) => issueKeyFromBranch(e.repository, e.pull_request.head.ref), map: ... },
@@ -274,6 +274,11 @@ routes: [
 - An unmapped event is answered `204` and recorded as `source.ignored`.
 - An event that fails verification is answered `401` and recorded.
 - An event that fails mapping or validation is answered `400` and recorded with the delivery id. Because GitHub won't redeliver on its own, the record is what lets someone find and redeliver it.
+
+- **Amended (2026-10-26, plan 2, decision 0017):** the code differs from the sketch above.
+  - `webhook()` takes `path`, `verify: "github"`, `secret` (an `env` entry name) and `events`. There is no `id` option: the envelope id is always `X-GitHub-Delivery`, so GitHub's redeliveries are dropped.
+  - Delivery uses `deliverExternal` (the same path `ingress` uses), not `ingress` itself.
+  - Answers: `202` delivered or duplicate; `204` unmapped (`source.ignored`); `400` invalid (`source.invalid`); `401` failed verification (`source.rejected`); `405` not `POST`; `500` secret not configured, no route, or delivery or handler failed (`source.rejected` or `source.failed`).
 
 ### 6.3 Checks and derived configuration
 
@@ -399,7 +404,7 @@ A channel is an inbound source plus an outbound effect.
 ### 8.2 Email first (designer's call: reply, never link)
 
 - **Outbound.**
-  - One email per request, sent through Cloudflare Email Service, with HMAC-signed routing headers that carry the effect key and a timestamp.
+  - One email per request, sent through Cloudflare Email Service. *Amended (plan 2, decision 0021):* the subject carries an HMAC-signed token `[actord:<token>]` with the actor, instance, effect key and expiry, because a person's reply keeps the subject but not custom headers. One email per parked effect.
   - The body states:
     - the exact action, such as the comment text or the command;
     - why it is needed;
@@ -407,12 +412,12 @@ A channel is an inbound source plus an outbound effect.
     - what happens on deny;
     - when it expires.
 - **Inbound.** The `@email` source accepts a reply only if all of these hold:
-  1. its routing signature verifies and isn't expired;
-  2. the sender is the owner's address and the message passes email authentication. Which `Authentication-Results` details reach the Worker still needs checking (spike 6).
+  1. its subject token verifies and isn't expired (amended: not a routing header);
+  2. the envelope sender and the header `From` are the owner's address, and there is no `dmarc=fail`. Authentication is `"pass"` only from the topmost `Authentication-Results` header of a configured authserv-id. *Amended (2026-10-26, spike 6, `docs/evidence/spike-6-email.md`):* Cloudflare Email Routing writes that header, with authserv-id `mx.cloudflare.net`, above every header the message arrived with, and a real Gmail reply carried `dmarc=pass` in it. The handler also requires at least one `dmarc` result there, every one `pass` with `header.from` the owner's domain, and compares the authserv-id case-insensitively (decision 0021).
   3. its first line is exactly `approve`, or starts with `deny`. This is parsed by plain code, never by a model.
 
-  Anything else gets a reply asking again.
-- **If authentication results turn out to be invisible to the Worker** (spike 6): a reply with a valid signed token from the owner's address may still approve mid-run tool calls. The limit is written down in `docs/wiki/Limitations.md`. Any effect classed `publishes: true` then needs approval in GitHub, never by email, until authentication can be verified (the owner's decision).
+  Anything else gets a reply asking again. *Amended (plan 2, decision 0021):* an answer that reaches the actor is acknowledged by reply too, and one that can't be recorded or applied gets a reply saying so.
+- **Authentication results are visible to the Worker** (*amended 2026-10-26:* spike 6 settled this; it was pending). Now that the hardening above has landed, an app may set `authserv` to an env entry holding `mx.cloudflare.net`, and a reply that passes can approve an effect classed `publishes: true`. Whether the factory enables it is the owner's call. Without `authserv`, every reply is `"unknown"`: a reply with a valid signed token from the owner's address may still approve mid-run tool calls, and any effect classed `publishes: true` needs approval in GitHub, never by email. The limit is written down in `docs/wiki/Limitations.md`.
 - **No approve links.** Mail scanners open links to check them, so a link could approve on its own.
 - The verified sender address becomes the approver identity (`by`).
 

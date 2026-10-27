@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it, vi } from "vitest";
-import { deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
+import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
 import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
@@ -966,7 +966,7 @@ it("[approval-expiry-wake] a parked approval holds the alarm until it expires, a
   overrideEffect("gateway.approval", { run: async () => ++runs });
   await send("wake", "gateway.approval");
   await settle(env, system);
-  const row = await runInDurableObject(probe("wake"), (_i, s) => s.storage.sql.exec("SELECT status, next_at FROM _actors_outbox WHERE id LIKE 'fx:%:wake'").one());
+  const row = await runInDurableObject(probe("wake"), (_i, s) => s.storage.sql.exec("SELECT status, next_at FROM _actors_outbox WHERE id = 'fx:gateway.approval:wake'").one());
   expect(row.status).toBe("awaiting_approval");
   expect(Number(row.next_at) - Date.now()).toBeGreaterThan(2.9 * 86_400_000);
   await settle(env, system);
@@ -992,7 +992,7 @@ it("[approval-identity] an approval records who approved and through which sende
   await ingress(env, system, "Probe", "probe.approve", { key: "who", by: "owner@example.com" }, { key: "who" });
   await settle(env, system);
   expect(events.find((e) => e.kind === "note" && e.effectKey === "who")).toMatchObject({ detail: { by: "owner@example.com", via: "@ingress" } });
-  const body = await runInDurableObject(probe("who"), (_i, s) => JSON.parse(String(s.storage.sql.exec("SELECT body FROM _actors_outbox WHERE id LIKE 'fx:%:who'").one().body)));
+  const body = await runInDurableObject(probe("who"), (_i, s) => JSON.parse(String(s.storage.sql.exec("SELECT body FROM _actors_outbox WHERE id = 'fx:gateway.approval:who'").one().body)));
   expect(body.approvedBy).toMatchObject({ from: "@ingress", by: "owner@example.com" });
   expect(typeof body.approvedBy.messageId).toBe("string");
 });
@@ -1090,4 +1090,22 @@ it("[approve-before-alarm] a late approval or decision is refused even before th
   expect(runs).toBe(0);
   expect(await probe("early-ap").outcomes()).toMatchObject([{ key: "early-ap", status: "failed", error: "approval expired" }]);
   expect(await probe("early-rpc").outcomes()).toMatchObject([{ key: "early-rpc", status: "failed", error: "approval expired" }]);
+});
+
+it("[external-sender] a message from a declared source's sender is accepted on its route", async () => {
+  const r = await deliverExternal(env, system, "@hooks", "Probe", "probe.poked", { key: "ext" }, { key: "ext", id: "d-1" });
+  expect(r).toMatchObject({ status: "handled", messageId: "d-1" });
+  expect(await probe("ext").poked()).toEqual(["d-1"]);
+});
+it("[external-sender-route] the same message from a sender with no route is refused", async () => {
+  const r = await deliverExternal(env, system, "@other", "Probe", "probe.poked", { key: "ext2" }, { key: "ext2" });
+  expect(r).toMatchObject({ status: "rejected", reason: "unauthorized_route" });
+  expect(await probe("ext2").poked()).toEqual([]);
+});
+it("[external-sender-forged] an in-system sender name is refused before delivery", async () => {
+  await expect(deliverExternal(env, system, "Probe" as never, "Probe", "probe.outcome", { key: "f", status: "confirmed" }, { key: "forged" })).rejects.toThrow(/must start with "@"/);
+});
+it("[external-correlation] a supplied correlationId reaches the handler's envelope", async () => {
+  await deliverExternal(env, system, "@hooks", "Probe", "probe.poked", { key: "cc" }, { key: "cc", id: "d-cc", correlationId: "c-1" });
+  expect(await probe("cc").pokeCorrelations()).toEqual(["c-1"]);
 });

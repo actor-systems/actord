@@ -1,0 +1,4 @@
+# The bearer token for /spike endpoints, and the deploy log holding the Worker's URL. Never commit either.
+.spike-token
+.deploy.log
+worker-configuration.d.ts

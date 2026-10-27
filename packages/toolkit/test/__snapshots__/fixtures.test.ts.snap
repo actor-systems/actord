@@ -173,6 +173,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
         ],
       },
     ],
+    "approvals": null,
     "effects": [
       {
         "approval": "none",
@@ -274,6 +275,7 @@ exports[`valid fixtures > evolved: check, graph, and diff are deterministic and 
       },
     ],
     "schemaVersion": 1,
+    "sources": [],
     "system": {
       "description": "Two actors: a scheduled pinger and a ponger that records pings",
       "name": "minimal",
@@ -376,6 +378,7 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
         "sends": [],
       },
     ],
+    "approvals": null,
     "effects": [],
     "messages": [
       {
@@ -455,6 +458,7 @@ exports[`valid fixtures > minimal: check, graph, and diff are deterministic and 
       },
     ],
     "schemaVersion": 1,
+    "sources": [],
     "system": {
       "description": "Two actors: a scheduled pinger and a ponger that records pings",
       "name": "minimal",

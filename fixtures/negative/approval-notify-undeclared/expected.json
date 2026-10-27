@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "APPROVAL_NOTIFY_UNDECLARED"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

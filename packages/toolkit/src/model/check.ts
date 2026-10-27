@@ -1,5 +1,7 @@
 // `actord check`: what the type system can't express. Hard errors fail the check; warnings are advice.
 // Every diagnostic has a stable code so tests, hooks, and graders can match on it.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseCronExpression } from "cron-schedule";
 import type { Project } from "./load.ts";
 import { durationMs } from "../system.ts";
@@ -26,7 +28,9 @@ export interface Diagnostic {
 
 const ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 const MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
-const EXTERNAL = new Set(["@clock", "@ingress", "@timer"]);
+const FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
+/** Senders the runtime writes itself: the fixed route senders, and "@rpc" for a decision made through decide(). */
+const RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
 
 export function checkProject(project: Project): Diagnostic[] {
   const out: Diagnostic[] = [];
@@ -42,6 +46,7 @@ export function checkProject(project: Project): Diagnostic[] {
   const actors = new Map(m.actors.map((a) => [a.name, a]));
   const messages = new Map(m.messages.map((x) => [x.name, x]));
   const effects = new Map(m.effects.map((e) => [e.name, e]));
+  const external = new Set([...FIXED_SENDERS, ...(m.sources ?? []).map((src) => `@${src.name}`)]);
 
   for (const a of m.actors) {
     if (!ACTOR_NAME.test(a.name)) add("error", "NAME_INVALID", a.name, `Actor name "${a.name}" must be a PascalCase class name`);
@@ -81,7 +86,8 @@ export function checkProject(project: Project): Diagnostic[] {
     const label = `${r.from} → ${r.message} → ${r.to}`;
     if (seen.has(label)) add("error", "ROUTE_DUPLICATE", label, `Route ${label} is declared twice`);
     seen.add(label);
-    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label, `${r.from} isn't a sender; use @clock, @ingress, @timer, or an actor`);
+    if (r.from.startsWith("@") && !external.has(r.from))
+      add("error", "ROUTE_INVALID_SENDER", label, `${r.from} isn't a sender; use @clock, @ingress, @timer, ${(m.sources ?? []).length ? `${(m.sources ?? []).map((src) => `@${src.name}`).join(", ")}, ` : ""}or an actor`, `Declare a source named ${r.from.slice(1)} under sources, or use a sender that exists.`);
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label, `Route message ${r.message} isn't declared`);
@@ -117,12 +123,74 @@ export function checkProject(project: Project): Diagnostic[] {
   }
   for (const cycle of findCycles(m)) add("warning", "ROUTE_CYCLE", cycle.join(" → "), `Messages can loop: ${cycle.join(" → ")}. Make sure handlers terminate and dedupe redeliveries.`);
 
+  checkSources(project, m, add);
   checkConfig(project, m, add);
   checkManifest(project, m, add);
   return sortDiagnostics(out);
 }
 
-function checkConfig(project: Project, m: Manifest, add: (s: Severity, c: string, subj: string | null, msg: string, fix?: string | null) => void) {
+type Add = (s: Severity, c: string, subj: string | null, msg: string, fix?: string | null) => void;
+
+/** Sources and approvals: the routes a source needs, one path per webhook, declared secrets, and the approval-by-email contract. */
+function checkSources(project: Project, m: Manifest, add: Add) {
+  const sources = m.sources ?? [];
+  const routesFrom = (name: string, message: string) => m.routes.filter((r) => r.from === `@${name}` && r.message === message);
+  const paths = new Map<string, string[]>();
+  for (const src of sources) {
+    if (RESERVED_SENDERS.includes(`@${src.name}`))
+      add("error", "SOURCE_NAME_RESERVED", `@${src.name}`, `A source can't be named ${src.name}: @${src.name} is a sender the runtime uses itself, so the source's messages couldn't be told apart from the runtime's`, `Rename the source, for example after the provider it listens to (github, email).`);
+    const mapped = src.kind === "webhook" ? src.events.map((e) => e.message) : src.message ? [src.message] : [];
+    for (const msg of [...new Set(mapped)]) {
+      const found = routesFrom(src.name, msg);
+      if (found.length === 0)
+        add("error", "SOURCE_ROUTE_MISSING", `@${src.name}`, `@${src.name} delivers ${msg}, but no route carries it from @${src.name}`, `Add { from: "@${src.name}", message: "${msg}", to: "<actor>" }.`);
+      // An email reply goes to the actor named in its signed token, so one route per gated actor is the intended shape.
+      else if (found.length > 1 && src.kind !== "email")
+        add("error", "SOURCE_ROUTE_AMBIGUOUS", `@${src.name}`, `More than one route from @${src.name} carries ${msg} (to ${found.map((r) => r.to).join(" and ")}), so the source can't tell which actor receives it`, "Keep one route per message from a source.");
+    }
+    if (src.path !== null) paths.set(src.path, [...(paths.get(src.path) ?? []), src.name]);
+  }
+  for (const [path, names] of paths)
+    if (names.length > 1) add("error", "SOURCE_PATH_DUPLICATE", path, `Sources ${names.join(" and ")} both listen on ${path}`, "Give each webhook source its own path.");
+
+  const declared = declaredEnvNames(project);
+  for (const [name, spec] of Object.entries(project.system?.sources ?? {}))
+    if (!declared.has(spec.secret))
+      add("warning", "SOURCE_SECRET_UNDECLARED", `@${name}`, `@${name} verifies with ${spec.secret}, which is in neither wrangler vars nor .dev.vars.example`, `List ${spec.secret} in .dev.vars.example (and set it with \`wrangler secret put ${spec.secret}\`).`);
+
+  const notify = m.approvals?.notify;
+  const gatedActors = m.actors.filter((a) => a.effects.some((e) => m.effects.find((x) => x.name === e)?.approval === "human"));
+  if (notify !== undefined) {
+    const known = m.effects.some((e) => e.name === notify);
+    if (!known) add("error", "APPROVAL_NOTIFY_UNKNOWN", notify, `approvals.notify names ${notify}, which isn't a declared effect`, `Declare ${notify} under effects, or change approvals.notify.`);
+    if (m.effects.find((e) => e.name === notify)?.approval === "human")
+      add("error", "APPROVAL_NOTIFY_NEEDS_APPROVAL", notify, `${notify} tells a person an approval is waiting, but it needs approval itself, so the request could never be sent`, `Remove approval: "human" from ${notify}.`);
+    for (const a of known ? gatedActors : [])
+      if (!a.effects.includes(notify)) add("error", "APPROVAL_NOTIFY_UNDECLARED", a.name, `${a.name} requests approvals but doesn't list ${notify}, the effect that tells a person one is waiting`, `Add "${notify}" to ${a.name}'s effects.`);
+  }
+  const email = sources.find((src) => src.kind === "email");
+  if (email?.message)
+    for (const a of gatedActors)
+      if (!m.routes.some((r) => r.from === `@${email.name}` && r.message === email.message && r.to === a.name))
+        add("error", "APPROVAL_ROUTE_MISSING", a.name, `${a.name} requests approvals, but no route delivers ${email.message} from @${email.name} to it, so a reply could never reach it`, `Add { from: "@${email.name}", message: "${email.message}", to: "${a.name}" }.`);
+  for (const e of m.effects)
+    if (e.publishes === true && e.approval !== "human")
+      add("error", "PUBLISHES_WITHOUT_APPROVAL", e.name, `${e.name} publishes but doesn't need approval, so nothing checks what goes public`, `Add approval: "human", or remove publishes.`);
+}
+
+/** Names the project declares for its Worker's env: wrangler `vars` and the lines of `.dev.vars.example`. */
+function declaredEnvNames(project: Project): Set<string> {
+  const names = new Set(Object.keys(project.config?.vars ?? {}));
+  const example = join(project.root, ".dev.vars.example");
+  if (existsSync(example))
+    for (const line of readFileSync(example, "utf8").split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+      if (m?.[1]) names.add(m[1]);
+    }
+  return names;
+}
+
+function checkConfig(project: Project, m: Manifest, add: Add) {
   if (!project.config) {
     add("error", "CONFIG_MISSING", "wrangler.jsonc", project.configFile ? `${project.configFile} doesn't parse` : "No wrangler.jsonc next to system.ts", "Add one; `actord init --adopt` writes the Durable Object bindings and exports the declaration needs.");
     return;
@@ -151,7 +219,7 @@ function checkConfig(project: Project, m: Manifest, add: (s: Severity, c: string
     if (!declared.has(b.name)) add("warning", "CONFIG_UNDECLARED_DO", b.name, `Durable Object binding ${b.name} (${b.class_name}) isn't in system.ts; it's an escape hatch the checks can't see`);
 }
 
-function checkManifest(project: Project, m: Manifest, add: (s: Severity, c: string, subj: string | null, msg: string, fix?: string | null) => void) {
+function checkManifest(project: Project, m: Manifest, add: Add) {
   if (project.committedManifestRaw === null) {
     add("warning", "MANIFEST_MISSING", MANIFEST_FILE, `No ${MANIFEST_FILE}; \`actord diff\` uses the committed copy as its base`, "Run `actord graph --write` and commit it.");
   } else if (project.committedManifestRaw !== serializeManifest(m)) {

@@ -404,13 +404,13 @@ function icon(s) {
 
 // src/cli/commands/events.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { closeSync, existsSync as existsSync8, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync8, readSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname3, join as join7, relative as relative3, resolve as resolve4 } from "node:path";
+import { closeSync, existsSync as existsSync9, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync9, readSync, rmSync, statSync as statSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname3, join as join8, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/model/events.ts
 import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
 var EVENTS_FILE = ".actord/events.ndjson";
-var NOTABLE = /* @__PURE__ */ new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"]);
+var NOTABLE = /* @__PURE__ */ new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed", "source.rejected", "source.invalid", "source.failed"]);
 function readEvents(file) {
   if (!existsSync4(file)) return null;
   return parseEvents(readFileSync4(file, "utf8"));
@@ -602,8 +602,12 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
 
 // src/cli/commands/model.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync7, mkdirSync, readFileSync as readFileSync7, writeFileSync } from "node:fs";
-import { join as join6, relative as relative2, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync8, mkdirSync, readFileSync as readFileSync8, writeFileSync } from "node:fs";
+import { join as join7, relative as relative2, resolve as resolve3 } from "node:path";
+
+// src/model/check.ts
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // ../../node_modules/cron-schedule/dist/utils.js
 function extractDateElements(date) {
@@ -1127,8 +1131,19 @@ function normalize(system) {
     kind: e.kind ?? "call",
     deadline: e.deadline ?? null,
     probe: e.probe ? { every: e.probe.every } : null,
-    completes: e.completes ? { message: e.completes.message } : null
+    completes: e.completes ? { message: e.completes.message } : null,
+    ...e.publishes === true ? { publishes: true } : {}
   })).sort(byName);
+  const sources = Object.entries(system.sources ?? {}).map(
+    ([name, src]) => src.kind === "webhook" ? {
+      name,
+      kind: "webhook",
+      path: src.path,
+      verify: src.verify,
+      events: Object.entries(src.events ?? {}).map(([event, spec]) => ({ event, message: spec.message })).sort((a, b) => a.event < b.event ? -1 : a.event > b.event ? 1 : 0),
+      message: null
+    } : { name, kind: "email", path: null, verify: null, events: [], message: src.message }
+  ).sort(byName);
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     $comment: "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
@@ -1136,7 +1151,9 @@ function normalize(system) {
     actors: sortKeys(actors),
     messages: sortKeys(messages),
     routes,
-    effects: sortKeys(effects)
+    effects: sortKeys(effects),
+    sources: sortKeys(sources),
+    approvals: system.approvals ? { notify: system.approvals.notify } : null
   };
 }
 function jsonSchemaOf(schema) {
@@ -1149,8 +1166,8 @@ function jsonSchemaOf(schema) {
   }
 }
 function serializeManifest(m) {
-  const { $comment, schemaVersion, system, actors, messages, routes, effects } = m;
-  return `${JSON.stringify({ $comment, schemaVersion, system, actors, messages, routes, effects }, null, 2)}
+  const { $comment, schemaVersion, system, actors, messages, routes, effects, sources, approvals } = m;
+  return `${JSON.stringify({ $comment, schemaVersion, system, actors, messages, routes, effects, sources, approvals }, null, 2)}
 `;
 }
 
@@ -1165,7 +1182,8 @@ function cronParses(expr) {
 }
 var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
-var EXTERNAL = /* @__PURE__ */ new Set(["@clock", "@ingress", "@timer"]);
+var FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
+var RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
 function checkProject(project) {
   const out = [];
   const add = (severity, code, subject, message, fix = null) => out.push({ code, severity, subject, message, fix });
@@ -1178,6 +1196,7 @@ function checkProject(project) {
   const actors = new Map(m.actors.map((a) => [a.name, a]));
   const messages = new Map(m.messages.map((x) => [x.name, x]));
   const effects = new Map(m.effects.map((e) => [e.name, e]));
+  const external = /* @__PURE__ */ new Set([...FIXED_SENDERS, ...(m.sources ?? []).map((src) => `@${src.name}`)]);
   for (const a of m.actors) {
     if (!ACTOR_NAME.test(a.name)) add("error", "NAME_INVALID", a.name, `Actor name "${a.name}" must be a PascalCase class name`);
     if (a.justification.length === 0)
@@ -1214,7 +1233,8 @@ function checkProject(project) {
     const label2 = `${r.from} \u2192 ${r.message} \u2192 ${r.to}`;
     if (seen.has(label2)) add("error", "ROUTE_DUPLICATE", label2, `Route ${label2} is declared twice`);
     seen.add(label2);
-    if (r.from.startsWith("@") && !EXTERNAL.has(r.from)) add("error", "ROUTE_INVALID_SENDER", label2, `${r.from} isn't a sender; use @clock, @ingress, @timer, or an actor`);
+    if (r.from.startsWith("@") && !external.has(r.from))
+      add("error", "ROUTE_INVALID_SENDER", label2, `${r.from} isn't a sender; use @clock, @ingress, @timer, ${(m.sources ?? []).length ? `${(m.sources ?? []).map((src) => `@${src.name}`).join(", ")}, ` : ""}or an actor`, `Declare a source named ${r.from.slice(1)} under sources, or use a sender that exists.`);
     else if (!r.from.startsWith("@") && !actors.has(r.from)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route sender ${r.from} isn't a declared actor`);
     if (!actors.has(r.to)) add("error", "ROUTE_UNKNOWN_ACTOR", label2, `Route receiver ${r.to} isn't a declared actor`);
     if (!messages.has(r.message)) add("error", "ROUTE_UNKNOWN_MESSAGE", label2, `Route message ${r.message} isn't declared`);
@@ -1249,9 +1269,63 @@ function checkProject(project) {
       add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
   }
   for (const cycle of findCycles(m)) add("warning", "ROUTE_CYCLE", cycle.join(" \u2192 "), `Messages can loop: ${cycle.join(" \u2192 ")}. Make sure handlers terminate and dedupe redeliveries.`);
+  checkSources(project, m, add);
   checkConfig(project, m, add);
   checkManifest(project, m, add);
   return sortDiagnostics(out);
+}
+function checkSources(project, m, add) {
+  const sources = m.sources ?? [];
+  const routesFrom = (name, message) => m.routes.filter((r) => r.from === `@${name}` && r.message === message);
+  const paths = /* @__PURE__ */ new Map();
+  for (const src of sources) {
+    if (RESERVED_SENDERS.includes(`@${src.name}`))
+      add("error", "SOURCE_NAME_RESERVED", `@${src.name}`, `A source can't be named ${src.name}: @${src.name} is a sender the runtime uses itself, so the source's messages couldn't be told apart from the runtime's`, `Rename the source, for example after the provider it listens to (github, email).`);
+    const mapped = src.kind === "webhook" ? src.events.map((e) => e.message) : src.message ? [src.message] : [];
+    for (const msg of [...new Set(mapped)]) {
+      const found = routesFrom(src.name, msg);
+      if (found.length === 0)
+        add("error", "SOURCE_ROUTE_MISSING", `@${src.name}`, `@${src.name} delivers ${msg}, but no route carries it from @${src.name}`, `Add { from: "@${src.name}", message: "${msg}", to: "<actor>" }.`);
+      else if (found.length > 1 && src.kind !== "email")
+        add("error", "SOURCE_ROUTE_AMBIGUOUS", `@${src.name}`, `More than one route from @${src.name} carries ${msg} (to ${found.map((r) => r.to).join(" and ")}), so the source can't tell which actor receives it`, "Keep one route per message from a source.");
+    }
+    if (src.path !== null) paths.set(src.path, [...paths.get(src.path) ?? [], src.name]);
+  }
+  for (const [path, names] of paths)
+    if (names.length > 1) add("error", "SOURCE_PATH_DUPLICATE", path, `Sources ${names.join(" and ")} both listen on ${path}`, "Give each webhook source its own path.");
+  const declared = declaredEnvNames(project);
+  for (const [name, spec] of Object.entries(project.system?.sources ?? {}))
+    if (!declared.has(spec.secret))
+      add("warning", "SOURCE_SECRET_UNDECLARED", `@${name}`, `@${name} verifies with ${spec.secret}, which is in neither wrangler vars nor .dev.vars.example`, `List ${spec.secret} in .dev.vars.example (and set it with \`wrangler secret put ${spec.secret}\`).`);
+  const notify = m.approvals?.notify;
+  const gatedActors = m.actors.filter((a) => a.effects.some((e) => m.effects.find((x) => x.name === e)?.approval === "human"));
+  if (notify !== void 0) {
+    const known = m.effects.some((e) => e.name === notify);
+    if (!known) add("error", "APPROVAL_NOTIFY_UNKNOWN", notify, `approvals.notify names ${notify}, which isn't a declared effect`, `Declare ${notify} under effects, or change approvals.notify.`);
+    if (m.effects.find((e) => e.name === notify)?.approval === "human")
+      add("error", "APPROVAL_NOTIFY_NEEDS_APPROVAL", notify, `${notify} tells a person an approval is waiting, but it needs approval itself, so the request could never be sent`, `Remove approval: "human" from ${notify}.`);
+    for (const a of known ? gatedActors : [])
+      if (!a.effects.includes(notify)) add("error", "APPROVAL_NOTIFY_UNDECLARED", a.name, `${a.name} requests approvals but doesn't list ${notify}, the effect that tells a person one is waiting`, `Add "${notify}" to ${a.name}'s effects.`);
+  }
+  const email = sources.find((src) => src.kind === "email");
+  if (email?.message) {
+    for (const a of gatedActors)
+      if (!m.routes.some((r) => r.from === `@${email.name}` && r.message === email.message && r.to === a.name))
+        add("error", "APPROVAL_ROUTE_MISSING", a.name, `${a.name} requests approvals, but no route delivers ${email.message} from @${email.name} to it, so a reply could never reach it`, `Add { from: "@${email.name}", message: "${email.message}", to: "${a.name}" }.`);
+  }
+  for (const e of m.effects)
+    if (e.publishes === true && e.approval !== "human")
+      add("error", "PUBLISHES_WITHOUT_APPROVAL", e.name, `${e.name} publishes but doesn't need approval, so nothing checks what goes public`, `Add approval: "human", or remove publishes.`);
+}
+function declaredEnvNames(project) {
+  const names = new Set(Object.keys(project.config?.vars ?? {}));
+  const example = join4(project.root, ".dev.vars.example");
+  if (existsSync5(example))
+    for (const line of readFileSync5(example, "utf8").split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+      if (m?.[1]) names.add(m[1]);
+    }
+  return names;
 }
 function checkConfig(project, m, add) {
   if (!project.config) {
@@ -1327,7 +1401,9 @@ var EMPTY_MANIFEST = {
   actors: [],
   messages: [],
   routes: [],
-  effects: []
+  effects: [],
+  sources: [],
+  approvals: null
 };
 function diffManifests(base, head) {
   const changes = [];
@@ -1362,6 +1438,16 @@ function diffManifests(base, head) {
       unclassified("effect", b, h, EFFECT_FIELDS, add);
     }
   });
+  diffKeyed(base.sources ?? [], head.sources ?? [], {
+    added: (x) => add("source.added", `@${x.name}`, "compatible", `New source @${x.name} (${x.kind}${x.path ? ` ${x.path}` : ""})`),
+    removed: (x) => add("source.removed", `@${x.name}`, "breaking", `Source @${x.name} removed; deliveries still on their way, and the provider's calls to it, will be refused after the deploy`),
+    changed: (b, h) => {
+      diffSource(b, h, add);
+      unclassified("source", b, h, SOURCE_FIELDS, add);
+    }
+  });
+  if (show(base.approvals ?? null) !== show(head.approvals ?? null))
+    add("approvals.notify", "approvals", "risky", `Approval notifications ${base.approvals?.notify ?? "none"} \u2192 ${head.approvals?.notify ?? "none"}; requests already waiting were announced through the old effect`);
   if (base.system.name && base.system.name !== head.system.name) add("system.renamed", head.system.name, "risky", `System renamed from ${base.system.name}`);
   const order = (c) => `${c.kind}\0${c.subject}\0${c.detail}`;
   changes.sort((a, b) => order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0);
@@ -1419,12 +1505,28 @@ function diffMessage(b, h, add) {
   }
 }
 var ACTOR_FIELDS = /* @__PURE__ */ new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends"]);
-var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes"]);
+var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes"]);
+var SOURCE_FIELDS = /* @__PURE__ */ new Set(["name", "kind", "path", "verify", "events", "message"]);
 function unclassified(what, b, h, classified, add) {
   const bv = b;
   const hv = h;
   const fields = [.../* @__PURE__ */ new Set([...Object.keys(bv), ...Object.keys(hv)])].filter((k) => !classified.has(k) && show(bv[k]) !== show(hv[k])).sort();
   if (fields.length > 0) add(`${what}.changed`, String(hv.name), "risky", `${fields.join(", ")} changed, and diff has no rule for ${fields.length === 1 ? "it" : "them"}; check how what is already in flight behaves`);
+}
+function diffSource(b, h, add) {
+  const s = `@${h.name}`;
+  if (b.kind !== h.kind) add("source.kind", s, "risky", `Kind ${b.kind} \u2192 ${h.kind}`);
+  if (b.path !== h.path) add("source.path", s, "risky", `Path ${b.path ?? "none"} \u2192 ${h.path ?? "none"}; the provider keeps calling the old path until it is reconfigured`);
+  if (b.verify !== h.verify) add("source.verify", s, "risky", `Verification ${b.verify ?? "none"} \u2192 ${h.verify ?? "none"}; deliveries signed the old way are refused`);
+  if (b.message !== h.message) add("source.message", s, "risky", `Decision message ${b.message ?? "none"} \u2192 ${h.message ?? "none"}; replies already on their way arrive as the old message`);
+  const bEvents = new Map((b.events ?? []).map((e) => [e.event, e.message]));
+  const hEvents = new Map((h.events ?? []).map((e) => [e.event, e.message]));
+  for (const [event, message] of hEvents) {
+    if (!bEvents.has(event)) add("source.event.added", `${s} ${event}`, "compatible", `${s} now maps ${event} to ${message}`);
+    else if (bEvents.get(event) !== message) add("source.event.message", `${s} ${event}`, "risky", `${s} maps ${event} to ${message} instead of ${bEvents.get(event)}; deliveries already on their way keep the old message`);
+  }
+  for (const [event, message] of bEvents)
+    if (!hEvents.has(event)) add("source.event.removed", `${s} ${event}`, "risky", `${s} no longer maps ${event} (was ${message}); the provider may still send it, and it will be refused`);
 }
 function diffEffect(b, h, add) {
   const s = h.name;
@@ -1443,6 +1545,7 @@ function diffEffect(b, h, add) {
   if (b.idempotency !== h.idempotency)
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} \u2192 ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
   if (b.approval !== h.approval) add("effect.approval", s, "risky", `Approval ${b.approval} \u2192 ${h.approval}`, { approval: h.approval === "none" });
+  if ((b.publishes ?? false) !== (h.publishes ?? false)) add("effect.publishes", s, "risky", `Publishes ${b.publishes ?? false} \u2192 ${h.publishes ?? false}`, { approval: h.publishes === true });
   if (b.reconcile !== h.reconcile) add("effect.reconcile", s, "risky", `Reconciliation ${b.reconcile} \u2192 ${h.reconcile}`);
   if ((b.result ?? null) !== (h.result ?? null)) add("effect.result", s, "risky", `Outcome message ${b.result ?? "none"} \u2192 ${h.result ?? "none"}; in-flight outcomes use the old message`);
 }
@@ -1609,28 +1712,28 @@ function plan(changes, head) {
 
 // src/model/fingerprint.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync5, statSync } from "node:fs";
-import { join as join4, relative } from "node:path";
+import { existsSync as existsSync6, readdirSync, readFileSync as readFileSync6, statSync } from "node:fs";
+import { join as join5, relative } from "node:path";
 var ROOTS = ["system.ts", "wrangler.jsonc", "wrangler.json", "src/index.ts", "src/actors", "src/messages"];
 function actorFiles(root) {
   const out = [];
   const walk = (p) => {
-    if (!existsSync5(p)) return;
-    if (statSync(p).isDirectory()) for (const e of readdirSync(p).sort()) walk(join4(p, e));
+    if (!existsSync6(p)) return;
+    if (statSync(p).isDirectory()) for (const e of readdirSync(p).sort()) walk(join5(p, e));
     else if (/\.(ts|jsonc?|mts)$/.test(p)) out.push(relative(root, p));
   };
-  for (const r of ROOTS) walk(join4(root, r));
+  for (const r of ROOTS) walk(join5(root, r));
   return out.sort();
 }
 function fingerprint(root) {
   const h = createHash("sha256");
-  for (const f of actorFiles(root)) h.update(f).update("\0").update(readFileSync5(join4(root, f))).update("\0");
+  for (const f of actorFiles(root)) h.update(f).update("\0").update(readFileSync6(join5(root, f))).update("\0");
   return h.digest("hex").slice(0, 16);
 }
 
 // src/model/load.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6, statSync as statSync2 } from "node:fs";
-import { dirname as dirname2, join as join5, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync7, readFileSync as readFileSync7, statSync as statSync2 } from "node:fs";
+import { dirname as dirname2, join as join6, resolve as resolve2 } from "node:path";
 import { pathToFileURL } from "node:url";
 async function loadProject(root) {
   const project = {
@@ -1646,7 +1749,7 @@ async function loadProject(root) {
     committedManifestRaw: null
   };
   try {
-    const mod = await import(pathToFileURL(join5(root, DECLARATION_FILE)).href);
+    const mod = await import(pathToFileURL(join6(root, DECLARATION_FILE)).href);
     const candidate = mod.default ?? mod.system;
     if (!isSystem(candidate)) {
       project.loadError = "system.ts must `export default defineSystem({...})` from @actord/toolkit/system";
@@ -1658,9 +1761,9 @@ async function loadProject(root) {
     project.loadError = explainLoadError(err);
   }
   for (const file of ["wrangler.jsonc", "wrangler.json"]) {
-    if (existsSync6(join5(root, file))) {
+    if (existsSync7(join6(root, file))) {
       project.configFile = file;
-      project.config = readJsonc(join5(root, file));
+      project.config = readJsonc(join6(root, file));
       break;
     }
   }
@@ -1668,9 +1771,9 @@ async function loadProject(root) {
     project.entryFile = project.config.main;
     project.entryExports = collectExports(resolve2(root, project.config.main), /* @__PURE__ */ new Set());
   }
-  const manifestPath = join5(root, MANIFEST_FILE);
-  if (existsSync6(manifestPath)) {
-    project.committedManifestRaw = readFileSync6(manifestPath, "utf8");
+  const manifestPath = join6(root, MANIFEST_FILE);
+  if (existsSync7(manifestPath)) {
+    project.committedManifestRaw = readFileSync7(manifestPath, "utf8");
     project.committedManifest = readJson(manifestPath);
   }
   return project;
@@ -1686,9 +1789,9 @@ function explainLoadError(err) {
 var EXPORT_RE = /export\s+(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]*)\}(?:\s*from\s*["']([^"']+)["'])?|export\s*\*\s*from\s*["']([^"']+)["']/g;
 function collectExports(file, seen) {
   const names = /* @__PURE__ */ new Set();
-  if (seen.has(file) || !existsSync6(file) || !statSync2(file).isFile()) return names;
+  if (seen.has(file) || !existsSync7(file) || !statSync2(file).isFile()) return names;
   seen.add(file);
-  const source = readFileSync6(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+  const source = readFileSync7(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   for (const m of source.matchAll(EXPORT_RE)) {
     if (m[1]) names.add(m[1]);
     if (m[2] !== void 0) {
@@ -1709,8 +1812,8 @@ function collectExports(file, seen) {
 function resolveRelative(dir, spec) {
   if (!spec.startsWith(".")) return null;
   const base = resolve2(dir, spec);
-  for (const candidate of [base, base.replace(/\.js$/, ".ts"), `${base}.ts`, join5(base, "index.ts")]) {
-    if (existsSync6(candidate) && statSync2(candidate).isFile()) return candidate;
+  for (const candidate of [base, base.replace(/\.js$/, ".ts"), `${base}.ts`, join6(base, "index.ts")]) {
+    if (existsSync7(candidate) && statSync2(candidate).isFile()) return candidate;
   }
   return null;
 }
@@ -1777,7 +1880,7 @@ async function check(cwd, opts) {
 var LAST_CHECK_FILE = ".actord/last-check.json";
 function recordCheck(root, data) {
   try {
-    mkdirSync(join6(root, ".actord"), { recursive: true });
+    mkdirSync(join7(root, ".actord"), { recursive: true });
     const record = {
       schemaVersion: 1,
       ok: data.ok,
@@ -1787,7 +1890,7 @@ function recordCheck(root, data) {
       fingerprint: fingerprint(root),
       checkedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
-    writeFileSync(join6(root, LAST_CHECK_FILE), `${JSON.stringify(record, null, 2)}
+    writeFileSync(join7(root, LAST_CHECK_FILE), `${JSON.stringify(record, null, 2)}
 `);
   } catch {
   }
@@ -1802,7 +1905,7 @@ async function graph(cwd, opts) {
   if (!project.manifest) return { data: { projectRoot: root, manifest: null, written: null }, text: `\u2717 ${project.loadError}`, exitCode: 1 };
   let written = null;
   if (opts.write) {
-    writeFileSync(join6(root, MANIFEST_FILE), serializeManifest(project.manifest));
+    writeFileSync(join7(root, MANIFEST_FILE), serializeManifest(project.manifest));
     written = MANIFEST_FILE;
   }
   if (opts.format === "mermaid") {
@@ -1845,17 +1948,17 @@ async function diff(cwd, opts) {
   let base = EMPTY_MANIFEST;
   let source = "none";
   if (opts.baseFile) {
-    base = JSON.parse(readFileSync7(resolve3(cwd, opts.baseFile), "utf8"));
+    base = JSON.parse(readFileSync8(resolve3(cwd, opts.baseFile), "utf8"));
     source = `file:${opts.baseFile}`;
   } else {
     const ref = opts.base ?? "HEAD";
     const fromGit = gitShow(root, ref, MANIFEST_FILE);
-    const onDisk = join6(root, MANIFEST_FILE);
+    const onDisk = join7(root, MANIFEST_FILE);
     if (fromGit.text) {
       base = JSON.parse(fromGit.text);
       source = `git:${ref}`;
-    } else if (!fromGit.usable && existsSync7(onDisk)) {
-      base = JSON.parse(readFileSync7(onDisk, "utf8"));
+    } else if (!fromGit.usable && existsSync8(onDisk)) {
+      base = JSON.parse(readFileSync8(onDisk, "utf8"));
       source = `file:${MANIFEST_FILE}`;
       notes.push(`git isn't usable here (${fromGit.why}), so this compares against ${MANIFEST_FILE} on disk, the architecture last recorded by \`actord graph --write\`. Run \`actord diff\` before regenerating it, or pass --base-file.`);
     } else {
@@ -1872,7 +1975,7 @@ function gitShow(root, ref, file) {
     const why = top.error?.message ?? (top.stderr ?? "").trim().split("\n").pop() ?? `exit ${top.status}`;
     return { text: null, usable: false, why: why || `exit ${top.status}` };
   }
-  const rel = relative2(top.stdout.trim(), join6(root, file));
+  const rel = relative2(top.stdout.trim(), join7(root, file));
   const r = spawnSync2("git", ["-C", root, "show", `${ref}:${rel}`], { encoding: "utf8" });
   return { text: r.status === 0 ? r.stdout : null, usable: true, why: "" };
 }
@@ -1892,7 +1995,7 @@ function renderDiff(d) {
 function eventsPath(cwd, file) {
   if (file) return { path: resolve4(cwd, file), root: findProjectRoot(cwd) };
   const root = findProjectRoot(cwd);
-  return { path: root ? join7(root, EVENTS_FILE) : null, root };
+  return { path: root ? join8(root, EVENTS_FILE) : null, root };
 }
 function keep(e, f) {
   if (f.notable && !NOTABLE.has(e.kind)) return false;
@@ -1928,7 +2031,7 @@ async function followEvents(cwd, opts, out) {
 ` : `${formatEvent(e)}
 `);
   for (; ; ) {
-    if (existsSync8(path)) {
+    if (existsSync9(path)) {
       const size = statSync3(path).size;
       if (size < offset) {
         offset = 0;
@@ -1954,7 +2057,7 @@ async function followEvents(cwd, opts, out) {
 function claimMonitor(cwd) {
   const root = findProjectRoot(cwd);
   if (!root) return true;
-  const lock = join7(root, ".actord", `monitor-${sessionPid()}.pid`);
+  const lock = join8(root, ".actord", `monitor-${sessionPid()}.pid`);
   if (!acquireLock(lock, process.pid)) return false;
   process.on("exit", () => releaseLock(lock, process.pid));
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => process.exit(0));
@@ -1967,7 +2070,7 @@ function acquireLock(lock, pid) {
       writeFileSync2(lock, String(pid), { flag: "wx" });
       return true;
     } catch {
-      const holder = Number(readFileSync8(lock, "utf8"));
+      const holder = Number(readFileSync9(lock, "utf8"));
       if (holder && isAlive(holder)) return false;
       rmSync(lock, { force: true });
     }
@@ -1976,7 +2079,7 @@ function acquireLock(lock, pid) {
 }
 function releaseLock(lock, pid) {
   try {
-    if (Number(readFileSync8(lock, "utf8")) === pid) rmSync(lock);
+    if (Number(readFileSync9(lock, "utf8")) === pid) rmSync(lock);
   } catch {
   }
 }
@@ -2014,8 +2117,8 @@ function trace(cwd, id2, opts) {
 
 // src/cli/commands/hook.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
-import { existsSync as existsSync9, readFileSync as readFileSync9 } from "node:fs";
-import { dirname as dirname4, join as join8, relative as relative4 } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync10 } from "node:fs";
+import { dirname as dirname4, join as join9, relative as relative4 } from "node:path";
 var RELEVANT2 = /(^|\/)(system\.ts|wrangler\.jsonc?|actord\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
 var BUDGET_MS = 2e3;
 async function hook(name, stdin, env, out, err) {
@@ -2076,7 +2179,7 @@ function evidenceGate(input, env, out) {
   if (!root) return 0;
   let last = null;
   try {
-    last = JSON.parse(readFileSync9(join8(root, LAST_CHECK_FILE), "utf8"));
+    last = JSON.parse(readFileSync10(join9(root, LAST_CHECK_FILE), "utf8"));
   } catch {
     last = null;
   }
@@ -2089,7 +2192,7 @@ function evidenceGate(input, env, out) {
   return 0;
 }
 function actorFilesModified(root) {
-  if (!existsSync9(join8(root, ".git")) && spawnSync4("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
+  if (!existsSync10(join9(root, ".git")) && spawnSync4("git", ["-C", root, "rev-parse"], { stdio: "ignore" }).status !== 0) return false;
   const r = spawnSync4("git", ["-C", root, "status", "--porcelain", "--", "system.ts", "src/actors", "src/messages", "src/index.ts", "wrangler.jsonc"], {
     encoding: "utf8"
   });
@@ -2097,8 +2200,8 @@ function actorFilesModified(root) {
 }
 
 // src/cli/commands/init.ts
-import { copyFileSync, existsSync as existsSync10, mkdirSync as mkdirSync3, readdirSync as readdirSync2, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename, dirname as dirname5, join as join9, resolve as resolve5 } from "node:path";
+import { copyFileSync, existsSync as existsSync11, mkdirSync as mkdirSync3, readdirSync as readdirSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname5, join as join10, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/templates/project.ts
@@ -2347,8 +2450,8 @@ function bundledTarball() {
   } catch {
   }
   for (const dir of dirs) {
-    const tgz = dir ? join9(dir, `actord-toolkit-${VERSION}.tgz`) : null;
-    if (tgz && existsSync10(tgz)) return tgz;
+    const tgz = dir ? join10(dir, `actord-toolkit-${VERSION}.tgz`) : null;
+    if (tgz && existsSync11(tgz)) return tgz;
   }
   return null;
 }
@@ -2364,8 +2467,8 @@ function init(cwd, target, opts) {
   const skipped = [];
   const suggestions = [];
   const write = (rel, content) => {
-    const path = join9(root, rel);
-    if (existsSync10(path)) {
+    const path = join10(root, rel);
+    if (existsSync11(path)) {
       skipped.push(rel);
       return;
     }
@@ -2374,30 +2477,30 @@ function init(cwd, target, opts) {
     created.push(rel);
   };
   if (opts.adopt) {
-    if (!existsSync10(join9(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
-    const name2 = opts.name ?? readJson(join9(root, "package.json"))?.name ?? basename(root);
+    if (!existsSync11(join10(root, "package.json"))) throw new UsageError(`--adopt needs an existing project with a package.json at ${root}`);
+    const name2 = opts.name ?? readJson(join10(root, "package.json"))?.name ?? basename(root);
     for (const [rel, content] of Object.entries(hostFiles(host, name2))) write(rel, content);
     if (host === "claude" && skipped.includes(".claude/settings.json")) {
-      const ask = readJson(join9(root, ".claude/settings.json"))?.permissions?.ask ?? [];
+      const ask = readJson(join10(root, ".claude/settings.json"))?.permissions?.ask ?? [];
       const missing = askRules().filter((r) => !ask.includes(r));
       if (missing.length) suggestions.push(`.claude/settings.json exists, so it wasn't changed. Add these to permissions.ask:
 ${missing.map((r) => `    "${r}"`).join(",\n")}`);
     }
-    const pkg = readJson(join9(root, "package.json"));
+    const pkg = readJson(join10(root, "package.json"));
     if (!pkg?.scripts?.verify) suggestions.push(`Add a script to package.json: "verify": "actord verify"`);
     if (!pkg?.devDependencies?.["@actord/toolkit"]) suggestions.push(`Pin the CLI so CI and the coding agent run the same version: npm install -D -E @actord/toolkit@${VERSION}`);
-    if (!existsSync10(join9(root, "actord.manifest.json"))) suggestions.push("Run `npx actord graph --write` and commit actord.manifest.json.");
+    if (!existsSync11(join10(root, "actord.manifest.json"))) suggestions.push("Run `npx actord graph --write` and commit actord.manifest.json.");
     return result(root, "adopt", created, skipped, suggestions, "unchanged");
   }
-  if (existsSync10(root) && readdirSync2(root).filter((e) => !ignorable(root, e)).length > 0) {
+  if (existsSync11(root) && readdirSync2(root).filter((e) => !ignorable(root, e)).length > 0) {
     throw new UsageError(`${root} isn't empty; init only creates projects in empty directories. To add the toolkit's files to an existing project, run \`actord init --adopt\`.`);
   }
   const name = (opts.name ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "actor-system";
   let toolkit = opts.toolkit ?? VERSION;
   const tgz = opts.toolkit ? null : bundledTarball();
   if (tgz) {
-    mkdirSync3(join9(root, "vendor"), { recursive: true });
-    copyFileSync(tgz, join9(root, "vendor", basename(tgz)));
+    mkdirSync3(join10(root, "vendor"), { recursive: true });
+    copyFileSync(tgz, join10(root, "vendor", basename(tgz)));
     created.push(`vendor/${basename(tgz)}`);
     toolkit = `file:vendor/${basename(tgz)}`;
   }
@@ -2419,7 +2522,7 @@ function ignorable(root, entry) {
   if (entry === ".git" || entry === "node_modules" || entry === ".DS_Store") return true;
   if (entry === ".claude") {
     try {
-      return readdirSync2(join9(root, entry)).every((e) => CLAUDE_STATE.has(e));
+      return readdirSync2(join10(root, entry)).every((e) => CLAUDE_STATE.has(e));
     } catch {
       return false;
     }
@@ -2429,8 +2532,8 @@ function ignorable(root, entry) {
 
 // src/cli/commands/room.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
-import { existsSync as existsSync11, statSync as statSync4 } from "node:fs";
-import { join as join10, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync12, statSync as statSync4 } from "node:fs";
+import { join as join11, resolve as resolve6 } from "node:path";
 
 // src/model/svg.ts
 function topologyWithChanges(base, head) {
@@ -2452,7 +2555,7 @@ function topologyWithChanges(base, head) {
 var esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 var COLOR = { added: "#2da44e", removed: "#e5534b" };
 var QUIET = 0.65;
-var EXTERNAL2 = 0.75;
+var EXTERNAL = 0.75;
 var CHAR = 7;
 function topologySvg(t) {
   const external = [...new Set(t.routes.map((r) => r.from).filter((f) => f.startsWith("@")))].sort();
@@ -2517,7 +2620,7 @@ function topologySvg(t) {
   for (const [name, p] of pos) {
     const node = kind.get(name);
     const change = node?.change ?? null;
-    const strength = name.startsWith("@") ? EXTERNAL2 : 1;
+    const strength = name.startsWith("@") ? EXTERNAL : 1;
     const dash = change === "removed" ? ` stroke-dasharray="5 4"` : "";
     parts.push(
       `<rect x="${p.x}" y="${p.y}" width="${W2}" height="${H}" rx="${name.startsWith("@") ? 23 : 8}" fill="none" ${paint("stroke", change, strength)} stroke-width="1.5"${dash}/>`,
@@ -2611,12 +2714,12 @@ async function room(cwd, opts = {}) {
 function baseManifest(root, source, cwd) {
   if (source.startsWith("file:")) {
     const path = resolve6(cwd, source.slice(5));
-    return readJson(existsSync11(path) ? path : join10(root, source.slice(5)));
+    return readJson(existsSync12(path) ? path : join11(root, source.slice(5)));
   }
   if (!source.startsWith("git:")) return null;
   const top = spawnSync5("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (top.status !== 0) return null;
-  const rel = join10(root, "actord.manifest.json").slice(top.stdout.trim().length + 1);
+  const rel = join11(root, "actord.manifest.json").slice(top.stdout.trim().length + 1);
   const r = spawnSync5("git", ["-C", root, "show", `${source.slice(4)}:${rel}`], { encoding: "utf8" });
   try {
     return r.status === 0 ? JSON.parse(r.stdout) : null;
@@ -2625,13 +2728,13 @@ function baseManifest(root, source, cwd) {
   }
 }
 function readCheck(root, print) {
-  const last = readJson(join10(root, LAST_CHECK_FILE));
+  const last = readJson(join11(root, LAST_CHECK_FILE));
   if (!last) return { state: "none", errors: 0, warnings: 0, codes: [], checkedAt: null };
   const state = last.fingerprint !== print ? "stale" : last.ok ? "pass" : "fail";
   return { state, errors: last.errors ?? 0, warnings: last.warnings ?? 0, codes: last.codes ?? [], checkedAt: last.checkedAt ?? null };
 }
 function readMailboxes(root) {
-  const log = readEvents(join10(root, EVENTS_FILE));
+  const log = readEvents(join11(root, EVENTS_FILE));
   if (!log) return { file: EVENTS_FILE, events: 0, actors: [], notable: [] };
   const byMessage = /* @__PURE__ */ new Map();
   for (const e of log.events) if (e.messageId && e.to) byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
@@ -2667,7 +2770,7 @@ var GROUPS = [
 ];
 function readEvidence(root, print) {
   const ev = readJson(
-    join10(root, EVIDENCE_FILE)
+    join11(root, EVIDENCE_FILE)
   );
   if (!ev) return { state: "none", generatedAt: null, profile: null, groups: [] };
   const stale = ev.fingerprint !== void 0 && ev.fingerprint !== null && ev.fingerprint !== print;
@@ -2681,8 +2784,8 @@ function readEvidence(root, print) {
 }
 function roomSignature(root) {
   const stamp = (f) => {
-    const p = join10(root, f);
-    return existsSync11(p) ? `${statSync4(p).size}:${statSync4(p).mtimeMs}` : "-";
+    const p = join11(root, f);
+    return existsSync12(p) ? `${statSync4(p).size}:${statSync4(p).mtimeMs}` : "-";
   };
   return [fingerprint(root), stamp(EVENTS_FILE), stamp(LAST_CHECK_FILE), stamp(EVIDENCE_FILE), stamp("actord.manifest.json")].join("|");
 }
@@ -2734,18 +2837,18 @@ async function guard(cwd, command) {
 
 // src/cli/commands/verify.ts
 import { spawnSync as spawnSync6 } from "node:child_process";
-import { mkdirSync as mkdirSync4, readFileSync as readFileSync11, writeFileSync as writeFileSync4 } from "node:fs";
-import { delimiter, dirname as dirname6, join as join12, relative as relative5, resolve as resolve7 } from "node:path";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync12, writeFileSync as writeFileSync4 } from "node:fs";
+import { delimiter, dirname as dirname6, join as join13, relative as relative5, resolve as resolve7 } from "node:path";
 
 // src/model/claims.ts
-import { existsSync as existsSync12, readFileSync as readFileSync10 } from "node:fs";
-import { join as join11 } from "node:path";
+import { existsSync as existsSync13, readFileSync as readFileSync11 } from "node:fs";
+import { join as join12 } from "node:path";
 var CLAIMS_FILE = "actord.claims.json";
 function readClaims(root) {
-  const path = join11(root, CLAIMS_FILE);
-  if (!existsSync12(path)) return { claims: [], error: null };
+  const path = join12(root, CLAIMS_FILE);
+  if (!existsSync13(path)) return { claims: [], error: null };
   try {
-    const doc = JSON.parse(readFileSync10(path, "utf8"));
+    const doc = JSON.parse(readFileSync11(path, "utf8"));
     return { claims: doc.claims ?? [], error: null };
   } catch (e) {
     return { claims: [], error: `${CLAIMS_FILE} doesn't parse: ${e.message}` };
@@ -2791,9 +2894,9 @@ function run2(cmd, args, cwd, extraEnv = {}) {
 }
 function binPath(root, pkg, bin) {
   for (let dir = root; ; dir = dirname6(dir)) {
-    const manifest = readJson(join12(dir, "node_modules", pkg, "package.json"));
+    const manifest = readJson(join13(dir, "node_modules", pkg, "package.json"));
     const rel = typeof manifest?.bin === "string" ? manifest.bin : manifest?.bin?.[bin];
-    if (rel) return join12(dir, "node_modules", pkg, rel);
+    if (rel) return join13(dir, "node_modules", pkg, rel);
     if (dirname6(dir) === dir) return null;
   }
 }
@@ -2806,14 +2909,14 @@ function runBin(root, pkg, bin, args, extraEnv = {}) {
 function runScript(root, script) {
   const bins = [];
   for (let dir = root; ; dir = dirname6(dir)) {
-    bins.push(join12(dir, "node_modules", ".bin"));
+    bins.push(join13(dir, "node_modules", ".bin"));
     if (dirname6(dir) === dir) break;
   }
   return run2("/bin/sh", ["-c", script], root, { PATH: [...bins, dirname6(process.execPath), process.env.PATH ?? ""].join(delimiter) });
 }
 var tail = (s, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
 function runTests(root, profile) {
-  const out = join12(root, TEST_RESULTS);
+  const out = join13(root, TEST_RESULTS);
   mkdirSync4(dirname6(out), { recursive: true });
   const args = ["run", "--reporter=default", "--reporter=json", `--outputFile.json=${out}`];
   if (profile !== "extended") args.push("--testNamePattern", "^(?!.*\\[extended\\])");
@@ -2825,7 +2928,7 @@ function runTests(root, profile) {
   }
   let tests = null;
   try {
-    const doc = JSON.parse(readFileSync11(out, "utf8"));
+    const doc = JSON.parse(readFileSync12(out, "utf8"));
     tests = doc.testResults.flatMap((f) => f.assertionResults.map((a) => ({ name: a.fullName ?? a.title, status: a.status })));
   } catch {
     tests = null;
@@ -2852,7 +2955,7 @@ async function verify(cwd, opts) {
   const empty = { projectRoot: null, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: null, profile, steps: [], claims: [], summary: { provedLocally: 0, stubOnly: 0, notGuaranteed: 0, blocked: 0, failing: 0, untested: 0 }, verdict: "fail", verdictReasons: ["no actor project here"], fingerprint: null };
   if (!root) return { data: empty, text: `No actor project at ${cwd}.`, exitCode: EXIT_NO_PROJECT };
   const steps = [];
-  const pkg = readJson(join12(root, "package.json"));
+  const pkg = readJson(join13(root, "package.json"));
   const script = pkg?.scripts?.typecheck;
   const tc = script ? runScript(root, script) : runBin(root, "typescript", "tsc", ["--noEmit"]);
   const tcBlocked = tc.code !== 0 && (tc.spawnBlocked || SANDBOX_BLOCK.test(tc.output));
@@ -2891,7 +2994,7 @@ async function verify(cwd, opts) {
   const verdict = failed ? "fail" : steps.some((s) => s.status === "blocked") ? "blocked" : "pass";
   const reasons = verdictReasons(steps, claims, error);
   const evidence = { projectRoot: root, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), system: await systemName(root), profile, steps, claims, summary, verdict, verdictReasons: reasons, fingerprint: fingerprint(root) };
-  const outPath = resolve7(cwd, opts.out ?? join12(root, ".actord/evidence.json"));
+  const outPath = resolve7(cwd, opts.out ?? join13(root, ".actord/evidence.json"));
   mkdirSync4(dirname6(outPath), { recursive: true });
   writeFileSync4(
     outPath,
@@ -2927,7 +3030,7 @@ function statusMark(s) {
   return { "proved-locally": "\u2713", "stub-only": "~", "not-guaranteed": "\xB7", blocked: "\u2298", failing: "\u2717", untested: "?" }[s] ?? "?";
 }
 async function systemName(root) {
-  const m = readJson(join12(root, "actord.manifest.json"));
+  const m = readJson(join13(root, "actord.manifest.json"));
   return m?.system?.name ?? (await loadProject(root)).manifest?.system.name ?? null;
 }
 function test(cwd, opts) {

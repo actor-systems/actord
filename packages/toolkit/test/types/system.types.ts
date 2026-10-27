@@ -1,6 +1,6 @@
 // Compile-time contract tests: `tsc --noEmit` fails if any @ts-expect-error stops being an error.
 import { z } from "zod";
-import { defineSystem, message, type MessagesFrom, type MessagesTo, type PayloadIn } from "../../src/system.ts";
+import { defineSystem, inboundEmail, message, webhook, type MessagesFrom, type MessagesTo, type PayloadIn } from "../../src/system.ts";
 
 const Observed = message({ version: 1, description: "A feed item was seen", payload: z.object({ id: z.string(), title: z.string() }) });
 const Classified = message({ version: 1, description: "An item was classified", payload: z.object({ id: z.string(), severity: z.enum(["minor", "major"]) }) });
@@ -74,3 +74,32 @@ defineSystem({
 });
 
 export { ledgerReceives, wrongReceive, pollerSends, payload, badPayload };
+
+// A source's sender is a route sender only when that source is declared.
+defineSystem({
+  name: "source-ok",
+  messages: { "release.observed": Observed },
+  actors: { Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"] } },
+  sources: {
+    github: webhook({ path: "/hooks/github", verify: "github", secret: "GITHUB_SECRET", events: { release: { message: "release.observed", key: (e: { id: string }) => e.id, map: (e: { id: string }) => ({ id: e.id, title: e.id }) } } }),
+    email: inboundEmail({ secret: "S", owner: "OWNER", from: "FROM", send: "SEND", message: "release.observed" }),
+  },
+  routes: [{ from: "@github", message: "release.observed", to: "Poller" }],
+});
+
+defineSystem({
+  name: "source-undeclared",
+  messages: { "release.observed": Observed },
+  actors: { Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"] } },
+  // @ts-expect-error @github is not a sender: no github source is declared
+  routes: [{ from: "@github", message: "release.observed", to: "Poller" }],
+});
+
+defineSystem({
+  name: "publishes-not-boolean",
+  messages: { "release.observed": Observed },
+  actors: { Poller: { binding: "POLLER", kind: "deterministic", purpose: "polls", justification: ["scheduling"], effects: ["post"] } },
+  // @ts-expect-error publishes must be a boolean
+  effects: { post: { description: "post", idempotency: "key", publishes: "yes" } },
+  routes: [{ from: "@ingress", message: "release.observed", to: "Poller" }],
+});

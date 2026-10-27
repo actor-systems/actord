@@ -84,6 +84,8 @@ describe("diffManifests: the deploy plan drains whatever may refuse copies in fl
     messages: [{ name: "m", version, description: "", payload }],
     routes: [],
     effects: [],
+    sources: [],
+    approvals: null,
   });
   const drain = (base: Manifest, head: Manifest) => diffManifests(base, head).plan.find((s) => s.kind === "drain")?.text;
 
@@ -138,7 +140,7 @@ describe("diffManifests: job and effect fields", () => {
     sends: [],
     ...over,
   });
-  const manifest = (e: ManifestEffect, a: ManifestActor = actor()): Manifest => ({ schemaVersion: 1, $comment: "", system: { name: "s", description: "" }, actors: [a], messages: [], routes: [], effects: [e] });
+  const manifest = (e: ManifestEffect, a: ManifestActor = actor()): Manifest => ({ schemaVersion: 1, $comment: "", system: { name: "s", description: "" }, actors: [a], messages: [], routes: [], effects: [e], sources: [], approvals: null });
   const kinds = (base: Manifest, head: Manifest) => diffManifests(base, head).changes.map((c) => `${c.kind}:${c.compatibility}`);
   const job = effect({ kind: "job", deadline: "1h", probe: { every: "1m" }, completes: { message: "done" } });
 

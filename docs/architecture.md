@@ -106,7 +106,9 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0014](decisions/0014-one-repository.md) | One repository for the core and both plugins, one version, Apache-2.0 |
 | [0015](decisions/0015-readme-wiki-contributing.md) | A landing-page README, a wiki for reference (from `docs/wiki/`), CONTRIBUTING for the repository |
 | [0016](decisions/0016-actord-on-lifecycle.md) | actord on the Agents SDK's `Lifecycle`: one capability, one job, the object's one alarm |
+| [0017](decisions/0017-sources.md) | Sources: system-level senders, generated handlers, ids from delivery ids |
 | [0018](decisions/0018-job-effects.md) | Job effects: start with a handle, settle once, later |
+| [0021](decisions/0021-approvals-by-email-reply.md) | Approvals by email: reply, never link, matched by a signed subject token |
 
 ## Coding-host adapters
 

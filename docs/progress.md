@@ -18,7 +18,11 @@ Report: `docs/implementation-report.md`.
 Lifecycle capability (decision 0016): timers, cron `schedules`, per-effect budgets and usage, job effects
 (decision 0018), a heartbeat with crash-loop parking, reused effect keys recorded as `effect.duplicate`
 (fixes issue #2), and approvals that expire and record who approved. The plugin skills still teach the old
-style; plan 2 is next (verified approver sources, the skills).
+style.
+
+**Plan 2 (sources and email approvals) is delivered on `plan2/sources-email`, not yet released.** Sources (GitHub
+webhook and inbound email), approval tokens, auto-notify, and email approvals, verified with real Gmail in spike 6;
+verified from a plain clone at `2be563e`: 61 pass, 0 fail, 0 blocked. Plan 3 is next: agent actors on Pi and Computer.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).

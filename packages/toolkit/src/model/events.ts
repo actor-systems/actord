@@ -24,7 +24,7 @@ export interface LoggedEvent {
   detail?: Record<string, unknown>;
 }
 
-export const NOTABLE = new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed"]);
+export const NOTABLE = new Set(["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.denied", "effect.failed", "source.rejected", "source.invalid", "source.failed"]);
 
 export interface EventLog {
   events: LoggedEvent[];

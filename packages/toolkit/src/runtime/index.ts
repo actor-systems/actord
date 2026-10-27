@@ -149,6 +149,10 @@ export type EventKind =
   | "job.started"
   | "job.probed"
   | "job.cancel_requested"
+  | "source.rejected"
+  | "source.ignored"
+  | "source.invalid"
+  | "source.failed"
   | "note";
 
 /** One structured event, written as a single JSON console line (Workers Logs in production). */
@@ -172,7 +176,7 @@ export interface ActorEvent {
 }
 
 /** Kinds that the monitor and `actord events --notable` surface. */
-export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.parked", "effect.denied", "effect.failed"];
+export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.parked", "effect.denied", "effect.failed", "source.rejected", "source.invalid", "source.failed"];
 
 // ---- Effects ----
 
@@ -224,6 +228,26 @@ function withUsage<T extends { usage?: EffectUsage }>(body: T, usage: EffectUsag
 /** Rejects with the signal's reason once it aborts: raced against an adapter call to bound it. */
 const aborted = (signal: AbortSignal) => new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
 const messageOf = (err: unknown) => (err as { message?: string } | null)?.message ?? String(err);
+
+/**
+ * The input of the system's `approvals.notify` effect, queued when an effect parks for human approval: which
+ * actor instance asks, for which effect and key, with what input, and until when (`expiresAt`, epoch milliseconds:
+ * the parked row's expiry, after which any answer is refused).
+ */
+export interface ApprovalRequest {
+  /** "Actor:key" of the instance whose effect is parked. */
+  actor: string;
+  /** The actor's declared name. */
+  actorName: string;
+  /** The instance key. */
+  key: string;
+  effect: string;
+  effectKey: string;
+  /** The effect's declared description. */
+  description: string;
+  input: unknown;
+  expiresAt: number;
+}
 
 export interface EffectAdapter<I = unknown, O = unknown> {
   run(input: I, ctx: { key: string; attempt: number; signal: AbortSignal; /** Add to this effect's usage. Ignored once the attempt has timed out or ended. */ reportUsage(usage: EffectUsage): void }): Promise<O>;
@@ -838,8 +862,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const base = { effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId };
     if (fx?.approval === "human" && !req.approved) {
       const expiresMs = durationMs(fx.expires ?? DEFAULT_APPROVAL_EXPIRES) ?? durationMs(DEFAULT_APPROVAL_EXPIRES)!;
-      sql.exec("UPDATE _actors_outbox SET status = 'awaiting_approval', next_at = ? WHERE id = ?", now() + expiresMs, row.id);
+      const expiresAt = now() + expiresMs;
+      sql.exec("UPDATE _actors_outbox SET status = 'awaiting_approval', next_at = ? WHERE id = ?", expiresAt, row.id);
       emit({ kind: "effect.awaiting_approval", at: now(), actor: self, ...base });
+      requestApproval(req, fx.description, expiresAt);
       return;
     }
     const adapter = adapterFor(req.name);
@@ -1025,6 +1051,34 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       });
     inflight.set(id, run);
     ctx.waitUntil?.(run);
+  }
+
+  /**
+   * Tell a person an approval is waiting: queue the system's `approvals.notify` effect for an effect that just
+   * parked, when this actor declares it. The row id names the parked effect, so parking it again (after a
+   * restart's recovery) queues nothing and nobody is asked twice. It is an effect of its own: if it fails or
+   * ends in doubt, the parked effect stays parked and still expires. The row is pending and due now, and this
+   * runs inside a drain (an attempt parks synchronously in startEffect), whose loop picks it up; the drain
+   * that follows every attempt would too. A notify effect that needs approval itself is never queued
+   * (`actord check` reports it as APPROVAL_NOTIFY_NEEDS_APPROVAL): it would wait for an answer to a request nobody sent.
+   */
+  function requestApproval(req: JobBody, description: string, expiresAt: number): void {
+    const notify = system.approvals?.notify;
+    if (notify === undefined || !effectsDeclared.has(notify) || system.effects?.[notify]?.approval === "human") return;
+    const notifyKey = `approval:${req.name}:${req.key}`;
+    const id = `fx:${notify}:${notifyKey}`;
+    if (sql.exec("SELECT 1 FROM _actors_outbox WHERE id = ?", id).toArray().length > 0) return;
+    const input: ApprovalRequest = { actor: self, actorName, key, effect: req.name, effectKey: req.key, description, input: req.input, expiresAt };
+    sql.exec(
+      "INSERT INTO _actors_outbox (id, kind, target, body, status, attempts, next_at, last_error, created_at, seq) VALUES (?, 'effect', ?, ?, 'pending', 0, ?, NULL, ?, ?) ON CONFLICT (id) DO NOTHING",
+      id,
+      notify,
+      JSON.stringify({ name: notify, key: notifyKey, input, causationId: req.causationId, correlationId: req.correlationId }),
+      now(),
+      now(),
+      nextSeq(),
+    );
+    emit({ kind: "effect.requested", at: now(), actor: self, effect: notify, effectKey: notifyKey, causationId: req.causationId, correlationId: req.correlationId, detail: { approvalFor: req.key } });
   }
 
   /** Deliver an effect's outcome back to this actor as its declared result message (a self-route). */
@@ -1248,6 +1302,20 @@ export async function ingress<S extends AnySystem, A extends ActorName<S>, M ext
   payload: PayloadIn<S, M>,
   options: { key?: string; id?: string } = {},
 ): Promise<Receipt> {
+  return deliverExternal(env, system, "@ingress", to, type, payload, options);
+}
+
+/** Deliver into the system from an external sender ("@ingress", "@github", "@email", ...). Exported for @actord/toolkit/sources. */
+export async function deliverExternal(
+  env: unknown,
+  system: AnySystem,
+  from: `@${string}`,
+  to: string,
+  type: string,
+  payload: unknown,
+  options: { key?: string; id?: string; correlationId?: string } = {},
+): Promise<Receipt> {
+  if (typeof from !== "string" || !from.startsWith("@")) throw new Error(`actord: deliverExternal sender must start with "@", got ${JSON.stringify(from)}`);
   const spec = system.actors[to];
   if (!spec) throw new Error(`actord: ${to} is not declared`);
   const ns = (env as Record<string, NamespaceLike>)[spec.binding];
@@ -1259,9 +1327,9 @@ export async function ingress<S extends AnySystem, A extends ActorName<S>, M ext
     id,
     type,
     version: system.messages[type]!.version,
-    from: "@ingress",
+    from,
     to: `${to}:${key}`,
-    correlationId: id,
+    correlationId: options.correlationId ?? id,
     causationId: null,
     attempt: 1,
     sentAt: Date.now(),

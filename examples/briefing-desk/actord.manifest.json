@@ -370,5 +370,7 @@
       "reconcile": false,
       "result": "briefing.delivery"
     }
-  ]
+  ],
+  "sources": [],
+  "approvals": null
 }

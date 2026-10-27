@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // Spike 6: a real Gmail round trip for email approvals. Deployed by the owner only; see README.md.
+  "name": "spike-email-approval",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // The owner: the only address approval emails go to and the only sender whose reply counts.
+    "SPIKE_OWNER": "jaredcolin@gmail.com",
+    // The Worker sends from the address Email Routing delivers to it, so Gmail's reply comes back here.
+    "SPIKE_FROM": "approvals@actord.dev"
+  },
+  // Email Routing's send binding: with no sending domain onboarded it can reach only verified destination
+  // addresses, and this binding is restricted further to the owner alone.
+  "send_email": [{ "name": "EMAIL", "allowed_destination_addresses": ["jaredcolin@gmail.com"] }],
+  "durable_objects": { "bindings": [{ "name": "DESK", "class_name": "Desk" }] },
+  "exports": { "Desk": { "type": "durable-object", "storage": "sqlite" } },
+  "observability": { "enabled": true }
+}

@@ -13,6 +13,7 @@ export interface WorkerConfig {
   durable_objects?: { bindings?: Array<{ name: string; class_name: string; script_name?: string }> };
   exports?: Record<string, { type?: string; state?: string; storage?: string; renamed_to?: string }>;
   migrations?: unknown[];
+  vars?: Record<string, unknown>;
 }
 
 export interface Project {

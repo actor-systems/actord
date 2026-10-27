@@ -2,6 +2,7 @@
   "name": "runtime-probe",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
+  "vars": { "PROBE_HOOK_SECRET": "test-secret", "PROBE_APPROVAL_SECRET": "probe-approval-secret", "PROBE_OWNER": "owner@probe.example", "PROBE_FROM": "actord@probe.example", "PROBE_AUTHSERV": "mx.probe.example" },
   "durable_objects": { "bindings": [{ "name": "PROBE", "class_name": "Probe" }] },
   "exports": { "Probe": { "type": "durable-object", "storage": "sqlite" } }
 }
