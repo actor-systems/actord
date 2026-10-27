@@ -42,6 +42,10 @@ Vitest integration.
    - Computer 0.8.0's push drops `corsProxy`, so isomorphic-git falls back to `http.corsProxy` from `.git/config`,
      which the agent can write through `exec`. So a push from a repo whose config sets one is refused, before the
      token is minted and again just before the push (`[git-push-url-pinned]`).
+   - The same two checks refuse a repo whose `.git` or `.git/config` is a symlink (`lstat`). The agent can make one
+     through `exec` (`mv .git meta && ln -s meta .git`), and a `write` to its target, `meta/config`, would pass
+     decision 3's guard while changing the config the push reads. So the guard covers a symlinked gitdir by refusing
+     the push, not the write.
    - Authentication is Basic `x-access-token:<token>` only, as GitHub Actions sends it. Spike 5: GitHub's git
      endpoint answers Bearer with `401`, and Basic landed the push.
    - The token is the app's `token()`, called for each push attempt and each clone. It goes to the git client as an
@@ -60,19 +64,21 @@ Vitest integration.
    - **The tools' exec timeout defaults to 10 minutes**, and a workspace sets its own with `execTimeoutMs`
      (`AGENT_EXEC_TIMEOUT_INVALID` for anything but a positive whole number). Spike 2's longest command was the 185 s
      install. The default applies to the tools' execs only: an app's own commands may run longer.
-   - **The egress CA goes with every exec.** computerd's commands get only `HOME`, `OLDPWD`, `PATH`, `PWD` and the
-     exec's own `env`, never the image's `ENV`, and npm refused the gateway's certificate without
-     `NODE_EXTRA_CA_CERTS` (spike 2). So with `registry-read`, every exec gets
-     `NODE_EXTRA_CA_CERTS=/etc/cloudflare/certs/cloudflare-containers-ca.crt` under the caller's own `env`: the
-     tools' execs and an app's own alike. For that, `workspaceFor` returns a wrapped `Workspace` (a Proxy).
+   - **The egress CA goes with every exec through `workspace.runtime`.** computerd's commands get only `HOME`,
+     `OLDPWD`, `PATH`, `PWD` and the exec's own `env`, never the image's `ENV`, and npm refused the gateway's
+     certificate without `NODE_EXTRA_CA_CERTS` (spike 2). So with `registry-read`, every exec through
+     `workspace.runtime` gets `NODE_EXTRA_CA_CERTS=/etc/cloudflare/certs/cloudflare-containers-ca.crt` under the
+     caller's own `env`: the tools' execs and an app's own alike. For that, `workspaceFor` returns a wrapped
+     `Workspace` (a Proxy). An exec through Computer's RPC stub, `workspace.stub()`, doesn't get it (R33; see
+     Limitations).
    - **Nothing is pulled before a session resumes.** Spike 4 evicted the object during a test run: no edit was lost,
      no sync was pending, and the next exec's sync brought back what the interrupted command wrote.
    - **A lost container is an interrupted command.** An exec whose container is lost is reported to the model as
      interrupted: the command "may have partly run", and files written before it are kept. Spike 4's eviction gave
      Pi's own "Tool exec was interrupted and may have partially run", and the model's next command ran 8 s after the
      eviction.
-     A run that fails after at least its timeout is reported as timed out instead, judged by elapsed time, because
-     how computerd ends a timed-out run hasn't been seen.
+     A run that fails after at least its timeout is reported as timed out instead, judged by the time elapsed since
+     the exec was called, because how computerd ends a timed-out run hasn't been seen.
    - **Wrangler's container entry.** A workspace with a container backend needs a `containers` entry for the actor's
      class, with `scheduling_policy: "durable_object"` and `images` (`AGENT_CONTAINER_CONFIG_MISSING`; wrangler
      rejects `image` for that policy). The class is built with Computer's `withWorkspaceContainer` and passes itself

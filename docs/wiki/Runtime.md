@@ -91,8 +91,8 @@ Computer.
     connection and its egress reach the object through it.
   - Wrangler's `containers` needs an entry for the class with `scheduling_policy: "durable_object"` and `images`.
   - `localOnly` is required; `["**/node_modules"]` is the usual choice. `egress` is `"none"` unless it is
-    `"registry-read"`: `GET` and `HEAD` to the npm and Yarn registries. Each exec the tools run times out after
-    `execTimeoutMs`, 10 minutes by default.
+    `"registry-read"`: `GET` and `HEAD` to the npm and Yarn registries. Each exec the tools run is given
+    `execTimeoutMs`, 10 minutes by default, as its timeout. A command outrunning it has never been observed live.
 - **Git.** `gitClone(workspace, { url, dir, token })` clones on the object's side. `gitPushEffect({ workspace, dir,
   url, token, allow })` is the adapter for a push effect; declare it `idempotency: "key"`. `allow` defaults to any
   `factory/` branch: bind it to the instance's own branch.

@@ -21,15 +21,20 @@
   the plugin turns containers off, so neither a `containers` entry nor Computer's `ContainerBackend` gets one
   (spike 3). Container tests run against a stub of `ctx.container` (`start`, `getTcpPort`, `destroy`, `running`),
   not a real container. What a real container does when it is lost, when a command runs long, or during an install
-  was seen only in spikes 2 and 4, on one image, one instance size and one region. Tracked: none.
+  was seen only in spikes 2 and 4, on one image, one instance size and one region. A command outrunning
+  `execTimeoutMs` has never been observed live: the spikes' longest ran 185 s. Tracked: none.
 - **The Container backend is experimental.** Computer marks its Container backend, its sync protocol and computerd
   "unsuitable for production use"; its filesystem, git client and Pi tools are stable. The toolkit pins Computer at
   exactly 0.8.0. An upgrade can change what the spikes measured, so it needs the spikes' checks again, by hand.
   Computer doesn't accept unsolicited pull requests, so fixes go through its issues. Tracked: none.
 - **Container commands don't get the image's `ENV`.** computerd gives a command only `HOME`, `OLDPWD`, `PATH`, `PWD`
   and that exec's own `env` (spike 2). Anything a command needs goes in that exec's `env`. With `registry-read`, the
-  toolkit passes `NODE_EXTRA_CA_CERTS` on every exec itself, but a client that ignores it (curl, pip) still distrusts
-  the gateway until the image adds its certificate to the system bundle, which needs a start command. Tracked: none.
+  toolkit passes `NODE_EXTRA_CA_CERTS` on every exec through `workspace.runtime` itself, but a client that ignores it
+  (curl, pip) still distrusts the gateway until the image adds its certificate to the system bundle, which needs a
+  start command. Tracked: none.
+- **An exec through `workspace.stub()` doesn't get the egress CA.** The toolkit adds `NODE_EXTRA_CA_CERTS` to every
+  exec through `workspace.runtime`, but Computer's RPC stub (`workspace.stub()`, for handing the workspace to another
+  Worker) runs execs on the unwrapped Workspace. Pass `NODE_EXTRA_CA_CERTS` in such an exec's `env`. Tracked: none.
 - **Large tarballs through the registry gateway.** In spike 2, the `workerd` and `wrangler` tarballs arrived corrupt
   once ("zlib: invalid distance too far back"), and npm's retry fixed them. The cause is unknown: the gateway's
   streaming or the HTTPS interception. If it happens again, the gateway may need to buffer a tarball before

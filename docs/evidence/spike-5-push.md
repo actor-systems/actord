@@ -13,8 +13,8 @@
   token, and passes it to Computer's git client as an `Authorization` header. It never goes into `.git/config`, and
   never into the container.
 - **The push.** It goes to a pinned URL, `https://github.com/actor-systems/actord`, with `corsProxy: ""`. The order is
-  Bearer first, then Basic `x-access-token:<token>` only after an auth failure. That is the order `gitPushEffect` uses
-  (`packages/toolkit/src/agents/git.ts`).
+  Bearer first, then Basic `x-access-token:<token>` only after an auth failure. At the time of the run, that was the
+  order `gitPushEffect` used (`packages/toolkit/src/agents/git.ts`, before 9982ab1, which made it Basic only).
 - **The search.** The spike then searches the container for the token, and revokes the token.
 
 ## Results
@@ -22,7 +22,7 @@
 | Question | Observed | Result |
 | --- | --- | --- |
 | What did the token grant? | `contents: write`, `metadata: read`, `repositorySelection: selected`, `["actor-systems/actord"]`. It expired an hour after minting (`20:27:05Z`). | as configured |
-| Does GitHub take Bearer on the git endpoint? | No. The push failed with `git push failed: HTTP Error: 401 Unauthorized`. This is Computer's `EPUSHFAIL` wrapping isomorphic-git's `HttpError`, and `gitPushEffect`'s auth-failure check matches it. | **no** |
+| Does GitHub take Bearer on the git endpoint? | No. The push failed with `git push failed: HTTP Error: 401 Unauthorized`. This is Computer's `EPUSHFAIL` wrapping isomorphic-git's `HttpError`, and `gitPushEffect`'s auth-failure check, as the code stood at the time of the run (before 9982ab1 removed it), matched it. | **no** |
 | Does Basic `x-access-token` work? | Yes. The second attempt landed `factory/spike-5` at `ecc2701`. A separate read of the remote head gave the same commit. | **pass** |
 | Is the token in the container? | No, in any of four places. A control canary planted in each place was found every time, so the searches worked. | **pass** |
 | Did anything persist the token in the object? | No. `.git/config` after the push holds `remote.origin.url` and `branch.main`, with no credentials and no `http.*` keys. The object's vfs search found nothing. | **pass** |
