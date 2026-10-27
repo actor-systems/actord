@@ -22,6 +22,16 @@ export const system = defineSystem({
     "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
+    // Its payload validates only once __probeHold settles: receive() awaits validation before the handler's transaction
+    // opens, so this holds a delivery in flight with no transaction open, and no await inside the handler ([lifecycle-alarm-not-held]).
+    "probe.held": message({
+      version: 1,
+      description: "A delivery that waits, before its handler, for the test",
+      payload: z.object({ key: z.string() }).refine(async () => {
+        await (globalThis as { __probeHold?: Promise<void> }).__probeHold;
+        return true;
+      }),
+    }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional(), at: z.enum(["infinity", "nan", "negative"]).optional() }) }),
     "probe.timer.cancel": message({ version: 1, description: "Cancel a timer", payload: z.object({ key: z.string() }) }),
     "probe.timer.fired": message({ version: 1, description: "A timer fired", payload: z.object({ key: z.string() }) }),
@@ -119,6 +129,7 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
+    { from: "Probe", message: "probe.held", to: "Probe" },
     { from: "@ingress", message: "probe.timer.set", to: "Probe" },
     { from: "@ingress", message: "probe.timer.cancel", to: "Probe" },
     { from: "@timer", message: "probe.timer.fired", to: "Probe" },
@@ -286,15 +297,18 @@ export class Probe extends DurableObject<Env> {
       else ctx.after(payload.delayMs, "probe.timer.fired", fired, { key: payload.key });
       if (payload.fail) throw new Error("set then fail");
     },
+    "probe.held": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO outcomes (key, status) VALUES (?, 'confirmed')", payload.key);
+    },
     "probe.timer.cancel": ({ payload }, ctx) => {
       ctx.cancelTimer(payload.key);
     },
     "probe.timer.fired": ({ payload }, ctx) => {
       if (payload.key.startsWith("bad")) throw new Error("timer handler failed");
       ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
-      // A "slow-…" timer sends its outcome to the instance "<key>-gate", whose handler waits for the test to open
-      // the gate: delivering it holds this instance's drive, but not its storage ([lifecycle-alarm-not-held]).
-      if (payload.key.startsWith("slow-")) ctx.send("probe.outcome", { key: payload.key, status: "confirmed" }, { key: `${ctx.key}-gate` });
+      // A "slow-…" timer sends probe.held to the instance "<key>-gate", whose delivery waits, in validation, for the
+      // test to open __probeHold: delivering it holds this instance's drive, but not its storage ([lifecycle-alarm-not-held]).
+      if (payload.key.startsWith("slow-")) ctx.send("probe.held", { key: payload.key }, { key: `${ctx.key}-gate` });
       // Timers that act on other timers when they fire: kill-<k> cancels timer k, reset-<k> sets k again to
       // deliver "<k>-new", and rearm<…> sets itself again once.
       if (payload.key.startsWith("kill-")) ctx.cancelTimer(payload.key.slice("kill-".length));

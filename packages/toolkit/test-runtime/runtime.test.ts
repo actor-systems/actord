@@ -475,24 +475,27 @@ it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the o
 });
 
 it("[lifecycle-alarm-not-held] another capability's job on the shared alarm runs while actord's drive waits on a delivery", async () => {
-  const gate = globalThis as { __probeGate?: Promise<void> };
+  const events = captureEvents();
+  const hold = globalThis as { __probeHold?: Promise<void> };
   let open!: () => void;
-  gate.__probeGate = new Promise((r) => (open = r));
+  hold.__probeHold = new Promise((r) => (open = r));
   try {
-    // When it fires, its outcome goes to "held-gate", which doesn't answer until the gate opens.
+    // When it fires, it sends probe.held to "held-gate", whose delivery waits in validation until the hold opens:
+    // before its handler's transaction, so with no await in a handler for the #80 sentinel to fail.
     await setTimer("held", "slow-1", 20);
     await probe("held").pingAt(Date.now() + 40); // the Pinger's job, due after actord's
     await new Promise((r) => setTimeout(r, 60));
-    // Not awaited: an alarm whose dispatch waits on actord's delivery can't finish until the gate opens.
+    // Not awaited: an alarm whose dispatch waits on actord's delivery can't finish until the hold opens.
     void runDurableObjectAlarm(probe("held"));
     await eventually(async () => expect(await probe("held").pings()).toBe(1), 1000);
     expect(await probe("held").fired()).toEqual(["slow-1"]);
-    // The delivery is still in flight. (Not asked of "held-gate", whose open transaction would hold the question.)
-    const undelivered = await runInDurableObject(probe("held"), (_i, s) => s.storage.sql.exec<{ target: string; status: string }>("SELECT target, status FROM _actors_outbox WHERE kind = 'message'").toArray());
-    expect(undelivered).toEqual([{ target: "Probe:held-gate", status: "pending" }]);
+    // The delivery is still in flight: not yet answered, so not yet counted as an attempt, and nothing has failed.
+    const undelivered = await runInDurableObject(probe("held"), (_i, s) => s.storage.sql.exec<{ target: string; status: string; attempts: number }>("SELECT target, status, attempts FROM _actors_outbox WHERE kind = 'message'").toArray());
+    expect(undelivered).toEqual([{ target: "Probe:held-gate", status: "pending", attempts: 0 }]);
+    expect(events.filter((e) => e.kind === "failed" || e.kind === "retry.scheduled")).toEqual([]);
   } finally {
     open();
-    delete gate.__probeGate;
+    delete hold.__probeHold;
   }
   await eventually(async () => expect(await probe("held-gate").outcomes()).toEqual([{ key: "slow-1", status: "confirmed", error: null }]));
 });
