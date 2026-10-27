@@ -3,6 +3,11 @@
 - **Not guaranteed by the runtime:** exactly-once external effects, global message ordering, transactions
   across actors, or a route as a security boundary. An effect without an idempotency key that loses its
   acknowledgment is reported `in_doubt`, never delivered. Nothing here undoes an external action.
+- **A larger install.** `@actord/toolkit` requires `agents` 0.30.1 (pinned) as a peer dependency. With its
+  dependencies and required peers, that adds about 170 packages to every project that installs the toolkit: this
+  repository's lockfile grew from 197 to 348 packages when the runtime moved onto the Agents SDK. This is accepted
+  (#12), because the runtime is a Lifecycle capability of that SDK. Agent actors will add Pi and
+  `@cloudflare/computer`.
 - **Local evidence only.** Tests run in workerd through Cloudflare's Vitest integration; `actord events` and
   `actord trace` read logs from local runs and never see production. Nothing was deployed to Cloudflare.
 - **Inside Claude Code's default sandbox, workerd tests can't run** (the sandbox denies the loopback port
