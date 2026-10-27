@@ -1206,9 +1206,8 @@ function everything(state: DurableObjectState): string {
 }
 
 it("[git-push-header-only] the token reaches the git client as a header, and nowhere else", async () => {
+  // That no secret reaches the container is [workspace-local-only-passed-to-backend]'s evidence: git runs here, not there.
   await runInDurableObject(scribe("git-header"), async (_i, state) => {
-    const container = new ContainerStub();
-    container.start({ envVars: { SPIKE: "1" } });
     const { workspace, pushes, clones } = spyWorkspace(state);
     await gitClone(workspace, { url: "https://github.com/acme/repo", dir: "/repo", token: async () => TOKEN });
     const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
@@ -1219,7 +1218,6 @@ it("[git-push-header-only] the token reaches the git client as a header, and now
     expect(pushes).toHaveLength(1);
     expect(pushes[0]).toMatchObject({ dir: "/repo", url: REPO, corsProxy: "", ref: "factory/one", remoteRef: "refs/heads/factory/one", headers: { Authorization: `Bearer ${TOKEN}` } });
     expect(JSON.stringify(out)).not.toContain(TOKEN);
-    expect(JSON.stringify(container.calls)).not.toContain(TOKEN);
     expect(everything(state)).not.toContain(TOKEN);
     expect(everything(state)).not.toContain(btoa(`x-access-token:${TOKEN}`));
   });
@@ -1735,7 +1733,7 @@ it("[workspace-container-lost-mid-command] the container is lost while an exec r
   });
 });
 
-it("[workspace-container-lost-mid-command] an exec that runs to its end gives the model its output, not an interruption", async () => {
+it("[workspace-exec-runs-to-end] an exec that runs to its end gives the model its output, not an interruption", async () => {
   await runInDurableObject(scribe("ws-running-ok"), async (_i, state) => {
     const backend = new HeldBackend();
     const tools = workspaceTools(new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, backends: [backend] }), ["workspace.exec"]);
