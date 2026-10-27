@@ -71,7 +71,9 @@ export function factoryBranch(branch: string): boolean {
  * repo whose config names one is refused, before the token is minted and again just before the push. Minting waits on
  * the network, when the container's writes can land; between the last check and the push's own read of the config
  * there is only storage, so they can't. (pi's own file tools, which run here, refuse .git paths.) `corsProxy: ""` is
- * passed as well, for a client that forwards it.
+ * passed as well, for a client that forwards it. A repo whose `.git` or `.git/config` is a symlink is refused at both
+ * checks too: the agent's exec could make one, and a pi write to its target would pass the .git path guard while
+ * changing the config the push reads.
  */
 export function gitPushEffect(options: { workspace: () => Workspace; dir: string; url: string; token: () => Promise<string>; allow?: (branch: string) => boolean }): EffectAdapter<{ branch: string }, { branch: string; refs: unknown }> {
   const url = httpsUrl(options.url, "gitPushEffect's url");
@@ -79,8 +81,13 @@ export function gitPushEffect(options: { workspace: () => Workspace; dir: string
   return {
     async run({ branch }, { signal }) {
       if (typeof branch !== "string" || !allow(branch)) throw new EffectRejected("may push only factory/ branches");
-      const git = options.workspace().git;
+      const workspace = options.workspace();
+      const git = workspace.git;
+      const gitdir = `${options.dir.replace(/\/+$/, "")}/.git`;
       const unproxied = async () => {
+        for (const path of [gitdir, `${gitdir}/config`]) {
+          if ((await workspace.fs.lstat(path).catch(() => null))?.isSymbolicLink) throw new EffectRejected(`${path} is a symlink; refusing to push`);
+        }
         if (await git.configGet({ dir: options.dir, path: "http.corsProxy" })) throw new EffectRejected("the repo's .git/config sets http.corsProxy; refusing to push through it");
       };
       await unproxied();
@@ -97,7 +104,9 @@ export function gitPushEffect(options: { workspace: () => Workspace; dir: string
       } catch (e) {
         failure = e;
       }
-      throw new Error(`git push failed: ${scrub(failure instanceof Error ? failure.message : String(failure))}`);
+      // Computer's client throws its own "git push failed: …" (EPUSHFAIL): say it once.
+      const message = (failure instanceof Error ? failure.message : String(failure)).replace(/^git push failed: /, "");
+      throw new Error(`git push failed: ${scrub(message)}`);
     },
   };
 }

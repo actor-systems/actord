@@ -67,7 +67,7 @@ import { jsonSchemaOf } from "../model/manifest.ts";
 import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectName, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
 import { reachedLimit, type SessionBudget, type SessionObserver, type Spent, spentBy, watchBudget } from "./budget.ts";
 import type { scriptedModel } from "./scripted-model.ts";
-import { effectTools, REPLACED, shown, type ToolSession } from "./tools.ts";
+import { effectTools, shown, type ToolSession } from "./tools.ts";
 import { type Gateway, workspaceFetch, workspaceFor, workspaceTools } from "./workspace.ts";
 
 export { type ScriptedRequest, type ScriptedTurn, scriptedModel } from "./scripted-model.ts";
@@ -298,6 +298,8 @@ const SESSIONS_SCHEMA = [
 /** Job statuses of a session that is still running or about to: a steer joins it, a start replaces it. */
 const LIVE = new Set(["pending", "running", "awaiting_job"]);
 const STOPPED = "stopped";
+/** Why a session a newer start replaced must not run any more. */
+const REPLACED = "replaced by a newer start";
 /** setTimeout's longest delay: a timer for a longer wallClock waits in steps. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 const NOT_STEERED = "the session has ended; not steered";
@@ -386,9 +388,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       waited: (key) => waitByKey(key)?.expires_at,
       ended() {
         const why = halted(row.key);
-        if (why) return why;
+        if (why) return why === REPLACED ? "this session was replaced by a new start" : "this session was stopped";
         const job = jobStatus(row.key);
-        return LIVE.has(job ?? "") ? null : job === "cancelling" ? "its job is being cancelled" : "its job has ended";
+        return LIVE.has(job ?? "") ? null : job === "cancelling" ? "this session was stopped (its job is being cancelled)" : "this session has ended";
       },
     };
   };

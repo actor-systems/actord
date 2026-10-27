@@ -10,11 +10,11 @@
 // eviction no edit was lost and no sync was left pending (spike 4), and the next exec's sync brings back what an
 // interrupted command wrote.
 //
-// With registry-read egress, every exec on the workspace, the tools' and the app's own, gets the gateway's CA:
-// computerd's commands never see the image's ENV, and Node refuses the gateway's certificate without
-// NODE_EXTRA_CA_CERTS (spike 2). Each exec the tools run also gets the workspace's timeout (10 minutes unless it declares
-// execTimeoutMs; spike 2's longest command was a 185 s install), and one whose result is lost once that has passed is
-// reported as timed out, not as a lost container.
+// With registry-read egress, every exec through `workspace.runtime`, the tools' and the app's own, gets the gateway's
+// CA (one through Computer's RPC stub, `workspace.stub()`, doesn't): computerd's commands never see the image's ENV,
+// and Node refuses the gateway's certificate without NODE_EXTRA_CA_CERTS (spike 2). Each exec the tools run also gets
+// the workspace's timeout (10 minutes unless it declares execTimeoutMs; spike 2's longest command was a 185 s install),
+// and one whose result is lost once that has passed is reported as timed out, not as a lost container.
 import {
   type DurableObjectStorageLike,
   type KillSignal,
@@ -228,9 +228,10 @@ function isTransportFailure(err: unknown): boolean {
 /**
  * The workspace as the tools see it (exported for tests). Its exec gives each run the workspace's timeout unless the
  * caller passes one, and marks a run that failed: a start that fails to reach the container, or a result that never
- * arrives, is a lost container, unless the timeout had passed by then. How computerd ends a run that times out hasn't
- * been seen, so that is told by the clock, not by the error. The handle it returns has no event stream, so Computer's
- * exec tool waits for the result (it shows output only at the end). Runs are utf8, as that tool always asks.
+ * arrives, is a lost container, unless the timeout had passed by then, counted from the call. How computerd ends a run
+ * that times out hasn't been seen, so that is told by the clock, not by the error. The handle it returns has no event
+ * stream, so Computer's exec tool waits for the result (it shows output only at the end). Runs are utf8, as that tool
+ * always asks.
  */
 export function toolWorkspace(workspace: Workspace): Workspace {
   const marked = (mark: string, detail: unknown) => new Error(`${mark}${detail instanceof Error ? detail.message : String(detail)}`);
@@ -239,13 +240,15 @@ export function toolWorkspace(workspace: Workspace): Workspace {
     backends: () => workspace.runtime.backends(),
     exec: (async (source: string, options?: WorkspaceRuntimeExecOptions<"utf8">) => {
       const limit = options?.timeoutMs ?? timeoutMs;
+      // Before the call, not once computerd accepts the run: its own clock is running by the time the answer arrives,
+      // so a doubtful case reads as timed out, which is the side R30 accepts.
+      const started = Date.now();
       let handle: WorkspaceRuntimeExecHandle<"utf8">;
       try {
         handle = await workspace.runtime.exec(source, { ...options, encoding: "utf8", timeoutMs: limit });
       } catch (err) {
         throw isTransportFailure(err) ? marked(LOST, err) : err;
       }
-      const started = Date.now();
       return {
         id: handle.id,
         backend: handle.backend,

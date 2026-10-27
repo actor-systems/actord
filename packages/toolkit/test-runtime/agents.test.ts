@@ -854,6 +854,37 @@ it("[agent-tool-after-stop] a tool call in flight when its session is stopped re
   }
 }, 20_000);
 
+it("[agent-tool-after-end] a tool call in flight when its session's job has ended requests nothing, and the model hears the session has ended", async () => {
+  const name = "toolgate-end-1";
+  const requests: ScriptedRequest[] = [];
+  script(name, (r) => (requests.push(r), r.turn === 0 ? call("note_approved", { text: "late" }) : { text: "ok" }));
+  // The call waits before it runs; the abort that follows a settlement in doubt waits too, so the call runs after the
+  // job's deadline settled it.
+  const inFlight = gate();
+  gates.push(inFlight.open);
+  shared.__scribeToolGates = { ...shared.__scribeToolGates, [name]: () => inFlight.wait() };
+  const abort = gate();
+  gates.push(abort.open);
+  await holdHarness(name, "abort", abort);
+  try {
+    await task(name, "the late tool", "task-te1");
+    await reached(inFlight);
+    await eventually(async () => expect(await jobRow(name, "fx:agent.session:task-te1")).toMatchObject({ status: "awaiting_job" }));
+    expect(await expireJobs(env, system, "Scribe", name)).toBe(1);
+    expect(await jobRow(name, "fx:agent.session:task-te1")).toMatchObject({ status: "in_doubt" });
+    inFlight.open();
+    await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
+    const [result] = toolResults(requests[1]!);
+    expect(result).toMatchObject({ toolName: "note_approved", isError: true });
+    expect(text(result!)).toBe("note.approved was not requested: this session has ended. End your turn.");
+    expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
+    abort.open();
+    await settle(env, system);
+  } finally {
+    delete shared.__scribeToolGates?.[name];
+  }
+}, 20_000);
+
 it("[agent-tool-after-replace] a tool call in flight when a new start replaces its session requests nothing, and the model hears the session was replaced by a new start", async () => {
   const name = "toolgate-replace-1";
   const requests: ScriptedRequest[] = [];
@@ -1549,7 +1580,7 @@ it("[git-push-header-only] an authentication failure surfaces as itself, with th
     await expect(run(refused.workspace)).rejects.toThrow(/^git push failed: HTTP Error: 401 Unauthorized$/);
     expect(refused.pushes).toHaveLength(1);
     const failing = spyWorkspace(state, (call) => {
-      throw Object.assign(new Error(`HTTP Error: 401 Unauthorized for ${call.headers?.Authorization} (${TOKEN}, ${btoa(`x-access-token:${TOKEN}`)})`), { status: 401 });
+      throw Object.assign(new Error(`git push failed: HTTP Error: 401 Unauthorized for ${call.headers?.Authorization} (${TOKEN}, ${btoa(`x-access-token:${TOKEN}`)})`), { code: "EPUSHFAIL" });
     });
     const err = await run(failing.workspace).then(() => null, (e: Error) => e);
     expect(err!.message).toMatch(/^git push failed: HTTP Error: 401 Unauthorized for \[token\] \(\[token\], \[token\]\)$/);
@@ -1692,6 +1723,8 @@ it("[git-push-url-pinned] the real git client pushes to the app's URL, never to 
     expect(result).toBeInstanceOf(Error);
     expect(requests.filter((r) => r.url.includes("evil.example"))).toEqual([]);
     expect(requests).toEqual([{ url: "https://github.com/acme/repo.git/info/refs?service=git-receive-pack", authorization: BASIC }]);
+    // The real client throws "git push failed: …" itself (Computer's EPUSHFAIL); the prefix appears once.
+    expect((result as Error).message).toBe("git push failed: HTTP Error: 401 Unauthorized");
   });
 });
 
@@ -1716,6 +1749,48 @@ it("[git-push-url-pinned] a corsProxy written while the token is minted refuses 
     expect(requests).toEqual([]);
     expect(result).toBeInstanceOf(EffectRejected);
     expect((result as Error).message).toMatch(/http\.corsProxy/);
+  });
+});
+
+it("[git-push-url-pinned] a symlinked .git or .git/config refuses the push, before the token is minted and again just before the push", async () => {
+  await runInDurableObject(scribe("git-symlinked"), async (_i, state) => {
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    // The agent's exec could run `mv .git meta && ln -s meta .git`; the sync brings the link into the vfs, and a pi write
+    // to /repo/meta/config would pass the .git write guard while changing the config the push reads.
+    const gitdir = await plantedRepo(state, false);
+    await gitdir.fs.rename("/repo/.git", "/repo/meta");
+    await gitdir.fs.symlink("meta", "/repo/.git");
+    let minted = 0;
+    const push = (w: Workspace, token: () => Promise<string>) => gitPushEffect({ workspace: () => w, dir: "/repo", url: REPO, token }).run({ branch: "factory/one" }, ctx);
+    const first = await outbound(() => push(gitdir, async () => (minted++, TOKEN)));
+    expect(first.result).toBeInstanceOf(EffectRejected);
+    expect((first.result as Error).message).toBe("/repo/.git is a symlink; refusing to push");
+    expect(minted).toBe(0);
+    expect(first.requests).toEqual([]);
+  });
+  await runInDurableObject(scribe("git-symlinked-config"), async (_i, state) => {
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    // Or `ln -sf ../meta-config .git/config`.
+    const config = await plantedRepo(state, false);
+    await config.fs.writeFile("/repo/meta-config", await config.fs.readFile("/repo/.git/config", "utf8"));
+    await config.fs.rm("/repo/.git/config");
+    await config.fs.symlink("../meta-config", "/repo/.git/config");
+    const { requests, result } = await outbound(() => gitPushEffect({ workspace: () => config, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/one" }, ctx));
+    expect((result as Error).message).toBe("/repo/.git/config is a symlink; refusing to push");
+    expect(requests).toEqual([]);
+  });
+  await runInDurableObject(scribe("git-symlinked-mint"), async (_i, state) => {
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    // Planted while the token is minted, a network wait the container's writes can land in.
+    const late = await plantedRepo(state, false);
+    const plant = async () => {
+      await late.fs.rename("/repo/.git", "/repo/meta");
+      await late.fs.symlink("meta", "/repo/.git");
+    };
+    const { requests, result } = await outbound(() => gitPushEffect({ workspace: () => late, dir: "/repo", url: REPO, token: async () => (await plant(), TOKEN) }).run({ branch: "factory/one" }, ctx));
+    expect(result).toBeInstanceOf(EffectRejected);
+    expect((result as Error).message).toBe("/repo/.git is a symlink; refusing to push");
+    expect(requests).toEqual([]);
   });
 });
 

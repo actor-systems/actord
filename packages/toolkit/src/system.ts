@@ -101,7 +101,7 @@ export interface WorkspaceSpec {
   /** Paths kept on the container's disk only (Computer's `ignore`): each starts with "/" or "**\/". */
   readonly localOnly?: readonly string[];
   readonly egress?: "none" | "registry-read";
-  /** The longest a command may run; default 10 minutes. */
+  /** The longest a tool's command may run; default 10 minutes. */
   readonly execTimeoutMs?: number;
 }
 
