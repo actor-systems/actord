@@ -71,6 +71,8 @@ type AnySystem = System;
 /** The internal job effect an agent session runs as, and the message its outcome comes back as. */
 const SESSION = "agent.session";
 const SETTLED = "agent.session.settled";
+/** The tool a session returns its result with. */
+const FINISH = "finish";
 /** The internal call effect that hands a steering message, or a tool's owed result, to a running session. */
 const STEER = "agent.session.steer";
 /** The internal call effect that aborts a session whose job settled in doubt, once that settlement has committed. */
@@ -426,7 +428,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     attached: (turns) => void turnsSeen.set(key, Math.max(turns, turnsSeen.get(key) ?? 0)),
     turn: (turn, usage) => (turnsSeen.set(key, turn), agentEvent("agent.turn", key, session, { turn, usage })),
     // The call's arguments stay out of the event: they are in the transcript, and in the effect's own record.
-    tool: (tool, callId) => agentEvent("agent.tool", key, session, { tool, callId, ...(toolEffects.has(tool) ? { effectKey: `${session}:${callId}` } : {}) }),
+    // `finish` is how the session returns its result, not work it did: leaving it out makes the log deterministic (the
+    // watcher can stop before the event for it arrives).
+    tool: (tool, callId) => tool !== FINISH && agentEvent("agent.tool", key, session, { tool, callId, ...(toolEffects.has(tool) ? { effectKey: `${session}:${callId}` } : {}) }),
   });
   const ended = new Set<string>();
   /** Record a session's end once: its outcome and spending, and its transcript in R2 when there is a bucket. Never throws. */
@@ -636,7 +640,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   /** The tool the model returns its result with. Its parameters are the `returns` message's payload schema. */
   function finishTool(): ToolRegistration {
     return {
-      name: "finish",
+      name: FINISH,
       description: `Finish the task: return its result as the ${returns} message, which ends this session. Call it once the work is done. If the result is refused, correct what the error says and call it again.`,
       parameters: (jsonSchemaOf(returnsSchema) ?? { type: "object" }) as ToolRegistration["parameters"],
       // Recording a result is idempotent (the first one stays), so a rerun after a restart is safe.
@@ -783,7 +787,12 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     unguard(key);
     // Given up on in doubt (its deadline passed, a cancel wasn't confirmed): pi may still be running it, so stop it,
     // after this commits. Replaced sessions too: nothing will use what they do.
-    if (status === "in_doubt" && row?.session) c.effect(ABORT as never, { session: row.session }, { key });
+    if (status === "in_doubt" && row?.session) {
+      c.effect(ABORT as never, { session: row.session }, { key });
+      // No probe settled this job (its deadline did), so its end is recorded here; what it spent is unknown if pi can't say.
+      const spent = await spentBy(harness, row.session).catch(() => null);
+      await recordEnd(key, row.session, "in_doubt", spent, error);
+    }
     // To this actor by name: its returns message may also have routes to others, and these messages are its own.
     const send = (type: string, payload: unknown) => c.send(type as never, payload as never, { to: actor as never, key: c.key });
     if (!row || latest()?.generation !== row.generation) {

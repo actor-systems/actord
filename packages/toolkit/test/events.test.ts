@@ -109,7 +109,6 @@ describe("actord trace", () => {
       ev({ kind: "agent.turn", ...fx, at: 1_100, detail: { session: "7", key: "task-1", turn: 1, usage: usage(1) } }),
       ev({ kind: "agent.tool", ...fx, at: 1_200, detail: { session: "7", key: "task-1", tool: "note_keyed", callId: "c1", effectKey: "7:c1" } }),
       ev({ kind: "agent.tool", ...fx, at: 1_300, detail: { session: "7", key: "task-1", tool: "note_keyed", callId: "c2", effectKey: "7:c2" } }),
-      ev({ kind: "agent.tool", ...fx, at: 1_400, detail: { session: "7", key: "task-1", tool: "finish", callId: "c3" } }),
       ev({ kind: "agent.turn", ...fx, at: 1_500, detail: { session: "7", key: "task-1", turn: 2, usage: usage(2) } }),
       ev({ kind: "agent.ended", ...fx, at: 1_600, detail: { session: "7", key: "task-1", outcome: "confirmed", turns: 2, usage: usage(2), transcript: "transcripts/Scribe/task-1/7.json" } }),
       ev({ kind: "effect.confirmed", ...fx, at: 1_700, attempt: 1, detail: { settledBy: "probe" } }),
@@ -117,7 +116,7 @@ describe("actord trace", () => {
     const file = join(tmp, "agent.ndjson");
     writeFileSync(file, `${log.join("\n")}\n`);
     expect(JSON.parse(run("trace", "task-1", "--file", file, "--json").out).root.effects).toMatchObject([
-      { effect: "agent.session", outcome: "confirmed", agent: { session: "7", turns: 2, tools: { note_keyed: 2, finish: 1 }, outcome: "confirmed", transcript: "transcripts/Scribe/task-1/7.json", usage: { inputTokens: 20, outputTokens: 6 } } },
+      { effect: "agent.session", outcome: "confirmed", agent: { session: "7", turns: 2, tools: { note_keyed: 2 }, outcome: "confirmed", transcript: "transcripts/Scribe/task-1/7.json", usage: { inputTokens: 20, outputTokens: 6 } } },
     ]);
     expect(run("trace", "task-1", "--file", file).out.replaceAll(file, "<log>")).toMatchSnapshot("agent trace");
   });

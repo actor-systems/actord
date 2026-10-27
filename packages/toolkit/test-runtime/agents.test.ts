@@ -1110,9 +1110,9 @@ it("[agent-events] a two-turn session with one tool records agent.started, two a
   const [row] = await s.sessions();
   const session = row!.session as string;
   const mine = agentEvents(events, "task-ev1");
-  // pi's turn_end for the first turn follows its tool call, and finish is a tool call too.
-  expect(mine.filter((e) => e.kind !== "agent.tool" || e.detail?.tool === "note_keyed").map((e) => e.kind)).toEqual(["agent.started", "agent.tool", "agent.turn", "agent.turn", "agent.ended"]);
-  // The second turn's turn_end can reach the watcher after the session settled: then the end records it, as late.
+  // finish isn't recorded as a tool call. The second turn's turn_end can reach the watcher after the session settled:
+  // then the end records it, as late, so the sequence is the same either way.
+  expect(mine.map((e) => e.kind)).toEqual(["agent.started", "agent.tool", "agent.turn", "agent.turn", "agent.ended"]);
   for (const e of mine) expect(e).toMatchObject({ actor: "Scribe:events-1", effect: "agent.session", effectKey: "task-ev1", detail: { session, key: "task-ev1" } });
   expect(mine.filter((e) => e.kind === "agent.turn").map((e) => e.detail?.turn)).toEqual([1, 2]);
   const tool = mine.find((e) => e.kind === "agent.tool" && e.detail?.tool === "note_keyed")!;
@@ -1143,4 +1143,25 @@ it("[agent-transcript-r2] with an R2 binding, agent.ended writes the transcript 
   expect(JSON.stringify(transcript)).toContain("stored");
   // What the harness reports as the session's messages.
   expect(transcript).toEqual(JSON.parse(JSON.stringify(await s.messages(row!.session as string))));
+});
+
+it("[agent-events-in-doubt] a session job expired in doubt records one agent.ended, with the in-doubt outcome and its transcript", async () => {
+  const events = captureEvents();
+  const turn = gate();
+  gates.push(turn.open);
+  script("endeddoubt-1", async () => {
+    await turn.wait();
+    return finish({ summary: "too late" });
+  });
+  await task("endeddoubt-1", "the endless one", "task-ed1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("endeddoubt-1", "fx:agent.session:task-ed1")).toMatchObject({ status: "awaiting_job" }));
+  expect(await expireJobs(env, system, "Scribe", "endeddoubt-1")).toBe(1);
+  const [row] = await scribe("endeddoubt-1").sessions();
+  await eventually(async () => expect(agentEvents(events, "task-ed1").map((e) => e.kind)).toContain("agent.ended"));
+  await settle(env, system);
+  const ended = agentEvents(events, "task-ed1").filter((e) => e.kind === "agent.ended");
+  expect(ended).toHaveLength(1);
+  expect(ended[0]).toMatchObject({ reason: "deadline passed", detail: { session: row!.session, outcome: "in_doubt", transcript: `transcripts/Scribe/task-ed1/${row!.session}.json` } });
+  expect(await env.TRANSCRIPTS.get(`transcripts/Scribe/task-ed1/${row!.session}.json`)).not.toBeNull();
 });
