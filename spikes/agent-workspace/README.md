@@ -118,6 +118,11 @@ https://github.com/settings/apps/new instead, and your account wherever these st
 Run them from the repository root. Each line is typed into Claude Code with `!`. If a wrangler command says you're not
 logged in, run `! npx wrangler login` first.
 
+**Copy the commands exactly.**
+- Paths with a query string are in single quotes, because zsh treats an unquoted `?` as a glob and refuses the command
+  ("no matches found").
+- Placeholders such as `'<APP_ID>'` are quoted too. Replace the text between the quotes and keep the quotes.
+
 1. **Check that Docker is running.** It should print a version, not an error:
 
    ```
@@ -170,6 +175,10 @@ logged in, run `! npx wrangler login` first.
    ```
 
 7. **Test.** In the record, `detail.tests` is vitest's summary line.
+   - `node_modules` is local-only, so it lives only on the container's disk.
+   - If the container was stopped since step 6 (the watchdog does that after 20 idle minutes), `/test` refuses with
+     "the container has no node_modules…". Run step 6 again, then this step.
+   - It doesn't install by itself: an install inside `/test` would mix the two measurements.
 
    ```
    ! spikes/agent-workspace/call.sh POST /test
@@ -199,7 +208,7 @@ Steps 10 to 13 are spike 4, below. Run them next, then come back for steps 14 an
     - There's no switching back: after it, the workspace holds `node_modules`.
 
     ```
-    ! spikes/agent-workspace/call.sh POST /install?ignore=off
+    ! spikes/agent-workspace/call.sh POST '/install?ignore=off'
     ```
 
 15. **Stop the container.** The watchdog would stop it after 20 minutes without a job.
@@ -235,8 +244,11 @@ the model is quick.
 - Each boot records the Worker version it runs, which tells a deploy from an eviction, and when pi first answered
   after it.
 
-**Before you start.** Steps 5 to 9 have run. If the container was stopped since the install (after 20 idle minutes, or
-by step 15), `/long` refuses and says so: run step 6 again first.
+**Before you start.**
+- Steps 5 to 9 have run.
+- If the container was stopped since the install (after 20 idle minutes, or by step 15), `/long` refuses and says so:
+  run step 6 again first.
+- Run `/long` once: its $5 stop counts from its own start, so a second run could spend another $5.
 
 10. **Start the long run.** It answers at once with the job's record. `options.seeded` lists the files, and
     `options.deadline` is when the 45 minutes end.
@@ -259,7 +271,7 @@ by step 15), `/long` refuses and says so: run step 6 again first.
     calls `ctx.abort()`. The answer is `{"evicted":true,…}`.
 
     ```
-    ! spikes/agent-workspace/call.sh POST /evict?during=exec
+    ! spikes/agent-workspace/call.sh POST '/evict?during=exec'
     ```
 
 13. **Let it finish.**
@@ -308,7 +320,7 @@ Spike 4 is the larger part. In 45 minutes, perhaps 100 to 150 model calls:
 - output adds about $0.40;
 - whatever Workers AI's prefix cache serves costs $0.006 per million instead of $0.30.
 
-The watchdog stops the run once its spend reaches $5, counted from pi's token usage at the list prices above, so it can't cost much more than $5.
+The watchdog stops the run once its spend reaches $5, counted from pi's token usage at the list prices above, so it can't cost much more than $5. The $6 ceiling assumes one `/long` and a few prompts. No prompt or `/long` starts once the total reaches $8.
 
 **The rest.** The Worker, its Durable Object and the egress requests are a rounding error on Workers Paid. Durable
 Object storage holds a few hundred MB at most after step 10.
@@ -334,7 +346,7 @@ names this spike's config or this spike's application.
 3. **Delete the container application.** Deleting the Worker doesn't delete its container application:
 
    ```
-   ! npx wrangler containers delete <APPLICATION_ID>
+   ! npx wrangler containers delete '<APPLICATION_ID>'
    ```
 
 4. **Find the image.** This is read-only; look for the `spike-agent-workspace` image and its tag:
@@ -346,7 +358,7 @@ names this spike's config or this spike's application.
 5. **Delete the image:**
 
    ```
-   ! npx wrangler containers images delete <IMAGE>:<TAG>
+   ! npx wrangler containers images delete '<IMAGE>:<TAG>'
    ```
 
 6. **Delete the branch:**
@@ -389,6 +401,11 @@ names this spike's config or this spike's application.
   verified against the public key. The PKCS#1-to-PKCS#8 wrap matches OpenSSL's conversion byte for byte.
 - **The image builds.** `docker build --platform linux/amd64` passed: Debian 13, Node 24.22.1, git 2.47.3, 184 MB. It
   was neither run nor pushed.
+- **Every `call.sh` line above ran under `zsh -c` exactly as written**, against `wrangler dev` through `SPIKE_URL`. Each
+  reached the Worker. The old unquoted `?` forms fail with "no matches found". Every `!` line passes `zsh -n`.
+- **The watchdog's error path.** A planted long job whose closing step throws:
+  - each tick recorded a `watchdog.error` event and came back a minute later while the job was open;
+  - once nothing was live, the watchdog completed and its job was gone.
 
 **Not checked here, because it needs the owner:**
 - the container itself;
@@ -398,6 +415,8 @@ names this spike's config or this spike's application.
 - `wrangler deploy`'s handling of the `containers` block;
 - the long run, the deploy during it, and the watchdog's minute ticks;
 - the seeded TODO comments against the tests: `test/` only imports these files, so a leading comment shouldn't matter.
+- `/test`'s and `/long`'s refusal when the container has lost `node_modules` (it needs a container);
+- the watchdog's `onJobError` backstop, which runs only if the tick's own error handling throws.
 
 ## Results
 

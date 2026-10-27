@@ -37,7 +37,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { createRegistry, GenerationTask, Harness, hook, ToolTask, type ToolRegistration, type UsageState } from "@earendil-works/pi-durable";
 import { PiHarness } from "agents/harness/pi";
-import { Lifecycle, type LifecycleJobContext } from "agents/lifecycle";
+import { Lifecycle, LifecycleCapability, type LifecycleJobContext, type LifecycleJobOutcome } from "agents/lifecycle";
 import { createAI } from "agents/models/pi-ai";
 import { appJwt, branchHead, installationToken, revoke } from "./github.ts";
 
@@ -147,6 +147,10 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
   #registryJob: number | null = null;
   // One per object, never at module scope: pi keeps each Harness subscribed to its registry until it closes.
   readonly registry = createRegistry();
+  readonly watchdog = new Watchdog(
+    () => this.#watchdogTick(),
+    (error) => this.#watchdogFailed(error),
+  );
   readonly harness = new PiHarness({
     harness: ({ storage, context, onWake }) => {
       const models = createModels();
@@ -170,7 +174,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
 
   constructor(ctx: DurableObjectState, env: SpikeEnv) {
     super(ctx, env);
-    this.lifecycle.use(this.harness);
+    this.lifecycle.use(this.watchdog).use(this.harness);
     this.registry.install({
       name: "spike",
       sections: [{ key: "preamble", render: () => PREAMBLE, tag: false }],
@@ -231,9 +235,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     const id = this.#sql<{ id: number }>("INSERT INTO spike_jobs (kind, boot, status, started_at, options, before) VALUES ('long', ?, 'running', ?, '{}', ?) RETURNING id", this.boot, started, JSON.stringify(this.#vfs()))[0]!.id;
     try {
       const container = await this.#connect();
-      // node_modules is local-only, so a container the watchdog stopped has lost it.
-      const deps = await this.#run(id, "test -d node_modules/vitest && echo present || echo missing", { cwd: REPO, timeoutMs: 60_000, source: "spike" });
-      if (!deps.stdout.includes("present")) throw new Error("the container has no node_modules (it was stopped since the install): POST /install, then POST /long again");
+      await this.#requireDeps(id, "/long");
       const seeded = await this.#seedTodos();
       await this.#snapshot(id, "start");
       this.#limitTurns(id, LONG_TURNS);
@@ -300,23 +302,39 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
   }
 
   /**
-   * The watchdog. It looks after a long run (see #tickLong), and destroys a container left idle, so an open computerd
-   * socket can't keep it billing.
+   * One watchdog tick. It looks after a long run (see #tickLong), and destroys a container left idle, so an open
+   * computerd socket can't keep it billing. It never throws: an error is recorded, and the watchdog comes back in a minute
+   * while anything it guards is live.
    */
-  async onJob({ job }: LifecycleJobContext): Promise<{ rescheduleAt: number } | undefined> {
-    if (job.fn !== "watchdog") return undefined;
-    const long = this.#runningJob();
-    if (long?.kind === "long") await this.#tickLong(long.id, Number(long.started_at));
-    const running = this.#runningJob();
-    const container = this.ctx.container;
-    if (!running && container?.running) {
-      const last = this.#sql<{ at: number | null }>("SELECT MAX(COALESCE(ended_at, started_at)) AS at FROM spike_jobs")[0]?.at ?? 0;
-      if (Date.now() - Number(last) >= IDLE_STOP_MS) {
-        await this.#stopContainer("idle");
-        return undefined;
+  async #watchdogTick(): Promise<{ rescheduleAt: number } | undefined> {
+    try {
+      const long = this.#runningJob();
+      if (long?.kind === "long") await this.#tickLong(long.id, Number(long.started_at));
+      const running = this.#runningJob();
+      const container = this.ctx.container;
+      if (!running && container?.running) {
+        const last = this.#sql<{ at: number | null }>("SELECT MAX(COALESCE(ended_at, started_at)) AS at FROM spike_jobs")[0]?.at ?? 0;
+        if (Date.now() - Number(last) >= IDLE_STOP_MS) {
+          await this.#stopContainer("idle");
+          return undefined;
+        }
       }
+      return running || container?.running ? { rescheduleAt: Date.now() + TICK_MS } : undefined;
+    } catch (err) {
+      return this.#watchdogFailed(err);
     }
-    return running || container?.running ? { rescheduleAt: Date.now() + TICK_MS } : undefined;
+  }
+
+  /** Records a watchdog failure, and keeps the watchdog while a job or the container is live, or if that can't be told. */
+  #watchdogFailed(error: unknown): { rescheduleAt: number } | undefined {
+    this.#safeEvent("watchdog.error", errorOf(error));
+    let live = true;
+    try {
+      live = this.#runningJob() !== undefined || this.ctx.container?.running === true;
+    } catch {
+      // Unknown counts as live: a spare tick costs nothing, and a lost one could leave a container billing.
+    }
+    return live ? { rescheduleAt: Date.now() + TICK_MS } : undefined;
   }
 
   async #job(id: number, kind: JobKind, options: JobOptions): Promise<Record<string, unknown>> {
@@ -381,6 +399,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
 
   async #test(job: number) {
     const container = await this.#connect();
+    await this.#requireDeps(job, "/test");
     const r = await this.#run(job, "npm test -w @actord/toolkit", { cwd: REPO, timeoutMs: TEST_TIMEOUT_MS, source: "spike" });
     const plain = stripAnsi(`${r.stdout}\n${r.stderr}`);
     return { container, exitCode: r.exitCode, testMs: r.ms, testFiles: /Test Files\s+(.+)/.exec(plain)?.[1]?.trim() ?? null, tests: /\n\s*Tests\s+(.+)/.exec(plain)?.[1]?.trim() ?? null, sync: r.sync };
@@ -436,8 +455,11 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     const { GITHUB_APP_ID: appId, GITHUB_APP_INSTALLATION_ID: installationId, GITHUB_APP_PRIVATE_KEY: key } = this.env;
     if (!appId || !installationId || !key) throw new Error("set GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY first");
     if (!(await this.#cloned())) throw new Error("no clone yet: POST /clone first");
+    // Start or adopt the container before minting, so the token isn't waiting on a boot, and the search below has one.
+    const container = await this.#connect();
     const { token, grant } = await installationToken(await appJwt(appId, key), installationId, REPOSITORY.split("/")[1]!);
-    const scrub = (text: string | null | undefined) => (text ?? "").replaceAll(token, "[token]");
+    const basic = btoa(`x-access-token:${token}`);
+    const scrub = (text: string | null | undefined) => (text ?? "").replaceAll(token, "[token]").replaceAll(basic, "[basic]");
     try {
       const git = this.workspace.git;
       await git.branch({ dir: REPO, name: BRANCH, checkout: true, force: true });
@@ -447,7 +469,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       const { oid } = await git.commit({ dir: REPO, message: "Spike 5: a push from the Durable Object\n\nPlan 3, spike 5: an installation token minted in the Durable Object and passed to the git client as a header.", author: IDENTITY });
       // Bearer first, as the plan has it; if GitHub's git endpoint refuses that, Basic with x-access-token, as Actions does.
       const attempts: Array<{ scheme: string; ok: boolean; error: string | null; refs?: unknown }> = [];
-      for (const [scheme, authorization] of [["bearer", `Bearer ${token}`], ["basic", `Basic ${btoa(`x-access-token:${token}`)}`]] as const) {
+      for (const [scheme, authorization] of [["bearer", `Bearer ${token}`], ["basic", `Basic ${basic}`]] as const) {
         try {
           const r = await git.push({ dir: REPO, remote: "origin", ref: BRANCH, remoteRef: `refs/heads/${BRANCH}`, force: true, headers: { Authorization: authorization } });
           attempts.push({ scheme, ok: r.ok, error: r.error === null ? null : scrub(r.error), refs: JSON.parse(scrub(JSON.stringify(r.refs))) });
@@ -457,8 +479,9 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
         }
       }
       const remoteHead = await branchHead(token, REPOSITORY, BRANCH);
-      const search = await this.#searchForToken(job, token);
-      return { grant, commit: oid, attempts, landed: remoteHead === oid, remoteHead, search };
+      // A failed search must not lose what is already known about the push.
+      const search = await this.#searchForToken(job, token).catch((err: unknown) => ({ error: scrub(errorOf(err).message) }));
+      return { container, grant, commit: oid, attempts, landed: remoteHead === oid, remoteHead, search };
     } finally {
       this.#event("push.token-revoked", { status: await revoke(token).catch((err: unknown) => scrub(errorOf(err).message)) });
     }
@@ -492,45 +515,60 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     }
   }
 
-  /** One watchdog tick of a long run: a snapshot, then a stop at a limit, or the end once pi has settled. */
+  /**
+   * One watchdog tick of a long run: a snapshot, then a stop at a limit, then the end once pi has settled. Each step
+   * that can fail is guarded, and the limits come before anything that asks pi, so a failing pi can't keep the run going.
+   */
   async #tickLong(job: number, startedAt: number): Promise<void> {
     const options = this.#longOptions(job);
     if (!options) return;
-    await this.#snapshot(job, "tick");
-    const pending = await this.harness.pending();
-    if (!pending.some((p) => p.operationId === options.operationId)) return this.#finishLong(job, options);
-    if (options.stop) {
-      if (Date.now() - options.stop.at >= LONG_SETTLE_MS) await this.#finishLong(job, options);
-      return;
+    await this.#guard("snapshot", () => this.#snapshot(job, "tick"));
+    if (!options.stop) {
+      const spent = (await this.#guard("usage", async () => usageTotals(await this.#usage()).priceUsd - options.usdAtStart)) ?? 0;
+      const responses = this.#turns(job)?.responses ?? 0;
+      const reason = Date.now() - startedAt >= LONG_MS ? "45 minutes" : spent >= LONG_USD_CAP ? `$${LONG_USD_CAP} of model spend` : responses >= LONG_TURNS ? `${LONG_TURNS} model responses` : null;
+      if (reason !== null) {
+        options.stop = { at: Date.now(), reason };
+        this.#sql("UPDATE spike_jobs SET options = ? WHERE id = ?", JSON.stringify(options), job);
+        this.#event("long.stop", { job, reason, spentUsd: spent, responses });
+        // Stop pi first, so it starts nothing new, then any command still running for it.
+        await this.#guard("abort", () => this.harness.abort());
+        for (const e of this.#sql<{ exec_id: string | null }>("SELECT exec_id FROM spike_execs WHERE job = ? AND source = 'model' AND ended_at IS NULL AND boot = ?", job, this.boot)) {
+          const id = e.exec_id;
+          if (id) await this.#guard("kill", () => this.workspace.runtime.killExec(id, { backend: BACKEND_ID }));
+        }
+      }
     }
-    const spent = usageTotals(await this.#usage()).priceUsd - options.usdAtStart;
-    const responses = this.#turns(job)?.responses ?? 0;
-    const reason = Date.now() - startedAt >= LONG_MS ? "45 minutes" : spent >= LONG_USD_CAP ? `$${LONG_USD_CAP} of model spend` : responses >= LONG_TURNS ? `${LONG_TURNS} model responses` : null;
-    if (reason === null) return;
-    options.stop = { at: Date.now(), reason };
-    this.#sql("UPDATE spike_jobs SET options = ? WHERE id = ?", JSON.stringify(options), job);
-    this.#event("long.stop", { job, reason, spentUsd: spent, responses });
-    // Stop pi first, so it starts nothing new, then any command still running for it.
-    await this.harness.abort();
-    for (const e of this.#sql<{ exec_id: string | null }>("SELECT exec_id FROM spike_execs WHERE job = ? AND source = 'model' AND ended_at IS NULL AND boot = ?", job, this.boot)) {
-      if (e.exec_id) await this.workspace.runtime.killExec(e.exec_id, { backend: BACKEND_ID }).catch(() => {});
-    }
+    const pending = await this.#guard("pending", () => this.harness.pending());
+    const settled = pending !== undefined && !pending.some((p) => p.operationId === options.operationId);
+    if (settled || (options.stop && Date.now() - options.stop.at >= LONG_SETTLE_MS)) await this.#finishLong(job, options);
   }
 
+  /** Closes a long run's job. Only the final update can fail it; every lookup that can fail is guarded. */
   async #finishLong(job: number, options: LongOptions): Promise<void> {
-    const result = await this.harness.wait(options.operationId, { signal: AbortSignal.timeout(5000) }).catch(() => null);
-    const usage = usageTotals(await this.#usage());
+    const result = await this.#guard("wait", () => this.harness.wait(options.operationId, { signal: AbortSignal.timeout(5000) }));
+    const usage = await this.#guard("usage", async () => usageTotals(await this.#usage()));
     const detail = {
       operationId: options.operationId,
       stoppedBy: options.stop?.reason ?? null,
       result: result ? { status: result.status, reason: result.reason, text: result.text?.slice(0, OUTPUT_TAIL) } : null,
       turns: this.#turns(job),
-      spentUsd: usage.priceUsd - options.usdAtStart,
+      spentUsd: usage ? usage.priceUsd - options.usdAtStart : null,
       seeded: options.seeded.length,
-      todosLeft: await this.#todosLeft(),
+      todosLeft: (await this.#guard("todos", () => this.#todosLeft())) ?? null,
     };
     this.#sql("UPDATE spike_jobs SET status = ?, ended_at = ?, after = ?, detail = ? WHERE id = ?", options.stop ? "stopped" : "done", Date.now(), JSON.stringify(this.#vfs()), JSON.stringify(detail), job);
-    await this.#snapshot(job, "end");
+    await this.#guard("snapshot", () => this.#snapshot(job, "end"));
+  }
+
+  /** Runs one step of the watchdog; a failure is recorded as an event and gives undefined. */
+  async #guard<T>(step: string, fn: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await fn();
+    } catch (err) {
+      this.#safeEvent("watchdog.error", { step, ...errorOf(err) });
+      return undefined;
+    }
   }
 
   #longOptions(job: number): LongOptions | null {
@@ -572,6 +610,15 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     } catch (err) {
       this.#sql("INSERT INTO spike_snapshots (at, job, boot, reason, exec, sync, error) VALUES (?, ?, ?, ?, ?, ?, ?)", at, job, this.boot, reason, JSON.stringify(exec), JSON.stringify(sync), errorOf(err).message);
     }
+  }
+
+  /**
+   * node_modules is local-only, so a container stopped since the install (the watchdog's idle stop, or /stop) has lost
+   * it. Refuses rather than installing again: an install here would change what the caller's job measures.
+   */
+  async #requireDeps(job: number, retry: string): Promise<void> {
+    const deps = await this.#run(job, "test -d node_modules/vitest && echo present || echo missing", { cwd: REPO, timeoutMs: 60_000, source: "spike" });
+    if (!deps.stdout.includes("present")) throw new Error(`the container has no node_modules (it was stopped since the install): POST /install, then POST ${retry} again`);
   }
 
   /** Runs one command to its end and summarises it. */
@@ -701,7 +748,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
   }
 
   async #armWatchdog(): Promise<void> {
-    await this.lifecycle.jobs.push({ id: "spike-watchdog", fn: "watchdog", time: Date.now() + TICK_MS });
+    await this.watchdog.arm(Date.now() + TICK_MS);
   }
 
   // Turn limits: the job a prompt belongs to, and how many model responses it has had. Kept in SQLite, so a restart
@@ -842,6 +889,15 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     this.#sql("INSERT INTO spike_events (at, kind, detail) VALUES (?, ?, ?)", Date.now(), kind, JSON.stringify(detail ?? null));
   }
 
+  /** #event for error paths, which must not throw in turn. */
+  #safeEvent(kind: string, detail: unknown): void {
+    try {
+      this.#event(kind, detail);
+    } catch (err) {
+      console.error("spike: could not record an event", kind, detail, err);
+    }
+  }
+
   #sql<T extends Row>(query: string, ...bindings: unknown[]): T[] {
     return this.ctx.storage.sql.exec<T>(query, ...bindings).toArray();
   }
@@ -853,6 +909,34 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     } catch {
       return [];
     }
+  }
+}
+
+/**
+ * The watchdog's Lifecycle job, as a capability: Lifecycle gives a capability's job an onJobError, but a host job none,
+ * and it drops a job whose onJob fails three times running. Bench's tick never throws, and onJobError is the backstop,
+ * so the long run's limits and the idle stop can't be dropped by an error.
+ */
+class Watchdog extends LifecycleCapability {
+  readonly #tick: () => Promise<{ rescheduleAt: number } | undefined>;
+  readonly #failed: (error: unknown) => { rescheduleAt: number } | undefined;
+
+  constructor(tick: () => Promise<{ rescheduleAt: number } | undefined>, failed: (error: unknown) => { rescheduleAt: number } | undefined) {
+    super("spike-watchdog");
+    this.#tick = tick;
+    this.#failed = failed;
+  }
+
+  async arm(time: number): Promise<void> {
+    await this.lifecycle.jobs.push({ id: "tick", fn: "tick", time });
+  }
+
+  onJob(): Promise<LifecycleJobOutcome | void> {
+    return this.#tick();
+  }
+
+  onJobError(_context: LifecycleJobContext, error: unknown): LifecycleJobOutcome | void {
+    return this.#failed(error);
   }
 }
 
