@@ -10,7 +10,7 @@ import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
-const shared = globalThis as { __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number> };
+const shared = globalThis as { __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
 
 /** Answer each model request of instance `name` with `script` (Scribe reads it at every request). */
 function script(name: string, fn: Script): void {
@@ -941,10 +941,13 @@ it("[agent-exhausted-after-restart] the turns budget reached while the instance 
   const cut = gate();
   gates.push(cut.open);
   let calls = 0;
+  let watchedAtResume: string[] | undefined;
   script("turns-restart-1", async (r) => {
     calls++;
     // The third request is cut off by the restart; pi asks again once it resumes the run, by itself.
     if (calls === 3) await cut.wait();
+    // The resumed request: the restarted instance already watches the session, so pi resumed it only after that.
+    if (calls === 4) watchedAtResume = shared.__scribes?.["turns-restart-1"]?.watched();
     return noteEvery(r);
   });
   await task("turns-restart-1", "the restarted one", "task-tr1");
@@ -965,6 +968,7 @@ it("[agent-exhausted-after-restart] the turns budget reached while the instance 
   // Two turns, the cut-off request and its resumption (the third turn), and at most one request past the limit.
   expect(calls).toBeGreaterThanOrEqual(4);
   expect(calls).toBeLessThanOrEqual(5);
+  expect(watchedAtResume).toEqual(["task-tr1"]);
   expect(await jobRow("turns-restart-1", "fx:agent.session:task-tr1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
   expect(await s.watched()).toEqual([]);
 });

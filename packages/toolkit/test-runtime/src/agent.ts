@@ -13,7 +13,7 @@ import { system } from "./index.ts";
 
 /** A test's script for one instance, by its name: answers each model request (agents.test.ts installs them). */
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
-const shared = globalThis as { __scribeGate?: Promise<void>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number> };
+const shared = globalThis as { __scribeGate?: Promise<void>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
 
 /** The instructions an instance is built with, unless a test set others for its name. */
 const INSTRUCTIONS = "You are Scribe. Write up the task you're given, then call finish with a summary.";
@@ -62,6 +62,8 @@ export class Scribe extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // The newest instance by name, so a script can look at the instance whose model it answers (after a restart too).
+    shared.__scribes = { ...shared.__scribes, [this.#name]: this };
     this.lifecycle.use(new JobLog());
     for (const table of ["fired (key TEXT NOT NULL)", "echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)", "done (id TEXT NOT NULL, sender TEXT NOT NULL, summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)", "noted (effect TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL)", "results (key TEXT NOT NULL, status TEXT NOT NULL)"]) {
       ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${table}`);
