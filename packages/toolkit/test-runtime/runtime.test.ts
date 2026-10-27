@@ -106,6 +106,55 @@ it("[request-effect] requestEffect queues an effect from outside a handler as ct
   ]);
 });
 
+it("[request-effect-in-handler] requestEffect called from inside a handler is refused, so the delivery fails instead of hanging or running the effect before the handler commits", async () => {
+  const refusal = "requestEffect can't be called from inside a handler (it would wait on the delivery it is part of); use ctx.effect";
+  overrideEffect("gateway.keyed", { run: async () => "ran" });
+  // Called as the handler runs: refused at once.
+  expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-now" }, { key: "nest-now" })).toMatchObject({ status: "failed", error: refusal });
+  // Called after the handler has awaited: its transaction runs nested in the handler's, finds it open, and is refused.
+  expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-later", after: true }, { key: "nest-later" })).toMatchObject({ status: "failed", error: refusal });
+  for (const key of ["nest-now", "nest-later"]) {
+    expect(await runInDurableObject(probe(key), (_i, st) => st.storage.sql.exec("SELECT id FROM _actors_outbox WHERE kind = 'effect'").toArray())).toEqual([]);
+  }
+});
+
+it("[request-effect-beside-handler] a requestEffect made beside a handler, while its transaction is open, isn't refused: it runs after that transaction, whose rollback doesn't take it along", async () => {
+  let runs = 0;
+  overrideEffect("gateway.keyed", { run: async () => ++runs });
+  const gate = globalThis as { __probeGate?: unknown };
+  try {
+    const result = await runInDurableObject(probe("rq-wait"), async (instance: { actor: { receive(e: unknown): Promise<{ status: string }>; requestEffect(n: string, i: unknown, o: { key: string }): Promise<{ status: string; outcome?: Promise<unknown> }> } }, state) => {
+      const requested = () => state.storage.sql.exec("SELECT 1 FROM _actors_outbox WHERE id = 'fx:gateway.keyed:rq'").toArray().length > 0;
+      let asked: Promise<{ status: string; outcome?: Promise<unknown> }> | undefined;
+      let laterThanHandler: boolean | undefined;
+      // A probe.outcome for a "slow-…" key awaits __probeGate inside its transaction. Its then() runs beside it, as
+      // other code in the object would (pi's, say), not as the handler's own call: it requests an effect, and a little
+      // later fails the handler. No timers: the open transaction holds the object's input gate.
+      gate.__probeGate = {
+        then: (_resolve: () => void, reject: (err: Error) => void) => {
+          asked = instance.actor.requestEffect("gateway.keyed", { key: "rq" }, { key: "rq" });
+          void (async () => {
+            for (let i = 0; i < 100; i++) await Promise.resolve();
+            laterThanHandler = !requested(); // the request's transaction waits for the handler's
+            reject(new Error("the handler failed"));
+          })();
+        },
+      };
+      const receipt = await instance.actor.receive({ v: 1, id: "rq-wait-1", type: "probe.outcome", version: 1, from: "Probe:rq-wait", to: "Probe:rq-wait", correlationId: "rq-wait-1", causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-rq", status: "confirmed" } });
+      const answer = await asked!;
+      return { laterThanHandler, receipt: receipt.status, state: answer.outcome ? await answer.outcome : answer };
+    });
+    expect(result).toMatchObject({ laterThanHandler: true, receipt: "failed", state: { status: "confirmed", key: "rq", value: 1 } });
+  } finally {
+    delete gate.__probeGate;
+  }
+  expect(runs).toBe(1);
+  const rows = await runInDurableObject(probe("rq-wait"), (_i, st) => st.storage.sql.exec("SELECT id, status FROM _actors_outbox WHERE kind = 'effect'").toArray());
+  expect(rows).toEqual([{ id: "fx:gateway.keyed:rq", status: "confirmed" }]);
+  // Only the request's own result: the failed delivery recorded nothing.
+  expect(await probe("rq-wait").outcomes()).toEqual([{ key: "rq", status: "confirmed", error: null }]);
+});
+
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
   for (const [key, effect] of [["orph-plain", "gateway.plain"], ["orph-keyed", "gateway.keyed"]] as const) {
     overrideEffect(effect, { run: () => new Promise(() => {}) }); // hangs until the crash below

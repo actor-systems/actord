@@ -4,7 +4,7 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
 import { type ActorEvent, ingress } from "../src/runtime/index.ts";
-import { captureEvents, eventually, expireJobs, overrideEffect, resetSeams, settle } from "../src/testing.ts";
+import { captureEvents, eventually, expireJobs, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
 import type { Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
@@ -691,7 +691,7 @@ it("[agent-tool-undeclared] only the effects in `tools` are offered, and request
   await reached(held);
   const [row] = await s.sessions();
   // note.hidden is in Scribe's effects but not its tools; gateway.keyed is another actor's effect.
-  expect((await s.offeredTools(row!.session as string)).sort()).toEqual(["finish", "note_approved", "note_keyed", "note_plain"]);
+  expect((await s.offeredTools(row!.session as string)).sort()).toEqual(["finish", "note_approved", "note_keyed", "note_plain", "note_silent"]);
   const refused = await runInDurableObject(s, (instance: Scribe) =>
     instance.actor.requestEffect("gateway.keyed", { key: "x" }, { key: "x" }).then(
       () => "requested",
@@ -763,4 +763,62 @@ it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's 
   expect(await jobRow("tool-handler-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed", attempts: 1 });
   expect((await s.messages(session)).filter((e) => e.kind === "actord.effect_result")).toHaveLength(1);
   expect(users(requests.at(-1)!).filter((t) => t.startsWith("Result of"))).toHaveLength(1);
+});
+
+it("[agent-tool-approval-no-result] an approved effect with no result message is steered in by the session's probe", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("tool-silent-1", (r) => {
+    requests.push(r);
+    if ((users(r).at(-1) ?? "").startsWith("Result of note.silent")) return finish({ summary: "silent" });
+    return r.lastToolResults.length === 0 ? call("note_silent", { text: "s" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe("tool-silent-1");
+  await task("tool-silent-1", "the silent note", "task-tq1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("tool-silent-1", session, "task-tq1");
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key, value: { noted: "s" } });
+  await settle(env, system);
+  // Nothing comes back by message: the job still waits on the result it is owed.
+  expect(events.filter((e) => e.kind === "sent" && e.actor === "Scribe:tool-silent-1" && e.effect === "note.silent")).toEqual([]);
+  expect(await jobRow("tool-silent-1", "fx:agent.session:task-tq1")).toMatchObject({ status: "awaiting_job" });
+  // The next look at the session steers it in from the effect's row.
+  await s.probeNow("task-tq1");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["silent"]), 5000);
+  expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.silent (request ${key}): confirmed {"noted":"s"}`);
+  expect(await jobRow("tool-silent-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed" });
+  expect(await s.noted()).toEqual([{ effect: "note.silent", key, text: "s" }]);
+});
+
+it("[agent-tool-result-steer-in-doubt] a result steer that ends in doubt gives up its wait, so the session ends instead of waiting out its deadline", async () => {
+  const requests: ScriptedRequest[] = [];
+  script("tool-steer-doubt-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_approved", { text: "q" }) : { text: "Waiting for the approval." }));
+  const s = scribe("tool-steer-doubt-1");
+  await task("tool-steer-doubt-1", "the lost result", "task-tsd1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("tool-steer-doubt-1", session, "task-tsd1");
+  // pi refuses the result's input, and the steer gets one attempt: it ends in doubt.
+  overrideEffectBudget("agent.session.steer", { maxAttempts: 1 });
+  await runInDurableObject(s, (instance: Scribe) => {
+    const harness = instance.actor.harness;
+    const open = harness.session.bind(harness);
+    harness.session = ((id: string) =>
+      new Proxy(open(id), {
+        get: (target, prop) => (prop === "submit" ? async () => Promise.reject(new Error("pi refused the input")) : ((v) => (typeof v === "function" ? v.bind(target) : v))(Reflect.get(target, prop, target))),
+      })) as typeof harness.session;
+  });
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
+  await eventually(async () => expect(await jobRow("tool-steer-doubt-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "in_doubt", lastError: "pi refused the input" }));
+  expect(await jobRow("tool-steer-doubt-1", "fx:agent.session:task-tsd1")).toMatchObject({ status: "awaiting_job" });
+  // The next look gives the wait up; with no work left in pi, the session ends.
+  await s.probeNow("task-tsd1");
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-tsd1", reason: "ended without returning a result" } }]), 5000);
+  expect(await runInDurableObject(s, (_i, state) => state.storage.sql.exec("SELECT done_at FROM _actors_agent_waits WHERE key = ?", key).one().done_at)).toEqual(expect.any(Number));
+  expect(await s.done()).toEqual([]);
 });

@@ -100,7 +100,7 @@ export class Scribe extends DurableObject<Env> {
     {
       instructions: shared.__scribeInstructions?.[this.#name] ?? INSTRUCTIONS,
       model: scriptedModel(scriptFor(this.#name)),
-      effects: { "note.keyed": noteAdapter(this.ctx.storage.sql, "note.keyed"), "note.plain": noteAdapter(this.ctx.storage.sql, "note.plain"), "note.approved": noteAdapter(this.ctx.storage.sql, "note.approved"), "note.hidden": noteAdapter(this.ctx.storage.sql, "note.hidden") },
+      effects: { "note.keyed": noteAdapter(this.ctx.storage.sql, "note.keyed"), "note.plain": noteAdapter(this.ctx.storage.sql, "note.plain"), "note.approved": noteAdapter(this.ctx.storage.sql, "note.approved"), "note.silent": noteAdapter(this.ctx.storage.sql, "note.silent"), "note.hidden": noteAdapter(this.ctx.storage.sql, "note.hidden") },
       extensions: this.#name.startsWith("echo-") ? [{ name: "echo", tools: [echoTool(this.ctx.storage.sql)] }] : this.#name.startsWith("json-") ? [{ name: "echo", tools: [jsonEchoTool(this.ctx.storage.sql)] }] : [],
     },
   );

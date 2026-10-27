@@ -21,8 +21,9 @@
 //   (_actors_agent_waits): the session's job isn't done while a result is owed to it. When the effect's result message
 //   arrives, it is steered into the session (agent.session.steer, with the operation id "result:<key>"), which starts
 //   a new run if the session's run had ended; for a session replaced or ended meanwhile it is a note only. Every tool
-//   result message, owed to a session or not, also reaches the actor's own handler for it, if it has one. A person's
-//   denial sends no result message, so the job's probe steers that in.
+//   result message, owed to a session or not, also reaches the actor's own handler for it, if it has one. The job's
+//   probe is the backstop: it steers in a waited request that settled with no steer yet (a person's denial sends no
+//   result message, an effect may declare none, a message may be refused), and gives up one whose steer failed.
 import { PiHarness, type PiReceipt } from "agents/harness/pi";
 import { createAI } from "agents/models/pi-ai";
 import { type Api, createModels, type Model, type ModelThinkingLevel, type MutableModels } from "@earendil-works/pi-ai";
@@ -249,6 +250,14 @@ const NOT_STEERED = "the session has ended; not steered";
 
 const defaultRender = (type: string, payload: unknown) => `${type}\n\n${JSON.stringify(payload, null, 2)}`;
 const text = (t: string): ToolExecutionResult["output"] => [{ type: "text", text: t }];
+/** A request's outcome from its outbox row, as its result message would carry it; null while it hasn't settled. */
+function settledOutcome(fx: { status: string; body: string; last_error: string | null }): Pick<Settled, "status" | "value" | "error"> | null {
+  if (fx.status === "confirmed") return { status: "confirmed", value: (JSON.parse(fx.body) as { outcome?: unknown }).outcome };
+  if (fx.status === "in_doubt") return { status: "in_doubt", error: fx.last_error ?? "unknown" };
+  // A denial (by a person, or an expiry) is a failure, as the runtime reports it.
+  if (fx.status === "failed" || fx.status === "denied" || fx.status === "dead") return { status: "failed", error: fx.last_error ?? fx.status };
+  return null;
+}
 /** A tool's owed result, as the session gets it. */
 const resultPrompt = (effect: string, key: string, outcome: Pick<Settled, "status" | "value" | "error">) => {
   const detail = shown(outcome.status === "confirmed" ? outcome.value : outcome.error);
@@ -366,7 +375,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     async probe(handle, { key }) {
       // Owed results first, then pi's work, then the row. A steer closes its wait once pi has the result, so a wait
       // found closed shows as pi's work; and finish records a result before its run ends, so a run found ended had it.
-      const owed = openWaits(handle.session);
+      const waits = openWaits(handle.session);
       const pending = await harness.pending({ session: handle.session });
       const row = rowByKey(key);
       if (row?.result != null) return { done: true, status: "confirmed", value: JSON.parse(row.result) as unknown };
@@ -376,7 +385,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
         return { done: true, status: "failed", error: `exhausted:${row.exhausted}` };
       }
       if (row?.stopped_at != null) return { done: true, status: "failed", error: STOPPED };
-      if (row && owed.length > 0) await steerDenials(row, owed);
+      const owed = row && waits.length > 0 ? await steerSettled(row, waits) : waits;
       // A session being stopped has no work left by design: its cancel, not this look, settles it.
       if (pending.length > 0 || owed.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") return { done: false };
       return { done: true, status: "failed", error: "ended without returning a result" };
@@ -460,17 +469,35 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   }
 
   /**
-   * A person's denial sends no result message (an expiry does), so a look at the session steers it in: keyed as the
-   * result message's own steer would be, so the two never both reach the session.
+   * The backstop for a session's owed results, at each look at it. A waited request that has settled with no steer
+   * yet is steered in from its row: a person's denial sends no result message, an effect may declare none, and a
+   * result message may be refused or undeliverable. Its key is the result message's own steer's, so the two never both
+   * reach the session. A wait whose steer settled without reaching pi (failed, in doubt) is given up: nothing else
+   * will come. Returns the waits still owed.
    */
-  async function steerDenials(row: SessionRow, owed: WaitRow[]): Promise<void> {
-    for (const wait of owed) {
-      const fx = sql.exec<{ status: string; last_error: string | null }>("SELECT status, last_error FROM _actors_outbox WHERE id = ?", `fx:${wait.effect}:${wait.key}`).toArray()[0];
+  async function steerSettled(row: SessionRow, waits: WaitRow[]): Promise<WaitRow[]> {
+    const owed: WaitRow[] = [];
+    for (const wait of waits) {
       const steerKey = `result:${wait.key}`;
-      if (fx?.status !== "denied" || sql.exec("SELECT 1 FROM _actors_outbox WHERE id = ?", `fx:${STEER}:${steerKey}`).toArray().length > 0) continue;
-      const prompt = resultPrompt(wait.effect, wait.key, { status: "failed", error: fx.last_error ?? "denied" });
+      const steer = sql.exec<{ status: string }>("SELECT status FROM _actors_outbox WHERE id = ?", `fx:${STEER}:${steerKey}`).toArray()[0]?.status;
+      if (steer !== undefined) {
+        // On its way: still owed. Settled: a confirmed steer closed its wait once pi had the result; any other end is final.
+        if (steer === "pending" || steer === "running") owed.push(wait);
+        else closeWait(wait.key);
+        continue;
+      }
+      const fx = sql.exec<{ status: string; body: string; last_error: string | null }>("SELECT status, body, last_error FROM _actors_outbox WHERE id = ?", `fx:${wait.effect}:${wait.key}`).toArray()[0];
+      if (!fx) {
+        closeWait(wait.key); // no request to wait for
+        continue;
+      }
+      owed.push(wait);
+      const outcome = settledOutcome(fx);
+      if (!outcome || halted(row.key)) continue; // still parked for a person, or running
+      const prompt = resultPrompt(wait.effect, wait.key, outcome);
       await runtime.requestEffect(STEER, { key: row.key, prompt, result: wait.key }, { key: steerKey, causationId: row.key, correlationId: toolSession(wait.session)?.correlationId ?? row.key });
     }
+    return owed;
   }
 
   // ---- Handlers: the actor's `on` messages, its sessions' outcomes, and its tools' results ----

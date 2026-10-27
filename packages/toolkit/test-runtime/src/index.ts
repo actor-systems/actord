@@ -15,6 +15,7 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
+    "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
     "probe.timer.set": message({ version: 1, description: "Set a timer", payload: z.object({ key: z.string(), delayMs: z.number(), fail: z.boolean().optional(), label: z.string().optional(), at: z.enum(["infinity", "nan", "negative"]).optional() }) }),
@@ -68,8 +69,8 @@ export const system = defineSystem({
       returns: "scribe.done",
       budget: { usd: 1, turns: 10, wallClock: "10m" },
       // note.hidden is an effect Scribe may request but not a tool: the model is never offered it.
-      effects: ["note.keyed", "note.plain", "note.approved", "note.hidden"],
-      tools: ["note.keyed", "note.plain", "note.approved"],
+      effects: ["note.keyed", "note.plain", "note.approved", "note.silent", "note.hidden"],
+      tools: ["note.keyed", "note.plain", "note.approved", "note.silent"],
     },
   },
   effects: {
@@ -86,12 +87,15 @@ export const system = defineSystem({
     "note.keyed": { description: "Write a note; a retry with the same key writes it once", idempotency: "key", input: z.object({ text: z.string() }), result: "scribe.noted" },
     "note.plain": { description: "Write a note; a retry may write it twice", idempotency: "none", input: z.object({ text: z.string() }), result: "scribe.noted" },
     "note.approved": { description: "Write a note a person must approve first", idempotency: "key", approval: "human", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    // No result message: only the session's probe can bring its outcome back to the session.
+    "note.silent": { description: "Write a note a person must approve first, with no result message", idempotency: "key", approval: "human", input: z.object({ text: z.string() }) },
     "note.hidden": { description: "Write a note no tool offers", idempotency: "key", input: z.object({ text: z.string() }) },
     // Tests install approvalEmail with a fake send binding (overrideEffect); none is registered here.
     "notify.approval": { description: "Email the owner that an approval is waiting", idempotency: "none" },
   },
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
+    { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
     { from: "@ingress", message: "probe.timer.set", to: "Probe" },
@@ -154,6 +158,11 @@ export class Probe extends DurableObject<Env> {
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
+    // requestEffect is for code outside handlers. `after` calls it once the handler has awaited something.
+    "probe.nested": async ({ payload }) => {
+      if (payload.after) await Promise.resolve();
+      await this.actor.requestEffect("gateway.keyed", { key: payload.key }, { key: payload.key });
+    },
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });
     },

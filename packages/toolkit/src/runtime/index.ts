@@ -369,6 +369,8 @@ export interface ActorRuntime {
    * It answers once the request has been tried: parked for a person (`awaiting_approval`, until `expiresAt`), still
    * running (`outcome` resolves when it settles, in this instance only), or settled. A denial, including an expired
    * approval, is `failed` with the denial's reason, as the result message says.
+   * A handler uses ctx.effect: called from one, this throws. Called beside a handler (another task's code while that
+   * handler's transaction is open), its transaction runs once that one ends.
    */
   requestEffect(name: string, input: unknown, opts: { key: string; correlationId?: string; causationId?: string }): Promise<{ status: "awaiting_approval"; expiresAt: number } | { status: "running"; outcome: Promise<SettledOutcome> } | SettledOutcome>;
 }
@@ -406,6 +408,7 @@ const HEARTBEAT_MS = 30_000;
 /** How long an approval request waits for a person, unless the effect says otherwise. */
 const DEFAULT_APPROVAL_EXPIRES: Duration = "3d";
 const APPROVAL_EXPIRED = "approval expired";
+const REQUESTED_IN_HANDLER = "requestEffect can't be called from inside a handler (it would wait on the delivery it is part of); use ctx.effect";
 
 // @actord/toolkit/agents reads _actors_outbox too (a session job's status; effects awaiting approval, by their body's
 // key): a change to its columns, ids ("fx:<effect>:<key>") or body must keep src/agents/index.ts in step.
@@ -487,6 +490,12 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   // Who waits on an effect to settle (requestEffect's `outcome`), by row id. In memory only: a restart drops them, and
   // whoever waited asks again (a tool rerun finds the row by its key).
   const settleListeners = new Map<string, { key: string; resolvers: Array<(outcome: SettledOutcome) => void> }>();
+  // Whether a handler is running synchronously at this instant (nothing else can be, so a requestEffect then is the
+  // handler's own), and whether a handler's transaction closure is running. workerd runs a transaction started from
+  // inside another's closure nested, at once, and queues one started from elsewhere until the open one ends: so a
+  // requestEffect whose own transaction finds this set was called from inside a handler. Both refuse it.
+  let inHandlerCall = false;
+  let inHandlerTransaction = false;
   // Jobs probeNow asked to look at while a probe of theirs ran or their start hadn't returned: looked at once it does.
   // In memory only: after a restart, the job's probe period is the backstop.
   const lookAgain = new Set<string>();
@@ -576,7 +585,19 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           return;
         }
         maybeFault(actorName, envelope.type, "before-handler");
-        await handler({ ...envelope, payload: validated.value }, handlerContext(envelope, pending, notes, cancels));
+        inHandlerTransaction = true;
+        try {
+          inHandlerCall = true;
+          let handled: void | Promise<void>;
+          try {
+            handled = handler({ ...envelope, payload: validated.value }, handlerContext(envelope, pending, notes, cancels));
+          } finally {
+            inHandlerCall = false;
+          }
+          await handled;
+        } finally {
+          inHandlerTransaction = false;
+        }
         maybeFault(actorName, envelope.type, "after-handler");
         sql.exec("INSERT INTO _actors_inbox (id, type, sender, handled_at) VALUES (?, ?, ?, ?)", envelope.id, envelope.type, envelope.from, now());
         insertPending(pending);
@@ -780,6 +801,38 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (!state || state.status === "running" || state.status === "awaiting_approval") return;
     settleListeners.delete(id);
     for (const resolve of waiting.resolvers) resolve(state);
+  }
+
+  /** requestEffect, from outside a handler (ActorRuntime.requestEffect). */
+  async function requestEffect(name: string, input: unknown, opts: { key: string; correlationId?: string; causationId?: string }): ReturnType<ActorRuntime["requestEffect"]> {
+    await cap.ready();
+    await recoverOrphans();
+    const pending: Pending[] = [];
+    const notes: Array<Omit<ActorEvent, "$actord">> = [];
+    await ctx.storage.transaction(async () => {
+      // Nested in a handler's transaction (called after the handler awaited): its effect would run before that
+      // handler commits, or, in a self-delivery, wait on the drain delivering it. Refused; this nested one rolls back.
+      if (inHandlerTransaction) throw new Error(REQUESTED_IN_HANDLER);
+      queueEffect(name, input, opts.key, { causationId: opts.causationId ?? null, correlationId: opts.correlationId ?? opts.key }, pending, notes);
+      insertPending(pending);
+    });
+    for (const n of notes) emit(n);
+    for (const p of pending) emit(p.event);
+    // Tried before answering (a new row, or one a restart queued again): an effect that needs a person parks as its
+    // attempt starts, and a fast one may settle. A drain already running picks the row up before it ends, so share
+    // it; but one that made its last look just before the row was there ends without it, so then drain again.
+    const id = `fx:${name}:${opts.key}`;
+    await drain();
+    while (sql.exec("SELECT 1 FROM _actors_outbox WHERE id = ? AND status = 'pending' AND next_at <= ?", id, now()).toArray().length > 0) await drain();
+    const state = effectState(id, opts.key);
+    if (!state) throw new Error(`${actorName}: effect ${name} ${opts.key} has no row after it was requested`);
+    if (state.status !== "running") return state;
+    const outcome = new Promise<SettledOutcome>((resolve) => {
+      const waiting = settleListeners.get(id) ?? { key: opts.key, resolvers: [] };
+      waiting.resolvers.push(resolve);
+      settleListeners.set(id, waiting);
+    });
+    return { status: "running", outcome };
   }
 
   /** One drain at a time per instance; a caller arriving mid-drain shares it (new rows are picked up). */
@@ -1451,30 +1504,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       else return; // settled, or being cancelled
       await drive();
     },
-    async requestEffect(name, input, opts) {
-      await cap.ready();
-      await recoverOrphans();
-      const pending: Pending[] = [];
-      const notes: Array<Omit<ActorEvent, "$actord">> = [];
-      await ctx.storage.transaction(async () => {
-        queueEffect(name, input, opts.key, { causationId: opts.causationId ?? null, correlationId: opts.correlationId ?? opts.key }, pending, notes);
-        insertPending(pending);
-      });
-      for (const n of notes) emit(n);
-      for (const p of pending) emit(p.event);
-      // Tried before answering (a new row, or one a restart queued again): an effect that needs a person parks as its
-      // attempt starts, and a fast one may settle. A drain already running picks the row up before it ends, so share it.
-      await drain();
-      const id = `fx:${name}:${opts.key}`;
-      const state = effectState(id, opts.key);
-      if (!state) throw new Error(`${actorName}: effect ${name} ${opts.key} has no row after it was requested`);
-      if (state.status !== "running") return state;
-      const outcome = new Promise<SettledOutcome>((resolve) => {
-        const waiting = settleListeners.get(id) ?? { key: opts.key, resolvers: [] };
-        waiting.resolvers.push(resolve);
-        settleListeners.set(id, waiting);
-      });
-      return { status: "running", outcome };
+    requestEffect(name, input, opts) {
+      // Called by the handler running now, it would wait on the very delivery it is part of: refused at once, so the
+      // handler fails even if it doesn't await the call.
+      if (inHandlerCall) throw new Error(REQUESTED_IN_HANDLER);
+      return requestEffect(name, input, opts);
     },
     outbox() {
       return sql
