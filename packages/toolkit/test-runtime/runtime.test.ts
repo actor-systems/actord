@@ -10,6 +10,18 @@ afterEach(() => resetSeams());
 const probe = (key: string) => env.PROBE.getByName(key);
 const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted" | "gateway.job-plain" | "gateway.job-approval") =>
   ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
+/** Retry `check` until it passes, or throw its last failure after `ms`: for what real time decides, such as an alarm firing. */
+async function eventually(check: () => Promise<void>, ms = 2000): Promise<void> {
+  const until = Date.now() + ms;
+  for (;;) {
+    try {
+      return await check();
+    } catch (err) {
+      if (Date.now() > until) throw err;
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
 
 it("[denied-capability] an effect the actor didn't declare is refused and nothing is queued", async () => {
   const r = await ingress(env, system, "Probe", "probe.misbehave", {}, { key: "deny" });
@@ -133,21 +145,26 @@ const setTimer = (key: string, tk: string, delayMs: number, fail = false, extra:
   ingress(env, system, "Probe", "probe.timer.set", { key: tk, delayMs, ...(fail ? { fail } : {}), ...extra }, { key });
 
 it("[timer-fires] a timer set in a handler arrives later as a message from @timer, and not before its delay", async () => {
-  await setTimer("tm", "t1", 20);
+  // Half a second, so a slow machine can't reach the delay before the next lines look.
+  await setTimer("tm", "t1", 500);
   await setTimer("tm", "t1-later", 60_000);
+  await settle(env, system); // drives the instance well before t1 is due
   expect(await probe("tm").fired()).toEqual([]);
-  await new Promise((r) => setTimeout(r, 30));
-  await settle(env, system); // drives the instance: t1 is due, and t1-later isn't for another minute
-  expect(await probe("tm").fired()).toEqual(["t1"]);
+  // Then, once it is due, a drive fires t1, and t1-later isn't due for another minute.
+  await eventually(async () => {
+    await settle(env, system);
+    expect(await probe("tm").fired()).toEqual(["t1"]);
+  });
   expect(await timerRows("tm")).toMatchObject([{ key: "t1-later", attempts: 0 }]);
 });
 
 it("[timer-survives-restart] a pending timer fires after the object restarts", async () => {
   await setTimer("tm2", "t2", 20);
   await abortAllDurableObjects();
-  await new Promise((r) => setTimeout(r, 30));
-  await settle(env, system);
-  expect(await probe("tm2").fired()).toEqual(["t2"]);
+  await eventually(async () => {
+    await settle(env, system);
+    expect(await probe("tm2").fired()).toEqual(["t2"]);
+  });
 });
 
 it("[timer-duplicate-fire] a timer delivered twice is handled once", async () => {
@@ -231,6 +248,30 @@ it("[timer-atomic] a handler that sets a timer and then throws leaves no timer",
 
 const timerRows = (key: string) =>
   runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ key: string; attempts: number; due_at: number }>("SELECT key, attempts, due_at FROM _actors_timers").toArray());
+
+it("[helpers-need-a-runtime] a helper that can't drive an instance throws, rather than passing for the wrong reason", async () => {
+  await setTimer("nort", "t", 60_000);
+  // As if the instance had never constructed its runtime: nothing can drive it.
+  await runInDurableObject(probe("nort"), (_i, s) => void (globalThis as { __actorsTestSeams?: { runtimes: Map<string, unknown> } }).__actorsTestSeams!.runtimes.delete(s.id.toString()));
+  const missing = /Probe "nort" has no actord runtime registered/;
+  await expect(fireTimers(env, system, "Probe", "nort")).rejects.toThrow(missing);
+  await expect(expireJobs(env, system, "Probe", "nort")).rejects.toThrow(missing);
+  await expect(expireApprovals(env, system, "Probe", "nort")).rejects.toThrow(missing);
+  await expect(tick(env, system, "Probe", "nort")).rejects.toThrow(missing);
+  // Nothing fired: the timer is still set.
+  expect((await timerRows("nort")).map((r) => r.key)).toEqual(["t"]);
+});
+
+it("[fire-timers-counts-fired] fireTimers counts the timers the drive fired, including one whose delivery failed and will be retried", async () => {
+  await setTimer("fcount", "ok", 60_000);
+  // Probe's handler fails for a timer whose key starts with "bad".
+  await setTimer("fcount", "bad", 60_000);
+  expect(await fireTimers(env, system, "Probe", "fcount")).toBe(2);
+  expect(await probe("fcount").fired()).toEqual(["ok"]);
+  // The failed one waits for its retry, so a second call right away fires it again.
+  expect((await timerRows("fcount")).map((r) => [r.key, r.attempts])).toEqual([["bad", 1]]);
+  expect(await fireTimers(env, system, "Probe", "fcount")).toBe(1);
+});
 
 it("[timer-delivery-retry] a timer whose handler fails is retried with backoff, then dropped when attempts run out", async () => {
   await setTimer("tm7", "bad1", 60_000);
@@ -402,18 +443,21 @@ it("[effect-usage-failed] usage reported before a rejection arrives with the fai
 });
 
 it("[effect-usage-timeout] usage reported before a timeout is kept; a later report is dropped", async () => {
-  overrideEffectBudget("gateway.plain", { timeoutMs: 20 });
+  // The first report comes at once; the second long after the 100 ms timeout, and it is the one to drop.
+  overrideEffectBudget("gateway.plain", { timeoutMs: 100 });
+  let reportedLate = false;
   overrideEffect("gateway.plain", {
     run: async (_i, c) => {
       c.reportUsage({ inputTokens: 3 });
-      await new Promise((r) => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 600));
       c.reportUsage({ inputTokens: 100 });
+      reportedLate = true;
       return "late";
     },
   });
   await send("eut", "gateway.plain");
   await settle(env, system);
-  await new Promise((r) => setTimeout(r, 150));
+  await eventually(async () => expect(reportedLate).toBe(true));
   expect((await probe("eut").outcomes())[0]).toMatchObject({ status: "in_doubt", usage: { inputTokens: 3 } });
   const body = await runInDurableObject(probe("eut"), (_i, s) => s.storage.sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE kind = 'effect'").one().body);
   expect(JSON.parse(body).usage).toEqual({ inputTokens: 3 });
@@ -972,15 +1016,17 @@ it("[approval-expiry-wake] a parked approval holds the alarm until it expires, a
   await settle(env, system);
   expect(await probe("wake").outcomes()).toEqual([]);
   // Bring the expiry nearer than every other wake (the schedules are an hour or more away), and let a message re-arm.
-  const expiresAt = Date.now() + 100;
+  // A second ahead, so the re-arming message is done long before it passes, however slow the machine.
+  const expiresAt = Date.now() + 1000;
   await runInDurableObject(probe("wake"), (_i, s) => void s.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", expiresAt));
   await ingress(env, system, "Probe", "probe.timer.cancel", { key: "none" }, { key: "wake" });
   const job = await runInDurableObject(probe("wake"), (_i, s) => Number(s.storage.sql.exec("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").one().time));
   expect(job).toBe(expiresAt);
-  await new Promise((r) => setTimeout(r, 120));
-  // Only the alarm drives it from here: no settle(), which drives directly, and no expireApprovals().
+  await new Promise((r) => setTimeout(r, expiresAt - Date.now() + 20));
+  // Only the alarm drives it from here: no settle(), which drives directly, and no expireApprovals(). If the alarm
+  // already fired on its own, there is none left to run, and its work is already done or under way.
   await runDurableObjectAlarm(probe("wake"));
-  expect(await probe("wake").outcomes()).toMatchObject([{ key: "wake", status: "failed", error: "approval expired" }]);
+  await eventually(async () => expect(await probe("wake").outcomes()).toMatchObject([{ key: "wake", status: "failed", error: "approval expired" }]));
   expect(runs).toBe(0);
 });
 
