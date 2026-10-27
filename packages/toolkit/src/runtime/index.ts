@@ -683,7 +683,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>, cancels: string[]): { ctx: HandlerContext<S, A>; close(): void } {
     let open = true;
     const live = () => {
-      if (!open) throw new Error(`${actorName}: this handler's delivery has ended; its ctx can't be used`);
+      if (!open) throw new Error(`${actorName}.${current.type}: this handler's delivery has ended; its ctx can't be used`);
     };
     // The native SqlStorage behind a Proxy, so the rest of it still works.
     const liveSql = new Proxy(sql, {

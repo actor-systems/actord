@@ -365,7 +365,7 @@ for (const io of ["wait", "fetch"] as const) {
 }
 
 const IO_REFUSED = "Probe.probe.io: handlers may not await I/O; use ctx.effect";
-const CTX_CLOSED = "Probe: this handler's delivery has ended; its ctx can't be used";
+const CTX_CLOSED = "Probe.probe.io: this handler's delivery has ended; its ctx can't be used";
 type ProbeIO = { tried: Record<string, string>; readable: { self: string; key: string; now: string }; ctx: { send(...a: unknown[]): void; effect(...a: unknown[]): void; sql: { exec(...a: unknown[]): unknown } } };
 /** What a probe.io handler recorded after its await (src/index.ts). */
 const probeIO = (key: string) => (globalThis as { __probeIO?: Record<string, ProbeIO> }).__probeIO?.[key];
