@@ -51,7 +51,7 @@ function build(o: Opts = {}) {
 }
 
 function project(system: ReturnType<typeof build>, extra: Partial<Project> = {}): Project {
-  const config: WorkerConfig = { vars: { GITHUB_WEBHOOK_SECRET: "x", APPROVAL_SECRET: "x" } };
+  const config: WorkerConfig = { vars: { GITHUB_WEBHOOK_SECRET: "x", APPROVAL_SECRET: "x", OWNER_ADDRESS: "x", FROM_ADDRESS: "x" }, send_email: [{ name: "SEND_EMAIL" }] };
   return { root: "/nowhere", system, manifest: normalize(system), loadError: null, config, configFile: "wrangler.jsonc", entryFile: null, entryExports: null, committedManifest: null, committedManifestRaw: null, ...extra };
 }
 const NEW = /^(SOURCE_|APPROVAL_NOTIFY|APPROVAL_ROUTE|PUBLISHES|ROUTE_INVALID_SENDER)/;
@@ -105,12 +105,55 @@ describe("source checks", () => {
   });
 
   it("SOURCE_SECRET_UNDECLARED: a warning unless wrangler vars or .dev.vars.example names the secret", () => {
-    const bare = project(build(), { config: {} });
+    const others = { OWNER_ADDRESS: "x", FROM_ADDRESS: "x" };
+    const send_email = [{ name: "SEND_EMAIL" }];
+    const bare = project(build(), { config: { vars: others, send_email } });
     expect(codes(bare)).toEqual(["warning:SOURCE_SECRET_UNDECLARED", "warning:SOURCE_SECRET_UNDECLARED"]);
     const dir = mkdtempSync(join(tmpdir(), "actord-src-"));
     writeFileSync(join(dir, ".dev.vars.example"), "# secrets\nGITHUB_WEBHOOK_SECRET=\nAPPROVAL_SECRET=changeme\n");
-    expect(codes(project(build(), { config: {}, root: dir }))).toEqual([]);
-    expect(codes(project(build(), { config: { vars: { GITHUB_WEBHOOK_SECRET: "x" } } }))).toEqual(["warning:SOURCE_SECRET_UNDECLARED"]);
+    expect(codes(project(build(), { config: { vars: others, send_email }, root: dir }))).toEqual([]);
+    expect(codes(project(build(), { config: { vars: { ...others, GITHUB_WEBHOOK_SECRET: "x" }, send_email } }))).toEqual(["warning:SOURCE_SECRET_UNDECLARED"]);
+  });
+
+  const emailWithAuthserv = () => inboundEmail({ secret: "APPROVAL_SECRET", owner: "OWNER_ADDRESS", from: "FROM_ADDRESS", send: "SEND_EMAIL", authserv: "MAIL_AUTHSERV", message: "approval.decided" });
+  const secrets = { GITHUB_WEBHOOK_SECRET: "x", APPROVAL_SECRET: "x" };
+  const found = (p: Project, code: string) => checkProject(p).filter((d) => d.code === code).map((d) => [d.severity, d.subject, d.message, d.fix]);
+
+  it("SOURCE_ENV_UNDECLARED: a warning for an email source's owner, from or authserv that neither wrangler vars nor .dev.vars.example names", () => {
+    const sys = build({ sources: { github: github(), email: emailWithAuthserv() } });
+    const send_email = [{ name: "SEND_EMAIL" }];
+    // The scenario in #49: the source names MAIL_AUTHSERV, but wrangler calls the variable AUTHSERV.
+    const misnamed = project(sys, { config: { vars: { ...secrets, OWNER_ADDRESS: "x", FROM_ADDRESS: "x", AUTHSERV: "mx.cloudflare.net" }, send_email } });
+    expect(codes(misnamed)).toEqual(["warning:SOURCE_ENV_UNDECLARED"]);
+    expect(found(misnamed, "SOURCE_ENV_UNDECLARED")).toEqual([
+      ["warning", "@email", "@email trusts the authserv-id in MAIL_AUTHSERV, which is in neither wrangler vars nor .dev.vars.example, so every reply would be refused (authserv_missing)", "Add MAIL_AUTHSERV to wrangler vars, or list it in .dev.vars.example."],
+    ]);
+    // With none of them declared, each is named, with what the runtime would then do.
+    expect(found(project(sys, { config: { vars: secrets, send_email } }), "SOURCE_ENV_UNDECLARED").map(([, subject, message]) => [subject, message])).toEqual([
+      ["@email", "@email reads the owner's address from OWNER_ADDRESS, which is in neither wrangler vars nor .dev.vars.example, so every reply would be refused (owner_missing)"],
+      ["@email", "@email sends its replies from the address in FROM_ADDRESS, which is in neither wrangler vars nor .dev.vars.example, so no reply could be sent"],
+      ["@email", "@email trusts the authserv-id in MAIL_AUTHSERV, which is in neither wrangler vars nor .dev.vars.example, so every reply would be refused (authserv_missing)"],
+    ]);
+    // .dev.vars.example counts, as it does for the secret.
+    const dir = mkdtempSync(join(tmpdir(), "actord-src-"));
+    writeFileSync(join(dir, ".dev.vars.example"), "OWNER_ADDRESS=\nFROM_ADDRESS=\nMAIL_AUTHSERV=mx.cloudflare.net\n");
+    expect(codes(project(sys, { config: { vars: secrets, send_email }, root: dir }))).toEqual([]);
+    // A source without authserv isn't asked for one, and a webhook source uses only its secret.
+    expect(codes(project(build(), { config: { vars: { ...secrets, OWNER_ADDRESS: "x", FROM_ADDRESS: "x" }, send_email } }))).toEqual([]);
+    expect(codes(project(build({ sources: { github: github() }, routes: [baseRoutes[0]!, baseRoutes[2]!] }), { config: { vars: { GITHUB_WEBHOOK_SECRET: "x" } } }))).toEqual([]);
+  });
+
+  it("SOURCE_SEND_UNDECLARED: a warning unless wrangler's send_email bindings declare the email source's send binding", () => {
+    const vars = { ...secrets, OWNER_ADDRESS: "x", FROM_ADDRESS: "x" };
+    const missing = project(build(), { config: { vars } });
+    expect(codes(missing)).toEqual(["warning:SOURCE_SEND_UNDECLARED"]);
+    expect(found(missing, "SOURCE_SEND_UNDECLARED")).toEqual([
+      ["warning", "@email", "@email replies through the send_email binding SEND_EMAIL, which wrangler's send_email bindings don't declare, so the owner would never hear back", 'Add { "name": "SEND_EMAIL" } to send_email in the wrangler config.'],
+    ]);
+    // Another binding's name, or a variable of the same name, isn't the binding.
+    expect(codes(project(build(), { config: { vars, send_email: [{ name: "EMAIL" }] } }))).toEqual(["warning:SOURCE_SEND_UNDECLARED"]);
+    expect(codes(project(build(), { config: { vars: { ...vars, SEND_EMAIL: "x" } } }))).toEqual(["warning:SOURCE_SEND_UNDECLARED"]);
+    expect(codes(project(build(), { config: { vars, send_email: [{ name: "EMAIL" }, { name: "SEND_EMAIL", allowed_destination_addresses: ["owner@example.com"] }] } }))).toEqual([]);
   });
 });
 
