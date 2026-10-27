@@ -76,7 +76,7 @@ function checkAgent(project: Project, m: Manifest, a: Manifest["actors"][number]
   if (workspace?.backend) {
     const entry = project.config?.containers?.find((c) => c.class_name === a.name);
     if (!entry || entry.scheduling_policy !== "durable_object")
-      add("error", "AGENT_CONTAINER_CONFIG_MISSING", a.name, `${a.name} runs commands in a container, but ${project.configFile ?? "wrangler.jsonc"} has no containers entry for class ${a.name} with scheduling_policy "durable_object"`, `Add containers: [{ "class_name": "${a.name}", "image": "...", "scheduling_policy": "durable_object" }].`);
+      add("error", "AGENT_CONTAINER_CONFIG_MISSING", a.name, `${a.name} runs commands in a container, but ${project.configFile ?? "wrangler.jsonc"} has no containers entry for class ${a.name} with scheduling_policy "durable_object"`, `Add containers: [{ "class_name": "${a.name}", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "${workspace.backend.image}" } } }] (wrangler rejects "image" for a container the Durable Object schedules).`);
   }
   if (a.instructions !== undefined && !existsSync(join(project.root, a.instructions)))
     add("error", "AGENT_INSTRUCTIONS_MISSING", a.name, `${a.name}'s instructions file ${a.instructions} doesn't exist next to system.ts`, `Create ${a.instructions}, or fix the path.`);

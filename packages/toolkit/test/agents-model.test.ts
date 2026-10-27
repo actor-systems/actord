@@ -71,7 +71,7 @@ function build(o: Opts = {}) {
 function project(system: ReturnType<typeof build>, extra: Partial<Project> = {}, config: WorkerConfig | null = null): Project {
   const root = mkdtempSync(join(tmpdir(), "agents-model-"));
   writeFileSync(join(root, "CODER.md"), "# Coder\n");
-  const cfg: WorkerConfig = config ?? { containers: [{ class_name: "Coder", scheduling_policy: "durable_object", image: "./Dockerfile" }] };
+  const cfg: WorkerConfig = config ?? { containers: [{ class_name: "Coder", scheduling_policy: "durable_object", images: { app: { dockerfile: "./Dockerfile" } } }] };
   return { root, system, manifest: normalize(system), loadError: null, config: cfg, configFile: "wrangler.jsonc", entryFile: null, entryExports: null, committedManifest: null, committedManifestRaw: null, ...extra };
 }
 const codes = (p: Project) =>

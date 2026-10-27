@@ -35,11 +35,16 @@
 //   result message, owed to a session or not, also reaches the actor's own handler for it, if it has one. The job's
 //   probe is the backstop: it steers in a waited request that settled with no steer yet (a person's denial sends no
 //   result message, an effect may declare none, a message may be refused), and gives up one whose steer failed.
+// - A harness with `workspace: computer(...)` gets a Computer workspace in this object's SQLite (workspace.ts), and the
+//   `workspace.*` entries of `tools` are its Pi tools. With a container backend, the Durable Object is built with
+//   withWorkspaceContainer, passes itself as `container`, and hands its fetch to the runtime's: computerd connects
+//   back, and the container's egress arrives, through it.
 import { PiHarness, type PiReceipt } from "agents/harness/pi";
 import { createAI } from "agents/models/pi-ai";
 import { type Api, createModels, type Model, type ModelThinkingLevel, type MutableModels } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type ConversationId, createRegistry, type Extension, Harness, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
+import { type ConversationId, createRegistry, type Extension, Harness, type Registry, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
+import type { Workspace } from "@cloudflare/computer";
 import {
   type ActorHost,
   type ActorRuntime,
@@ -63,9 +68,13 @@ import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectN
 import { reachedLimit, type SessionBudget, type SessionObserver, type Spent, spentBy, watchBudget } from "./budget.ts";
 import type { scriptedModel } from "./scripted-model.ts";
 import { effectTools, shown, type ToolSession } from "./tools.ts";
+import { type Gateway, workspaceFetch, workspaceFor, workspaceTools } from "./workspace.ts";
 
 export { type ScriptedRequest, type ScriptedTurn, scriptedModel } from "./scripted-model.ts";
 export { gitClone, gitPushEffect } from "./git.ts";
+export { type Gateway, RegistryReadGateway, workspaceFetch, workspaceFor, workspaceTools } from "./workspace.ts";
+export { WorkspaceProxy } from "@cloudflare/computer";
+export { withWorkspaceContainer } from "@cloudflare/computer/backends/container";
 
 type AnySystem = System;
 
@@ -213,10 +222,20 @@ export interface AgentRuntimeOptions<S extends AnySystem = AnySystem> extends Ru
   extensions?: readonly Extension[];
   /** Where a session's transcript is written when it ends: transcripts/<actor>/<key>/<session>.json. Without it, none is kept. */
   transcripts?: TranscriptBucket;
+  /** For a workspace with a container backend: the Durable Object, built with withWorkspaceContainer (`this`). */
+  container?: unknown;
+  /** For a workspace whose egress is "registry-read": where the container's requests go; default: a RegistryReadGateway. */
+  gateway?: Gateway;
 }
 
 export interface AgentRuntime extends ActorRuntime {
   readonly harness: PiHarness;
+  /** The tools and extensions pi runs the actor's sessions with. */
+  readonly registry: Registry;
+  /** The actor's Computer workspace, when its harness declares one. */
+  readonly workspace?: Workspace;
+  /** Hand the Durable Object's fetch here: its container's computerd connection and egress. Anything else is a 404. */
+  fetch(request: Request): Promise<Response>;
   /** @internal for tests: the job keys of the sessions whose budget this instance watches in memory. */
   watched(): string[];
 }
@@ -316,12 +335,16 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   const returnsSchema = returnsSpec.payload;
   const wallClockMs = spec.budget?.wallClock === undefined ? null : durationMs(spec.budget.wallClock);
   if (wallClockMs === null) throw new Error(`actord: agent actor ${actor} must declare budget.wallClock, a duration like "30m"`);
-  const { instructions, model: scripted, render = defaultRender, extensions = [], transcripts, ...runtimeOptions } = options;
+  const { instructions, model: scripted, render = defaultRender, extensions = [], transcripts, container, gateway, ...runtimeOptions } = options;
+  const workspaceSpec = spec.harness?.workspace;
+  // `actord check` reports workspace tools without a workspace (AGENT_WORKSPACE_TOOLS_WITHOUT_WORKSPACE).
+  if (!workspaceSpec && (spec.tools ?? []).some((t) => t.startsWith("workspace."))) throw new Error(`actord: agent actor ${actor} lists workspace tools, but its harness has no workspace`);
   const now = options.now ?? (() => Date.now());
   const { ctx } = host;
   const sql = ctx.storage.sql;
   const self = `${actor}:${ctx.id.name ?? ctx.id.toString()}`;
   for (const q of SESSIONS_SCHEMA) sql.exec(q);
+  const workspace = workspaceSpec && workspaceFor(host, workspaceSpec, { container, gateway, binding: spec.binding });
 
   const rowByKey = (key: string) => sql.exec<SessionRow>("SELECT * FROM _actors_agent_sessions WHERE key = ?", key).toArray()[0];
   const rowBySession = (session: string) => sql.exec<SessionRow>("SELECT * FROM _actors_agent_sessions WHERE session = ?", session).toArray()[0];
@@ -833,9 +856,11 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     },
   });
   registry.install({ name: "actord.agent", tools: [finishTool(), ...effectTools(runtime, system, actor, toolSession)] });
+  if (workspace) registry.install({ name: "actord.workspace", tools: workspaceTools(workspace, spec.tools ?? []) });
   for (const extension of extensions) registry.install(extension);
   host.lifecycle.use(harness);
-  return { ...runtime, harness, watched: () => [...guards.keys()] };
+  const fetch = (request: Request) => (workspace ? workspaceFetch(workspace, request) : Promise.resolve(new Response("not found", { status: 404 })));
+  return { ...runtime, harness, registry, ...(workspace ? { workspace } : {}), fetch, watched: () => [...guards.keys()] };
 }
 
 /** Workers AI through the `AI` binding: the actor's pinned model id, in a pi-ai registry of its own. */

@@ -4,10 +4,12 @@ import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents
 import { z } from "zod";
 import { agentExhausted, agentFailed } from "../../src/agents/index.ts";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
-import { defineSystem, inboundEmail, message, pi, webhook } from "../../src/system.ts";
+import { computer, containerBackend, defineSystem, inboundEmail, message, pi, webhook } from "../../src/system.ts";
 import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
 
-export { Scribe } from "./agent.ts";
+export { Builder, Scribe } from "./agent.ts";
+// The container's egress and its computerd connection reach Builder through this entrypoint (ctx.exports).
+export { WorkspaceProxy } from "../../src/agents/index.ts";
 
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
@@ -40,6 +42,9 @@ export const system = defineSystem({
     "agent.failed": message({ version: 1, description: "A session ended without a result", payload: agentFailed }),
     "agent.exhausted": message({ version: 1, description: "A session ran out of budget", payload: agentExhausted }),
     "scribe.noted": message({ version: 1, description: "A note effect's outcome", payload: Outcome }),
+    // Builder, the agent actor with a workspace (agent.ts).
+    "builder.task": message({ version: 1, description: "Start a session that changes files and runs a command", payload: z.object({ topic: z.string() }) }),
+    "builder.done": message({ version: 1, description: "The session's result", payload: z.object({ summary: z.string() }) }),
   },
   sources: {
     hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
@@ -71,6 +76,18 @@ export const system = defineSystem({
       // note.hidden is an effect Scribe may request but not a tool: the model is never offered it.
       effects: ["note.keyed", "note.plain", "note.approved", "note.silent", "note.hidden"],
       tools: ["note.keyed", "note.plain", "note.approved", "note.silent"],
+    },
+    Builder: {
+      binding: "BUILDER",
+      kind: "agent",
+      purpose: "Changes files and runs commands in a Computer workspace, as a Pi agent",
+      justification: ["state", "lifecycle"],
+      harness: pi({ workspace: computer({ backend: containerBackend({ image: "./Dockerfile", instance: "standard-2" }), localOnly: ["**/node_modules", "/dist"], egress: "registry-read" }) }),
+      model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", reasoning: "high" },
+      on: { "builder.task": "start" },
+      returns: "builder.done",
+      budget: { usd: 1, turns: 10, wallClock: "10m" },
+      tools: ["workspace.*"],
     },
   },
   effects: {
@@ -121,6 +138,10 @@ export const system = defineSystem({
     { from: "Scribe", message: "agent.failed", to: "Scribe" },
     { from: "Scribe", message: "agent.exhausted", to: "Scribe" },
     { from: "Scribe", message: "scribe.noted", to: "Scribe" },
+    { from: "@ingress", message: "builder.task", to: "Builder" },
+    { from: "Builder", message: "builder.done", to: "Builder" },
+    { from: "Builder", message: "agent.failed", to: "Builder" },
+    { from: "Builder", message: "agent.exhausted", to: "Builder" },
   ],
 });
 

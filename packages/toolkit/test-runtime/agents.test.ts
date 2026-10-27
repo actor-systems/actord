@@ -1,14 +1,16 @@
-// Agents in workerd: a Pi session and actord in one Durable Object, against the Scribe probe (test-runtime/src/agent.ts).
+// Agents in workerd: a Pi session and actord in one Durable Object, against the Scribe and Builder probes
+// (test-runtime/src/agent.ts).
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { type DurableObjectStorageLike, Workspace } from "@cloudflare/computer";
 import type { GitClient } from "@cloudflare/computer/git";
 import { afterEach, expect, it } from "vitest";
 import { gitClone, gitPushEffect } from "../src/agents/git.ts";
-import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
+import { RegistryReadGateway, type ScriptedRequest, type ScriptedTurn, workspaceFor, workspaceTools } from "../src/agents/index.ts";
 import { type ActorEvent, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { captureEvents, eventually, expireJobs, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
-import { ContainerStub, type Scribe } from "./src/agent.ts";
+import { computer, containerBackend } from "../src/system.ts";
+import { type Builder, ContainerStub, type Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
@@ -1323,4 +1325,240 @@ it("[git-push-header-only] run as a registered effect, a client error carrying t
   expect(leaks(dump)).toEqual([]);
   expect(leaks(JSON.stringify(outcomes))).toEqual([]);
   expect(leaks(JSON.stringify(events))).toEqual([]);
+});
+
+// ---- Workspaces on Computer (Task 9) ----
+//
+// Builder's workspace is Computer's, in its own SQLite; its commands would run in a container, which the plugin doesn't
+// start (spike 3), so a ContainerStub stands in for ctx.container and Computer's own container host drives it. The stub
+// has no computerd, so a ContainerBackend over it never connects: a command never reaches it. What a real container
+// does with the ignore list and a running command is spike 2's and spike 4's evidence.
+
+const builder = (key: string) => env.BUILDER.getByName(key);
+const builders = globalThis as { __builderScripts?: Record<string, Script> };
+/** Answer each model request of Builder instance `name` with `fn`. */
+function builderScript(name: string, fn: Script): void {
+  builders.__builderScripts = { ...builders.__builderScripts, [name]: fn };
+}
+const build = (key: string, topic: string, id: string) => ingress(env, system, "Builder", "builder.task", { topic }, { key, id });
+type WorkspaceResult = { toolName: string; isError: boolean; content: Array<{ type: string; text?: string }> };
+/** The last tool result a request ends with: the call the model made last. */
+const lastResult = (r: ScriptedRequest) => r.lastToolResults.at(-1) as WorkspaceResult | undefined;
+const resultText = (r: WorkspaceResult) => r.content.map((c) => c.text ?? "").join("");
+const LOCAL_ONLY = system.actors.Builder.harness.workspace.localOnly;
+
+/**
+ * What Computer's ContainerBackend asks computerd before it connects: its health, then /api, which must refuse a
+ * request without the client secret. `connect` answers POST /connect, after which computerd would dial back.
+ */
+function computerd(connect: (request: Request) => Response | Promise<Response>) {
+  return (request: Request): Response | Promise<Response> => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/health") return new Response("ok");
+    if (pathname === "/api") return new Response("unauthorized", { status: 401 });
+    if (pathname === "/connect") return connect(request);
+    return new Response("not found", { status: 404 });
+  };
+}
+const noComputerd = () => new Response("the stub has no computerd", { status: 503 });
+/** What the container's egress was handed to, once each: Computer connects again once after a failed connect. */
+const intercepts = (stub: ContainerStub) => [...new Set(stub.egress.map((e) => `${e.kind} ${e.host ?? ""}`.trim()))];
+
+/** Hold the `nth` write to `path` in the instance's workspace once it has landed, until `g` opens: a tool cut off after its change. */
+function holdWrite(instance: Builder, path: string, nth: number, g: ReturnType<typeof gate>): void {
+  const workspace = instance.actor.workspace!;
+  const fs = workspace.fs;
+  let writes = 0;
+  const held = new Proxy(fs, {
+    get(target, prop) {
+      const value: unknown = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      if (prop !== "writeFile") return value.bind(target);
+      return async (p: string, ...rest: unknown[]) => {
+        await value.call(target, p, ...rest);
+        if (p === path && ++writes === nth) await g.wait();
+      };
+    },
+  });
+  Object.defineProperty(workspace, "fs", { value: held, configurable: true });
+}
+
+it("[container-stub] the stub records starts and intercepts, answers its ports while running, and a destroy fails what is in flight", async () => {
+  const stub = new ContainerStub();
+  stub.ports.set(8080, () => new Response("ok"));
+  await expect(stub.getTcpPort(8080).fetch("http://container/health")).rejects.toThrow("not listening on port 8080");
+  stub.start({ env: { A: "1" } });
+  expect(stub.running).toBe(true);
+  expect(await (await stub.getTcpPort(8080).fetch("http://container/health")).text()).toBe("ok");
+  await expect(stub.getTcpPort(9090).fetch("http://container/")).rejects.toThrow("not listening on port 9090");
+  const fetcher = { fetch: async () => new Response("proxied") };
+  stub.interceptOutboundHttp("computer.internal", fetcher);
+  stub.interceptAllOutboundHttp(fetcher);
+  stub.interceptOutboundHttps("*", fetcher);
+  expect(stub.egress.map((e) => [e.kind, e.host])).toEqual([["http", "computer.internal"], ["all", undefined], ["https", "*"]]);
+  stub.ports.set(8081, () => new Promise<Response>(() => {}));
+  const hung = stub.getTcpPort(8081).fetch("http://container/connect");
+  const exited = stub.monitor();
+  await stub.destroy();
+  await expect(hung).rejects.toThrow("the container was destroyed");
+  await expect(exited).resolves.toBeUndefined();
+  expect(stub.running).toBe(false);
+  stub.failStart = "no capacity";
+  expect(() => stub.start({})).toThrow("no capacity");
+  expect(stub.running).toBe(false);
+  expect(stub.calls.map((c) => c.op)).toEqual(["start", "intercept", "intercept", "intercept", "destroy", "start"]);
+  expect(stub.calls[0]).toEqual({ op: "start", options: { env: { A: "1" } } });
+});
+
+it("[workspace-tools-replay] the registry's workspace tools carry this plan's replay classes", async () => {
+  await runInDurableObject(builder("replay-1"), async (instance: Builder, state) => {
+    const installed = instance.actor.registry.snapshot().tools().filter((t) => t.extension.name === "actord.workspace");
+    expect(Object.fromEntries(installed.map(({ tool }) => [tool.name, tool.replay]))).toEqual({ read: "safe", ls: "safe", find: "safe", grep: "safe", write: "safe", delete: "safe", edit: "unsafe", exec: "unsafe" });
+    // publish is there only with assets, and can't be repeated safely either.
+    const withAssets = new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, assets: { share: async () => "https://assets.example/x" } });
+    expect(workspaceTools(withAssets, ["workspace.*"]).map((t) => [t.name, t.replay])).toContainEqual(["publish", "unsafe"]);
+  });
+});
+
+it("[workspace-tools-replay] workspace.<name> picks tools by name, and a name Computer has no tool for is refused", async () => {
+  await runInDurableObject(builder("replay-2"), async (instance: Builder) => {
+    const workspace = instance.actor.workspace!;
+    expect(workspaceTools(workspace, ["workspace.read", "workspace.exec"]).map((t) => t.name)).toEqual(["read", "exec"]);
+    expect(() => workspaceTools(workspace, ["workspace.reed"])).toThrow(/workspace\.reed/);
+  });
+});
+
+it("[workspace-no-exec-without-backend] computer() without a backend gives every file tool, and no exec", async () => {
+  await runInDurableObject(builder("noexec-1"), async (instance: Builder, state) => {
+    const bare = workspaceFor({ lifecycle: instance.lifecycle, ctx: state, env }, computer(), {});
+    expect(workspaceTools(bare, ["workspace.*"]).map((t) => t.name)).toEqual(["read", "ls", "find", "grep", "write", "edit", "delete"]);
+    expect(workspaceTools(bare, ["workspace.exec"])).toEqual([]);
+    expect(workspaceTools(instance.actor.workspace!, ["workspace.*"]).map((t) => t.name)).toContain("exec");
+  });
+});
+
+it("[workspace-local-only-passed-to-backend] the container starts with MOUNT_IGNORE equal to localOnly and no secret of ours (spike 2's evidence stands in for vfs_nodes)", async () => {
+  await runInDurableObject(builder("local-1"), async (instance: Builder) => {
+    instance.container.ports.set(8080, computerd(noComputerd));
+    await expect(instance.actor.workspace!.runtime.exec("true", { backend: "container" })).rejects.toThrow(/stage=connect/);
+    const start = instance.container.calls.find((c) => c.op === "start")!.options as { env: Record<string, string> };
+    expect(start.env.MOUNT_IGNORE).toBe(LOCAL_ONLY.join(","));
+    // Computer's own: the port, the mount, the ignore list, and computerd's per-container client secret. Nothing from env.
+    expect(Object.keys(start.env).sort()).toEqual(["MOUNT_IGNORE", "MOUNT_POINT", "PORT", "RPC_CLIENT_SECRET"]);
+    expect(start).toMatchObject({ enableInternet: false, image: "stub-image", instance: "standard-2" });
+  });
+});
+
+it("[egress-registry-read] the gateway passes GET and HEAD to the npm and yarn registries, and answers 403 to anything else", async () => {
+  const seen: Request[] = [];
+  const gateway = new RegistryReadGateway({ fetch: async (r) => (seen.push(r), new Response("from the registry")) });
+  const get = await gateway.fetch(new Request("https://registry.npmjs.org/zod", { headers: { authorization: "Bearer npm_secret", cookie: "c=1", accept: "application/json" } }));
+  expect(get.status).toBe(200);
+  expect(await get.text()).toBe("from the registry");
+  expect((await gateway.fetch(new Request("https://registry.yarnpkg.com/zod", { method: "HEAD" }))).status).toBe(200);
+  const refused = [
+    new Request("https://registry.npmjs.org/zod", { method: "PUT", body: "{}" }),
+    new Request("https://registry.npmjs.org/-/user/org.couchdb.user:x", { method: "POST", body: "{}" }),
+    new Request("https://registry.npmjs.org/zod", { method: "DELETE" }),
+    new Request("https://example.com/"),
+    new Request("http://registry.npmjs.org/zod"),
+    new Request("https://registry.npmjs.org.example.com/zod"),
+    new Request("https://registry.npmjs.org:8443/zod"),
+    new Request("https://user:pass@registry.npmjs.org/zod"),
+  ];
+  for (const request of refused) expect((await gateway.fetch(request)).status, `${request.method} ${request.url}`).toBe(403);
+  expect(seen.map((r) => `${r.method} ${r.url}`)).toEqual(["GET https://registry.npmjs.org/zod", "HEAD https://registry.yarnpkg.com/zod"]);
+  // Credentials stay behind; the rest of the request goes on.
+  expect(seen[0]!.headers.get("authorization")).toBeNull();
+  expect(seen[0]!.headers.get("cookie")).toBeNull();
+  expect(seen[0]!.headers.get("accept")).toBe("application/json");
+});
+
+it("[egress-registry-read] what the container sends reaches the actor's gateway through WorkspaceProxy: GET to the registry passes, PUT and other hosts get 403", async () => {
+  await runInDurableObject(builder("egress-1"), async (instance: Builder) => {
+    instance.container.ports.set(8080, computerd(noComputerd));
+    await expect(instance.actor.workspace!.runtime.exec("true", { backend: "container" })).rejects.toThrow(/stage=connect/);
+    // All of the container's HTTP, and its HTTPS to every host, goes to the gateway; Computer's callback host to itself.
+    expect(intercepts(instance.container)).toEqual(["http computer.internal", "all", "https *"]);
+    const out = instance.container.egress.find((e) => e.kind === "all")!.fetcher;
+    const get = await out.fetch("https://registry.npmjs.org/zod");
+    expect([get.status, await get.text()]).toEqual([200, "registry stub: GET /zod"]);
+    expect((await out.fetch("https://registry.npmjs.org/zod", { method: "PUT", body: "{}" })).status).toBe(403);
+    expect((await out.fetch("https://example.com/")).status).toBe(403);
+    expect(instance.upstream.map((r) => `${r.method} ${r.url}`)).toEqual(["GET https://registry.npmjs.org/zod"]);
+  });
+});
+
+it("[egress-none-by-default] a workspace that declares no egress gets a container without internet, intercepting only Computer's callback host", async () => {
+  await runInDurableObject(builder("egress-none"), async (instance: Builder, state) => {
+    // A gateway given anyway is not used: egress is what the workspace declares.
+    const workspace = workspaceFor({ lifecycle: instance.lifecycle, ctx: state, env }, computer({ backend: containerBackend({ image: "./Dockerfile" }) }), { container: instance, binding: "BUILDER", gateway: new RegistryReadGateway() });
+    instance.container.ports.set(8080, computerd(noComputerd));
+    await expect(workspace.runtime.exec("true", { backend: "container" })).rejects.toThrow(/stage=connect/);
+    expect(intercepts(instance.container)).toEqual(["http computer.internal"]);
+    const start = instance.container.calls.find((c) => c.op === "start")!.options as { env: Record<string, string> };
+    expect(start).toMatchObject({ enableInternet: false });
+    expect(start.env.MOUNT_IGNORE).toBeUndefined();
+  });
+});
+
+it("[workspace-edit-survives-restart] a write, then an edit cut off by a restart: the file has both changes, and the edit is reported interrupted, not run again", async () => {
+  const held = gate();
+  gates.push(held.open);
+  const path = "/workspace/notes.md";
+  const finals: ScriptedRequest[] = [];
+  // By the last tool result, not the turn: a restarted object's model counts its turns from 0 again.
+  builderScript("edit-1", (r) => {
+    const last = lastResult(r);
+    if (!last) return { calls: [{ name: "write", args: { path, content: "one\n" } }] };
+    if (last.toolName === "write") return { calls: [{ name: "edit", args: { path, edits: [{ oldText: "one\n", newText: "one\ntwo\n" }] } }] };
+    finals.push(r);
+    return finish({ summary: "edited" });
+  });
+  await runInDurableObject(builder("edit-1"), (instance: Builder) => holdWrite(instance, path, 2, held));
+  await build("edit-1", "notes", "task-w1");
+  // The edit's write has landed, and pi hasn't recorded the edit's result.
+  await reached(held);
+  await abortAllDurableObjects();
+  await settle(env, system);
+  await eventually(async () => expect(await builder("edit-1").done()).toEqual(["edited"]), 5000);
+  // Run again, the edit would have found "one\n" and added a second "two".
+  expect(await builder("edit-1").readFile(path)).toBe("one\ntwo\n");
+  expect(finals).toHaveLength(1);
+  const edit = lastResult(finals[0]!)!;
+  expect(edit).toMatchObject({ toolName: "edit", isError: true });
+  expect(resultText(edit)).toMatch(/interrupted/);
+}, 20_000);
+
+it("[workspace-container-lost-mid-command] the container is destroyed while an exec waits on it: earlier edits stay in vfs_*, and the model sees the command as interrupted", async () => {
+  const connecting = gate();
+  gates.push(connecting.open);
+  const path = "/workspace/app.txt";
+  const finals: ScriptedRequest[] = [];
+  builderScript("lost-1", (r) => {
+    const last = lastResult(r);
+    if (!last) return { calls: [{ name: "write", args: { path, content: "v1\n" } }] };
+    if (last.toolName === "write") return { calls: [{ name: "edit", args: { path, edits: [{ oldText: "v1", newText: "v2" }] } }] };
+    if (last.toolName === "edit") return { calls: [{ name: "exec", args: { command: "npm test", cwd: "/workspace" } }] };
+    finals.push(r);
+    return finish({ summary: "lost" });
+  });
+  // computerd would dial back after POST /connect; the stub's never does, so the exec waits on the container until it goes.
+  await runInDurableObject(builder("lost-1"), (instance: Builder) => void instance.container.ports.set(8080, computerd(() => connecting.wait().then(() => new Response("late")))));
+  await build("lost-1", "the tests", "task-l1");
+  await reached(connecting);
+  // Gone for good: Computer's one reconnect finds no container either.
+  await runInDurableObject(builder("lost-1"), (instance: Builder) => {
+    instance.container.failStart = "no container could be started";
+    return instance.container.destroy();
+  });
+  await eventually(async () => expect(await builder("lost-1").done()).toEqual(["lost"]), 5000);
+  const exec = lastResult(finals[0]!)!;
+  expect(exec).toMatchObject({ toolName: "exec", isError: true });
+  expect(resultText(exec)).toMatch(/interrupted/);
+  expect(resultText(exec)).toContain("the container was destroyed");
+  expect(await builder("lost-1").readFile(path)).toBe("v2\n");
+  // The file is in the object's SQLite (Computer's vfs_ tables), not on the container's disk.
+  const sizes = await runInDurableObject(builder("lost-1"), (_i, state) => state.storage.sql.exec<{ size: number }>("SELECT n.size FROM vfs_dirents d JOIN vfs_nodes n ON n.inode = d.child_inode WHERE d.name = 'app.txt'").toArray());
+  expect(sizes).toEqual([{ size: 3 }]);
 });

@@ -1,12 +1,12 @@
-// Scribe: the probe system's agent actor (declared in index.ts). Its Pi sessions run beside actord in one Durable
-// Object, as agent.session jobs (src/agents), on a scripted model.
+// Scribe and Builder: the probe system's agent actors (declared in index.ts). Their Pi sessions run beside actord in
+// one Durable Object, as agent.session jobs (src/agents), on a scripted model. Builder's tools are a Computer workspace.
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability } from "agents/lifecycle";
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { z } from "zod";
-import { agentRuntime, type ScriptedRequest, type ScriptedTurn, scriptedModel } from "../../src/agents/index.ts";
+import { agentRuntime, RegistryReadGateway, type ScriptedRequest, type ScriptedTurn, scriptedModel, withWorkspaceContainer } from "../../src/agents/index.ts";
 import type { EffectAdapter, Envelope } from "../../src/runtime/index.ts";
 // index.ts re-exports Scribe from here, so this import is circular: `system` is read only when an instance is built.
 import { system } from "./index.ts";
@@ -182,30 +182,145 @@ export class Scribe extends DurableObject<Env> {
 
 /**
  * A stand-in for `ctx.container`, which Durable Objects under @cloudflare/vitest-plugin don't have (spike 3), for
- * container tests to install. `running` follows `start` and `destroy`, `calls` records them, and
- * `getTcpPort(port).fetch` answers with the handler a test sets in `ports` while the container runs.
+ * container tests to install. `running` follows `start` and `destroy`, `calls` records them and the egress intercepts,
+ * and `getTcpPort(port).fetch` answers with the handler a test sets in `ports` while the container runs. `destroy`
+ * fails the requests still in flight and settles `monitor()`, as a container's exit does. With `failStart` set, `start`
+ * throws it. It runs nothing: Computer's computerd never answers, so a ContainerBackend over it never connects.
  */
 export class ContainerStub {
   running = false;
-  readonly calls: Array<{ op: "start" | "destroy"; options?: unknown }> = [];
+  readonly calls: Array<{ op: "start" | "destroy" | "intercept"; options?: unknown }> = [];
   readonly ports = new Map<number, (request: Request) => Response | Promise<Response>>();
+  /** What Computer's container host picks an image from by name, as wrangler's `images` block gives it. */
+  readonly images: Record<string, string> = { app: "stub-image" };
+  /** The fetchers egress was handed to, by what they intercept: the container's outbound requests would go to them. */
+  readonly egress: Array<{ kind: "http" | "all" | "https"; host?: string; fetcher: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } }> = [];
+  failStart?: string;
+  #exit = Promise.withResolvers<void>();
+  readonly #inFlight = new Set<(reason: Error) => void>();
 
   start(options?: unknown): void {
     this.calls.push({ op: "start", options });
+    if (this.failStart) throw new Error(this.failStart);
     this.running = true;
+    this.#exit = Promise.withResolvers<void>();
+  }
+  monitor(): Promise<void> {
+    return this.#exit.promise;
   }
   async destroy(): Promise<void> {
     this.calls.push({ op: "destroy" });
     this.running = false;
+    for (const fail of this.#inFlight) fail(new Error("the container was destroyed"));
+    this.#inFlight.clear();
+    this.#exit.resolve();
+  }
+  async setInactivityTimeout(_ms: number): Promise<void> {}
+  interceptOutboundHttp(host: string, fetcher: ContainerStub["egress"][number]["fetcher"]): void {
+    this.#intercept("http", fetcher, host);
+  }
+  interceptAllOutboundHttp(fetcher: ContainerStub["egress"][number]["fetcher"]): void {
+    this.#intercept("all", fetcher);
+  }
+  interceptOutboundHttps(host: string, fetcher: ContainerStub["egress"][number]["fetcher"]): void {
+    this.#intercept("https", fetcher, host);
+  }
+  #intercept(kind: "http" | "all" | "https", fetcher: ContainerStub["egress"][number]["fetcher"], host?: string): void {
+    this.calls.push({ op: "intercept", options: { kind, ...(host === undefined ? {} : { host }) } });
+    this.egress.push({ kind, ...(host === undefined ? {} : { host }), fetcher });
   }
   getTcpPort(port: number): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } {
     return {
       fetch: async (input, init) => {
         const handler = this.ports.get(port);
         if (!this.running || !handler) throw new Error(`the container is not listening on port ${port}`);
-        return handler(new Request(input, init));
+        let fail!: (reason: Error) => void;
+        const destroyed = new Promise<never>((_, reject) => (fail = reject));
+        this.#inFlight.add(fail);
+        try {
+          return await Promise.race([handler(new Request(input, init)), destroyed]);
+        } finally {
+          this.#inFlight.delete(fail);
+        }
       },
     };
+  }
+}
+
+/** Put `stub` where Computer's container host looks for the container: `ctx.container`, which the plugin leaves out. */
+function withContainer(ctx: DurableObjectState, stub: ContainerStub): ContainerStub {
+  Object.defineProperty(ctx, "container", { value: stub, configurable: true });
+  return stub;
+}
+
+/** A test's script for one Builder instance, by its name; without one, it says hello. */
+const builders = globalThis as { __builderScripts?: Record<string, Script> };
+
+/**
+ * Builder: the probe system's agent actor with a Computer workspace whose commands run in a container (declared in
+ * index.ts). Its container is a ContainerStub (spike 3), driven by Computer's own container host; its registry-read
+ * gateway forwards to `upstream`, which records each request and answers for the registry, so no test reaches the network.
+ */
+export class Builder extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  readonly lifecycle = Lifecycle.install(this);
+  readonly #name = this.ctx.id.name ?? "";
+  readonly container = withContainer(this.ctx, new ContainerStub());
+  readonly upstream: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    for (const table of ["done (summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)"]) ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${table}`);
+  }
+
+  readonly actor = agentRuntime(
+    { lifecycle: this.lifecycle, ctx: this.ctx, env: this.env },
+    system,
+    "Builder",
+    {
+      "builder.done": ({ payload }, ctx) => {
+        ctx.sql.exec("INSERT INTO done (summary) VALUES (?)", payload.summary);
+      },
+      "agent.failed": ({ type, payload }, ctx) => {
+        ctx.sql.exec("INSERT INTO failures (type, payload) VALUES (?, ?)", type, JSON.stringify(payload));
+      },
+      "agent.exhausted": ({ type, payload }, ctx) => {
+        ctx.sql.exec("INSERT INTO failures (type, payload) VALUES (?, ?)", type, JSON.stringify(payload));
+      },
+    },
+    {
+      instructions: "You are Builder. Change the files the task names, run its command, then call finish with a summary.",
+      model: scriptedModel(async (request) => builders.__builderScripts?.[this.#name]?.(request) ?? { text: "hello" }),
+      container: this,
+      gateway: new RegistryReadGateway({
+        fetch: async (request) => {
+          this.upstream.push({ method: request.method, url: request.url, headers: Object.fromEntries(request.headers) });
+          return new Response(`registry stub: ${request.method} ${new URL(request.url).pathname}`);
+        },
+      }),
+    },
+  );
+
+  /** The container's computerd connection and its egress requests arrive here. */
+  async fetch(request: Request): Promise<Response> {
+    return this.actor.fetch(request);
+  }
+  receive(envelope: Envelope) {
+    return this.actor.receive(envelope);
+  }
+  messages(session?: string) {
+    return this.actor.harness.messages(session ? { session } : {});
+  }
+  sessions(): Array<Record<string, unknown>> {
+    return this.ctx.storage.sql.exec("SELECT * FROM _actors_agent_sessions ORDER BY generation").toArray();
+  }
+  done(): string[] {
+    return this.ctx.storage.sql.exec<{ summary: string }>("SELECT summary FROM done ORDER BY rowid").toArray().map((r) => r.summary);
+  }
+  failures(): Array<{ type: string; payload: Record<string, unknown> }> {
+    return this.ctx.storage.sql.exec<{ type: string; payload: string }>("SELECT type, payload FROM failures ORDER BY rowid").toArray().map((r) => ({ type: r.type, payload: JSON.parse(r.payload) as Record<string, unknown> }));
+  }
+  readFile(path: string): Promise<string> {
+    return this.actor.workspace!.fs.readFile(path, "utf8");
   }
 }
 

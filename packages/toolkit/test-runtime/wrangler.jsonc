@@ -3,7 +3,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "vars": { "PROBE_HOOK_SECRET": "test-secret", "PROBE_APPROVAL_SECRET": "probe-approval-secret", "PROBE_OWNER": "owner@probe.example", "PROBE_FROM": "actord@probe.example", "PROBE_AUTHSERV": "mx.probe.example" },
-  "durable_objects": { "bindings": [{ "name": "PROBE", "class_name": "Probe" }, { "name": "SCRIBE", "class_name": "Scribe" }] },
+  "durable_objects": { "bindings": [{ "name": "PROBE", "class_name": "Probe" }, { "name": "SCRIBE", "class_name": "Scribe" }, { "name": "BUILDER", "class_name": "Builder" }] },
   "r2_buckets": [{ "binding": "TRANSCRIPTS", "bucket_name": "transcripts" }],
-  "exports": { "Probe": { "type": "durable-object", "storage": "sqlite" }, "Scribe": { "type": "durable-object", "storage": "sqlite" } }
+  "exports": { "Probe": { "type": "durable-object", "storage": "sqlite" }, "Scribe": { "type": "durable-object", "storage": "sqlite" }, "Builder": { "type": "durable-object", "storage": "sqlite" } },
+  // Builder's commands run in this container in a deploy. @cloudflare/vitest-plugin starts no containers (spike 3):
+  // the tests put a ContainerStub in its place (src/agent.ts).
+  "containers": [{ "class_name": "Builder", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "./Dockerfile" } } }]
 }
