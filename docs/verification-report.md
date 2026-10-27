@@ -1,12 +1,12 @@
 # Verification report
 
-Generated 2026-10-26T13:14:31.586Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-27T21:20:47.720Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
 | Tool | Version |
 | --- | --- |
-| claude | 2.1.310 |
+| claude | 2.1.312 |
 | node | v24.22.1 |
 | npm | 11.19.1 |
 | wrangler | 4.152.0 |
@@ -26,10 +26,10 @@ Generated 2026-10-26T13:14:31.586Z by `npm run verify` (`scripts/verify.mjs`). M
 | G3 — Runtime evidence | **passed** | — |
 | G4 — Agentic example | **passed** | — |
 | G5 — Agent-guided development | **passed** | — |
-| G6 — The Room | **passed** | — |
+| G6 — The Room | **blocked** | — |
 | G7 — Release candidate | **passed** | — |
 
-## Checks (61 pass · 0 fail · 0 blocked · 0 skipped)
+## Checks (60 pass · 0 fail · 1 blocked · 0 skipped)
 
 | Check | Gate | Status | Evidence from | Command | Reason |
 | --- | --- | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Generated 2026-10-26T13:14:31.586Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g1.start-session` `start` works in a fresh session (eval case start-orients) | G1 | pass | eval-run | `claude plugin eval plugins/claude --case start-orients (model-backed; owner-approved lane)` | score 1 in docs/evidence/evals/2026-10-25-release-m.json |
 | `g2.contract.types` Compile-time contracts: undeclared actor, message, effect, schedule, payload are TS errors | G2 | pass | host | `npx --no-install tsc -p tsconfig.contract.json` |  |
 | `g2.fixtures.typecheck` tsc passes on valid fixtures and fails where negative fixtures expect it | G2 | pass | host | `node scripts/typecheck-fixtures.mjs` |  |
-| `g2.cli.model` Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes | G2 | pass | host | `npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts` |  |
+| `g2.cli.model` Shipped CLI on fixtures: check/graph/diff results, determinism, snapshots, exit codes; agent check rules; agent libraries only in dist/agents.mjs | G2 | pass | host | `npm run --silent build && npx --no-install vitest run test/fixtures.test.ts test/diff.test.ts test/agents-model.test.ts test/bundle-isolation.test.ts` |  |
 | `g2.negative.unchanged` No file under fixtures/negative differs from the last commit | G2 | pass | host | `git diff --exit-code --stat HEAD -- fixtures/negative && test -z "$(git status --porcelain -- fixtures/negative)"` |  |
 | `g3.radar.typecheck` Release Radar typechecks (wrangler types + tsc) | G3 | pass | host | `npm run --silent typecheck -w release-radar` |  |
 | `g3.radar.check` actord check passes on Release Radar (declaration, config, exports, manifest) | G3 | pass | host | `node ../../plugins/claude/dist/actord.mjs check` |  |
@@ -83,7 +83,7 @@ Generated 2026-10-26T13:14:31.586Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g6.cli.room` actord room, guard, and the monitor lock (CLI unit tests) | G6 | pass | host | `cd packages/toolkit && NO_COLOR=1 npx vitest run test/room.test.ts` |  |
 | `g6.fixtures` The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin) | G6 | pass | host | `node scripts/record-room-fixtures.mjs --check` |  |
 | `g6.mod.validate` claude plugin validate reads the Room: hooks, calls, state contract, gating hooks all with .catch | G6 | pass | host | `claude plugin validate plugins/claude` |  |
-| `g6.mod.typecheck` The Room type-checks against this Claude Code build's mod declarations | G6 | pass | host | `node scripts/typecheck-mod.mjs` |  |
+| `g6.mod.typecheck` The Room type-checks against this Claude Code build's mod declarations | G6 | blocked | host | `node scripts/typecheck-mod.mjs` | no mod declarations for this Claude Code build on this machine |
 | `g6.mod.test` claude plugin test: every tab on terminal and desktop, /clear, guard holds and every refusal path | G6 | pass | host | `claude plugin test plugins/claude` | 20 mod tests |
 | `g6.monitor` The monitor prints notable events once per session and starts with inspect or reliability | G6 | pass | host | `node --test tests/monitor.test.mjs` |  |
 | `g6.trust` The Trust and safety page lists every mod event, mod call, and monitor command; no forbidden calls | G6 | pass | host | `node --test tests/trust-section.test.mjs` |  |
@@ -94,4 +94,12 @@ Generated 2026-10-26T13:14:31.586Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g7.tag` claude plugin tag --dry-run: plugin.json and the marketplace entry agree on the release tag | G7 | pass | host | `claude plugin tag plugins/claude --dry-run --force` | actord--v0.2.0, tagged at 0020f21 |
 | `g7.clean-checkout` A clean clone installs from the lockfile, rebuilds both plugin distributions byte-for-byte, and passes npm run verify | G7 | pass | host | `scripts/clean-checkout.sh` |  |
 | `g7.container` Clean-container install from the marketplace: install, starter verifies in workerd, uninstall | G7 | pass | host | `scripts/container-install.sh` |  |
+
+## Output of non-passing checks
+
+### g6.mod.typecheck (blocked)
+
+```text
+blocked: no Claude Code 2.1.312 mod declarations found (set ACTORD_CLAUDE_TYPES, or load the plugin-authoring skill once)
+```
 
