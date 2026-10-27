@@ -142,6 +142,8 @@ describe("agent check rules", () => {
     expect(codes(project(build({ harness: noBackend })))).toEqual(["warning:AGENT_EXEC_WITHOUT_BACKEND"]);
     expect(codes(project(build({ harness: noBackend, tools: ["workspace.exec", "open-pr"] })))).toEqual(["warning:AGENT_EXEC_WITHOUT_BACKEND"]);
     expect(codes(project(build({ harness: noBackend, tools: ["workspace.read", "open-pr"] })))).toEqual([]);
+    // Followed, the fix gives a workspace that passes: a backend alone would be AGENT_LOCAL_ONLY_MISSING.
+    expect(checkProject(project(build({ harness: noBackend }))).find((d) => d.code === "AGENT_EXEC_WITHOUT_BACKEND")!.fix).toBe('Add backend: containerBackend({ image }) and localOnly: ["**/node_modules"] to the workspace.');
   });
   it("AGENT_LOCAL_ONLY_INVALID: a pattern Computer would reject", () => {
     const withLocal = (localOnly: string[]) => build({ harness: pi({ workspace: computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly }) }) });
