@@ -431,9 +431,12 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
   async #test(job: number) {
     const container = await this.#connect();
     await this.#requireDeps(job, "/test");
+    // As CI does: the CLI tests load the toolkit's dist, and a fresh clone has none.
+    const build = await this.#run(job, "npm run build -w @actord/toolkit", { cwd: REPO, timeoutMs: TEST_TIMEOUT_MS, source: "spike" });
+    if (build.exitCode !== 0) return { container, build: { exitCode: build.exitCode, ms: build.ms, sync: build.sync } };
     const r = await this.#run(job, "npm test -w @actord/toolkit", { cwd: REPO, timeoutMs: TEST_TIMEOUT_MS, source: "spike" });
     const plain = stripAnsi(`${r.stdout}\n${r.stderr}`);
-    return { container, exitCode: r.exitCode, testMs: r.ms, testFiles: /Test Files\s+(.+)/.exec(plain)?.[1]?.trim() ?? null, tests: /\n\s*Tests\s+(.+)/.exec(plain)?.[1]?.trim() ?? null, sync: r.sync };
+    return { container, build: { exitCode: build.exitCode, ms: build.ms, sync: build.sync }, exitCode: r.exitCode, testMs: r.ms, testFiles: /Test Files\s+(.+)/.exec(plain)?.[1]?.trim() ?? null, tests: /\n\s*Tests\s+(.+)/.exec(plain)?.[1]?.trim() ?? null, sync: r.sync };
   }
 
   async #prompt(job: number) {
