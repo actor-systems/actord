@@ -13,8 +13,10 @@ went to Workers AI: every model call is `scriptedModel`.
   - a `PiHarness`, whose factory opens Pi with `scriptedModel(…)`;
   - a per-object registry, with no tools except in the `echo-…` and `json-…` instances;
   - `JobLog`, a capability whose SQLite triggers record every set of ids `cf_agents_jobs` holds when a job is added
-    or moved.
+    or changed.
 - **The tests.** `packages/toolkit/test-runtime/agents.test.ts`.
+
+Ruling: `packages/toolkit/test-runtime/src/agent.ts` may import `@earendil-works/*` directly, because the rule that only `src/agents/**` imports `@earendil-works/*` or `@cloudflare/computer` is about shipped code, and `test-runtime/` is test code that is never bundled, declared or packed.
 
 ## Node
 
@@ -23,6 +25,8 @@ went to Workers AI: every model call is `scriptedModel`.
 - **What changed.** `packages/toolkit/package.json` `engines.node` goes from `>=22.18` to `>=22.19`.
 - **What didn't.** The prose that says 22.18 is unchanged: the READMEs, `CONTRIBUTING.md`, the setup skills, the wiki
   and `actord doctor`. The doctor's check is about Node loading `system.ts` natively, which 22.18 still does.
+
+Ruling: `@actord/toolkit` declares `engines.node` `>=22.19`, up from `>=22.18`, because the Pi packages that `@actord/toolkit/agents` runs on (pi-durable, pi-ai and chord 1.4.0) declare `>=22.19.0`, and the toolkit's floor shouldn't be lower than its agent peers'. CI's Node 24 already meets it.
 
 ## Dependency footprint
 
@@ -51,6 +55,10 @@ went to Workers AI: every model call is `scriptedModel`.
 | Why not pi-ai's own `faux` provider? | pi-ai 1.4.0 ships `fauxProvider`. It replaces each response's usage with an estimate from the text, and its cost is always 0, so it can't report a scripted budget. `scriptedModel` is a pi-ai provider built with `createProvider` instead. | — |
 | Does Pi take plain JSON Schema tool parameters? | Yes. The `json-…` instance registers `echo` with `parameters: z.toJSONSchema(z.object({ v: z.number() }))`, the shape Computer's Pi tools use. Pi offered it to the model as given: the `pi.system` entry carries the draft 2020-12 schema. It also validated calls against it. `echo({ v: "one" })` never reached `execute`; its result was `isError: true`, with ``Validation failed for tool "echo": - v: must be number``. `echo({ v: 2 })` ran. | **pass; no `Type.Unsafe` needed** |
 | Do containers run under the Vitest integration? | No. The three tries are below. | **no** |
+
+Ruling: `scriptedModel` is a pi-ai provider of our own, built with `createProvider`, not pi-ai's `fauxProvider`, because faux replaces each response's usage with a text-length estimate and a cost of 0, and tests of budgets need the tokens and cost a script reports.
+
+Ruling: Pi takes plain JSON Schema tool `parameters` and validates calls against them, so Task 6's tools pass Computer's JSON Schema through as given, with no `Type.Unsafe` wrapper.
 
 ## Containers under `@cloudflare/vitest-plugin`
 

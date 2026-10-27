@@ -61,6 +61,7 @@ class JobLog extends LifecycleCapability {
 
 export class Scribe extends DurableObject<Env> {
   readonly lifecycle = Lifecycle.install(this);
+  // Tests reach Scribe by name; an id without one (idFromString, newUniqueId) gets the hello script and no tools.
   readonly script = scriptedModel(scriptFor(this.ctx.id.name ?? ""));
   // One per object, never at module scope: pi keeps each Harness subscribed to its registry until it closes.
   readonly registry = createRegistry();
