@@ -248,6 +248,28 @@ it("[agent-start-replaces-session] a second start aborts the running session; th
   expect((await s.sessions()).find((r) => r.key === "task-a")).toMatchObject({ result: null });
 });
 
+it("[agent-start-replaces-pending] a start replaced while its job waits to start never opens a pi session; it settles as a note", async () => {
+  const events = captureEvents();
+  script("replace-2", () => finish({ summary: "second" }));
+  // The first start fails once, so its job waits to be tried again when the second task arrives.
+  await holdStart("replace-2", "fail");
+  await task("replace-2", "first", "task-pa");
+  await eventually(async () => expect(await jobRow("replace-2", "fx:agent.session:task-pa")).toMatchObject({ status: "pending", attempts: 1 }));
+  await task("replace-2", "second", "task-pb");
+  expect(notes(events, "Scribe:replace-2", "replaced session hasn't started yet; its start stops it")).toMatchObject([{ detail: { key: "task-pa" } }]);
+  const s = scribe("replace-2");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 5000);
+  await settle(env, system); // the first start's retry runs now, and finds itself replaced
+  expect(await jobRow("replace-2", "fx:agent.session:task-pa")).toMatchObject({ status: "failed", lastError: "replaced by a newer start" });
+  expect(notes(events, "Scribe:replace-2", "stale session result")).toMatchObject([{ detail: { key: "task-pa", session: "", generation: 1, status: "failed" } }]);
+  // pi never opened a session for the first start: only its root and the second start's.
+  const [first, second] = await s.sessions();
+  expect(first).toMatchObject({ key: "task-pa", generation: 1, session: null });
+  expect((await s.piSessions()).map((p) => p.id)).toEqual(["1", second!.session]);
+  expect(await s.failures()).toEqual([]);
+  expect((await s.done()).map((d) => d.summary)).toEqual(["second"]);
+});
+
 it("[agent-ended-without-result] a run that answers without calling finish fails the session", async () => {
   script("ended-1", () => ({ text: "All done, nothing to return." }));
   const s = scribe("ended-1");

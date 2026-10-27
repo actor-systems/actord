@@ -412,7 +412,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       }
       const current = latest();
       if (current && LIVE.has(jobStatus(current.key) ?? "") && !cancel(c, current.key)) {
-        c.note("replaced session hasn't started yet; it is aborted once it does", { key: current.key });
+        c.note("replaced session hasn't started yet; its start stops it", { key: current.key });
       }
       const generation = (current?.generation ?? 0) + 1;
       c.sql.exec("INSERT INTO _actors_agent_sessions (key, session, operation, generation, instructions, started_at) VALUES (?, NULL, ?, ?, ?, ?)", message.id, message.id, generation, instructions, c.now());
