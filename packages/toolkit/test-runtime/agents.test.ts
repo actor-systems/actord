@@ -1221,13 +1221,13 @@ it("[git-push-header-only] the token reaches the git client as a header, and now
 it("[git-push-header-only] falls back to Basic when Bearer is refused, and scrubs the token from a final error", async () => {
   await runInDurableObject(scribe("git-basic"), async (_i, state) => {
     const basic = `Basic ${btoa(`x-access-token:${TOKEN}`)}`;
-    const refused = spyWorkspace(state, (call) => (call.headers?.Authorization?.startsWith("Bearer") ? { ok: false, error: "401", refs: {} } : { ok: true, error: null, refs: {} }));
+    const refused = spyWorkspace(state, (call) => (call.headers?.Authorization?.startsWith("Bearer") ? { ok: false, error: "401 Unauthorized", refs: {} } : { ok: true, error: null, refs: {} }));
     const run = (w: Workspace) => gitPushEffect({ workspace: () => w, dir: "/repo", token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
     await run(refused.workspace);
     expect(refused.pushes.map((p) => p.headers?.Authorization)).toEqual([`Bearer ${TOKEN}`, basic]);
 
     const failing = spyWorkspace(state, (call) => {
-      throw new Error(`denied for ${call.headers?.Authorization}`);
+      throw Object.assign(new Error(`403 denied for ${call.headers?.Authorization} (${TOKEN}, ${btoa(`x-access-token:${TOKEN}`)})`), { status: 403 });
     });
     const err = await run(failing.workspace).then(() => null, (e: Error) => e);
     expect(err).toBeInstanceOf(Error);
@@ -1248,4 +1248,79 @@ it("[git-push-only-factory-branches] a branch outside factory/ is rejected befor
     await open.run({ branch: "main" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
     expect(pushes).toHaveLength(1);
   });
+});
+
+it("[git-push-only-factory-branches] the default guard refuses anything that isn't a valid refname under factory/", async () => {
+  await runInDurableObject(scribe("git-refnames"), async (_i, state) => {
+    const { workspace, pushes } = spyWorkspace(state);
+    const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", token: async () => TOKEN });
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    for (const bad of ["factory/../x", "factory/a..b", "factory/a@{1}", "factory/a/", "factory/a.lock", "factory/a/.hidden", "factory/a b", "factory/a~1", "factory/a^", "factory/a:b", "factory/a?", "factory/a*", "factory/a[", "factory/a\\b", "factory/a\nb", "factory//a", "factory/a.", "factory/", "-factory/x", "refs/heads/factory/x"]) {
+      await expect(adapter.run({ branch: bad }, ctx), bad).rejects.toBeInstanceOf(EffectRejected);
+    }
+    expect(pushes).toHaveLength(0);
+    await adapter.run({ branch: "factory/ok-1/part_2.x" }, ctx);
+    expect(pushes).toHaveLength(1);
+  });
+});
+
+it("[git-push-header-only] only an authentication failure falls back to Basic; others surface as themselves", async () => {
+  await runInDurableObject(scribe("git-nonauth"), async (_i, state) => {
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    const nff = spyWorkspace(state, () => ({ ok: false, error: "non-fast-forward", refs: {} }));
+    await expect(gitPushEffect({ workspace: () => nff.workspace, dir: "/repo", token: async () => TOKEN }).run({ branch: "factory/x" }, ctx)).rejects.toThrow("git push failed: non-fast-forward");
+    expect(nff.pushes).toHaveLength(1);
+    const net = spyWorkspace(state, () => {
+      throw new Error("network down");
+    });
+    await expect(gitPushEffect({ workspace: () => net.workspace, dir: "/repo", token: async () => TOKEN }).run({ branch: "factory/x" }, ctx)).rejects.toThrow("network down");
+    expect(net.pushes).toHaveLength(1);
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(gitPushEffect({ workspace: () => nff.workspace, dir: "/repo", token: async () => TOKEN }).run({ branch: "factory/x" }, { ...ctx, signal: aborted.signal })).rejects.toThrow();
+    expect(nff.pushes).toHaveLength(1);
+  });
+});
+
+it("[git-clone-no-token] a failing clone without a token (or with an empty one) keeps its message readable", async () => {
+  await runInDurableObject(scribe("git-notoken"), async (_i, state) => {
+    const boom = { async clone() { throw new Error("repository not found"); }, async push() { return { ok: false, error: "non-fast-forward", refs: {} }; } };
+    const workspace = new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, git: () => boom as unknown as GitClient });
+    await expect(gitClone(workspace, { url: "https://github.com/acme/public", dir: "/repo" })).rejects.toThrow(/^repository not found$/);
+    await expect(gitClone(workspace, { url: "https://github.com/acme/public", dir: "/repo", token: async () => "" })).rejects.toThrow(/^repository not found$/);
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    await expect(gitPushEffect({ workspace: () => workspace, dir: "/repo", token: async () => "" }).run({ branch: "factory/x" }, ctx)).rejects.toThrow(/^git push failed: non-fast-forward$/);
+  });
+});
+
+it("[git-push-header-only] run as a registered effect, a client error carrying the token in every form reaches no row, event or outcome", async () => {
+  const events = captureEvents();
+  const forms = [TOKEN, `Bearer ${TOKEN}`, btoa(`x-access-token:${TOKEN}`), `Basic ${btoa(`x-access-token:${TOKEN}`)}`];
+  const leaks = (text: string) => forms.filter((f) => text.includes(f));
+  let calls = 0;
+  const holder = scribe("git-pipeline-state");
+  await runInDurableObject(holder, async (_i, state) => {
+    const { workspace } = spyWorkspace(state, (call) => {
+      calls++;
+      throw new Error(`push failed: ${forms.join(" | ")} | ${call.headers?.Authorization}`);
+    });
+    // Probe's gateway.keyed stands in for a declared push effect; its key is the branch.
+    const push = gitPushEffect({ workspace: () => workspace, dir: "/repo", token: async () => TOKEN });
+    overrideEffect("gateway.keyed", { run: (input, ctx) => push.run({ branch: (input as { key: string }).key }, ctx) });
+  });
+  await ingress(env, system, "Probe", "probe.effect", { effect: "gateway.keyed", key: "factory/leak" }, { key: "git-pipeline" });
+  await settle(env, system);
+  expect(calls).toBeGreaterThan(0);
+  const probeObject = env.PROBE.getByName("git-pipeline");
+  const outcomes = await probeObject.outcomes();
+  expect(outcomes).toHaveLength(1);
+  expect(outcomes[0]!.status).not.toBe("confirmed");
+  expect(outcomes[0]!.error ?? "").toContain("[token]");
+  const dump = await runInDurableObject(probeObject, (_i, state) => {
+    const sql = state.storage.sql;
+    return sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'sqlite_%'").toArray().map((t) => JSON.stringify(sql.exec(`SELECT * FROM "${t.name}"`).toArray())).join("\n");
+  });
+  expect(leaks(dump)).toEqual([]);
+  expect(leaks(JSON.stringify(outcomes))).toEqual([]);
+  expect(leaks(JSON.stringify(events))).toEqual([]);
 });
