@@ -180,6 +180,7 @@ it("[heartbeat-armed] while an effect runs, actord keeps a wake at most 30 s awa
   expect(due).toBeLessThanOrEqual(Date.now() + 30_000);
 });
 
+// Restart loops drive every instance in the file on each settle(), so they need more than vitest's 5 s default on a slow runner.
 it("[crash-loop-parked] a keyed effect interrupted 5 times is parked in doubt and not run again", async () => {
   let runs = 0;
   // Count only this key: an earlier test's hung instance shares the override and is recovered by the aborts too.
@@ -192,8 +193,9 @@ it("[crash-loop-parked] a keyed effect interrupted 5 times is parked in doubt an
   await settle(env, system, { rounds: 2 });
   expect(runs).toBe(5);
   expect(await probe("park").outcomes()).toMatchObject([{ key: "park", status: "in_doubt", error: "parked: interrupted 5 times without settling" }]);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[job-parked-with-early-outcome] a job start interrupted 5 times settles by the completion kept for it, not parked", async () => {
   overrideEffect("gateway.job", { start: (_i, c) => (c.key === "jpe" ? new Promise(() => {}) : Promise.resolve({ runId: "other" })) });
   await ingress(env, system, "Probe", "probe.job.start", { key: "jpe" }, { key: "jpe" });
@@ -201,7 +203,7 @@ it("[job-parked-with-early-outcome] a job start interrupted 5 times settles by t
   for (let i = 0; i < 5; i++) { await abortAllDurableObjects(); await settle(env, system, { rounds: 2 }); }
   expect(await probe("jpe").outcomes()).toMatchObject([{ key: "jpe", status: "confirmed" }]);
   expect(await jobRow("jpe")).toMatchObject({ status: "confirmed", body: { settledBy: "message" } });
-});
+}, 20_000);
 
 it("[lifecycle-shared-alarm] actord and another Lifecycle capability share the object's one alarm", async () => {
   let runs = 0;
@@ -1105,6 +1107,7 @@ it("[job-probe-done-while-cancelling] a probe that finds the job done while a ca
   expect(await resultRows("jpdc")).toBe(1);
 });
 
+// see [crash-loop-parked]
 it("[job-cancel-crash-loop] a cancel interrupted by 5 restarts is parked in doubt, and the actor hears it", async () => {
   let cancels = 0;
   // Count only this key: other tests' cancels are recovered by the aborts too.
@@ -1119,7 +1122,7 @@ it("[job-cancel-crash-loop] a cancel interrupted by 5 restarts is parked in doub
   await abortAllDurableObjects(); // parked is final: no further cancel
   await settle(env, system, { rounds: 2 });
   expect(cancels).toBe(5);
-});
+}, 20_000);
 
 it("[effect-runner-failure-result] an attempt that fails outside the runner's own handling still ends in doubt, and the actor hears it", async () => {
   const events = captureEvents();
