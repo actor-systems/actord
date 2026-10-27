@@ -43,7 +43,7 @@ const selfRoutes: RouteSpec[] = ["task.done", "agent.failed", "agent.exhausted"]
 const baseRoutes: RouteSpec[] = [{ from: "@ingress", message: "task.requested", to: "Coder" }, ...selfRoutes];
 
 function build(o: Opts = {}) {
-  const harness = o.harness === null ? undefined : (o.harness ?? pi({ workspace: computer({ backend: containerBackend({ image: "./Dockerfile" }) }) }));
+  const harness = o.harness === null ? undefined : (o.harness ?? pi({ workspace: computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"] }) }));
   return defineSystem({
     name: "agents",
     messages: { ...messages, ...(o.extraMessages ?? {}) },
@@ -149,6 +149,27 @@ describe("agent check rules", () => {
       expect(codes(project(withLocal([bad]))), bad).toEqual(["error:AGENT_LOCAL_ONLY_INVALID"]);
     expect(codes(project(withLocal(["/node_modules", "**/*.log", "/build/**"])))).toEqual([]);
   });
+  it("AGENT_LOCAL_ONLY_MISSING: a container workspace must say what stays local; [] passes, and a workspace without a backend needs nothing", () => {
+    const backend = containerBackend({ image: "./Dockerfile" });
+    const missing = checkProject(project(build({ harness: pi({ workspace: computer({ backend }) }) }))).filter((d) => d.code.startsWith("AGENT_"));
+    expect(missing).toEqual([
+      {
+        code: "AGENT_LOCAL_ONLY_MISSING",
+        severity: "error",
+        subject: "Coder workspace",
+        message: "a workspace with a container backend must declare localOnly: without it, node_modules syncs into the Durable Object (spike 2: npm ci 7.8x slower, 405 MB in the object)",
+        fix: 'Add localOnly: ["**/node_modules"], or localOnly: [] to sync everything.',
+      },
+    ]);
+    expect(codes(project(build({ harness: pi({ workspace: computer({ backend, localOnly: [] }) }) })))).toEqual([]);
+    expect(codes(project(build({ harness: pi({ workspace: computer() }), tools: ["workspace.read", "open-pr"] })))).toEqual([]);
+  });
+  it("AGENT_EXEC_TIMEOUT_INVALID: execTimeoutMs must be a positive whole number of milliseconds", () => {
+    const withTimeout = (execTimeoutMs: unknown) => build({ harness: pi({ workspace: computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"], execTimeoutMs: execTimeoutMs as number }) }) });
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "600000", null]) expect(codes(project(withTimeout(bad))), String(bad)).toEqual(["error:AGENT_EXEC_TIMEOUT_INVALID"]);
+    expect(checkProject(project(withTimeout(1.5))).find((d) => d.code === "AGENT_EXEC_TIMEOUT_INVALID")).toMatchObject({ subject: "Coder execTimeoutMs 1.5", fix: "Write it as a whole number of milliseconds, such as 600000 for 10 minutes." });
+    for (const good of [1, 600_000, 3_600_000]) expect(codes(project(withTimeout(good))), String(good)).toEqual([]);
+  });
   it("AGENT_CONTAINER_CONFIG_MISSING: needs a containers entry for the class with scheduling_policy durable_object and images, not image (R17)", () => {
     const sys = build();
     const images = { app: { dockerfile: "./Dockerfile" } };
@@ -186,6 +207,10 @@ describe("agent manifest", () => {
       budget: { usd: 5, turns: 40, wallClock: "30m", maxAttempts: null, timeoutMs: null },
     });
     expect(m.effects[0]!.input).toMatchObject({ type: "object", properties: { title: { type: "string" } } });
+  });
+  it("carries the workspace's localOnly, egress and execTimeoutMs", () => {
+    const workspace = computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"], egress: "registry-read", execTimeoutMs: 120_000 });
+    expect(normalize(build({ harness: pi({ workspace }) })).actors[0]!.harness).toEqual({ kind: "pi", workspace: { kind: "computer", backend: { kind: "container", image: "./Dockerfile" }, localOnly: ["**/node_modules"], egress: "registry-read", execTimeoutMs: 120_000 } });
   });
   it("[agent-manifest-unchanged-without-agents] every committed example and valid fixture manifest is byte-identical", async () => {
     const repo = join(import.meta.dirname, "..", "..", "..");

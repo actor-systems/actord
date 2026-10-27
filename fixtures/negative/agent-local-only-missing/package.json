@@ -1,0 +1,5 @@
+{
+  "name": "fixture-agent-local-only-missing",
+  "private": true,
+  "type": "module"
+}

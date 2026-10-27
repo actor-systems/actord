@@ -2,16 +2,17 @@
 // (test-runtime/src/agent.ts).
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
-import { type BackendHandle, type DurableObjectStorageLike, Workspace, type WorkspaceBackend } from "@cloudflare/computer";
+import { type DurableObjectStorageLike, Workspace } from "@cloudflare/computer";
 import { createGitClient, type GitClient } from "@cloudflare/computer/git";
 import { afterEach, expect, it } from "vitest";
 import { gitClone, gitPushEffect } from "../src/agents/git.ts";
 import { RegistryReadGateway, type ScriptedRequest, type ScriptedTurn, workspaceFor, workspaceTools } from "../src/agents/index.ts";
+import { toolWorkspace } from "../src/agents/workspace.ts";
 import type { ToolExecutionResult, ToolRegistration } from "@earendil-works/pi-durable";
 import { type ActorEvent, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { captureEvents, eventually, expireJobs, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
 import { computer, containerBackend } from "../src/system.ts";
-import { type Builder, ContainerStub, type Scribe } from "./src/agent.ts";
+import { type Builder, ContainerStub, HeldBackend, type HeldRun, type Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
@@ -1739,7 +1740,7 @@ it("[git-push-url-pinned] the push and clone URLs must be https, with no credent
 // does with the ignore list and a running command is spike 2's and spike 4's evidence.
 
 const builder = (key: string) => env.BUILDER.getByName(key);
-const builders = globalThis as { __builderScripts?: Record<string, Script> };
+const builders = globalThis as { __builderScripts?: Record<string, Script>; __builderRuns?: Record<string, (run: HeldRun) => void> };
 /** Answer each model request of Builder instance `name` with `fn`. */
 function builderScript(name: string, fn: Script): void {
   builders.__builderScripts = { ...builders.__builderScripts, [name]: fn };
@@ -1768,42 +1769,6 @@ const noComputerd = () => new Response("the stub has no computerd", { status: 50
 /** What the container's egress was handed to, once each: Computer connects again once after a failed connect. */
 const intercepts = (stub: ContainerStub) => [...new Set(stub.egress.map((e) => `${e.kind} ${e.host ?? ""}`.trim()))];
 
-/**
- * A command backend of the test's own (Computer's public WorkspaceBackend), for what the stub can't show: a command
- * that is running. Each exec starts a run that stays open until the test ends it (`exit`) or loses it (`lose`: its
- * event stream fails, as when the container's connection breaks mid-command). Nothing syncs: the files stay in vfs_*.
- */
-class HeldBackend implements WorkspaceBackend {
-  readonly id = "container";
-  readonly type = "test-held";
-  readonly description = "A Linux shell (a stand-in the test drives).";
-  readonly runs: Array<{ source: string; exit(code: number, stdout: string): void; lose(error: Error): void }> = [];
-  async connect(): Promise<BackendHandle> {
-    const shell = {
-      exec: async (input: { source: string; id?: string }) => {
-        const id = input.id ?? `run-${this.runs.length + 1}`;
-        let events!: ReadableStreamDefaultController<unknown>;
-        const stream = new ReadableStream({ start: (c) => void (events = c) });
-        this.runs.push({
-          source: input.source,
-          exit(code, stdout) {
-            events.enqueue({ id, seq: 0, name: "stdout", value: new TextEncoder().encode(stdout) });
-            events.enqueue({ id, seq: 1, name: "exit", code });
-            events.close();
-          },
-          lose: (error) => events.error(error),
-        });
-        return { id, events: stream };
-      },
-      getExec: async () => {
-        throw new Error("the container was destroyed");
-      },
-      killExec: async () => {},
-      disposeExec: async () => {},
-    };
-    return { rpc: { shell, sync: {} } as unknown as BackendHandle["rpc"], sync: "none", close: async () => {} };
-  }
-}
 const toolCall = (tools: ToolRegistration[], name: string, args: unknown, callId: string): Promise<ToolExecutionResult> =>
   tools.find((t) => t.name === name)!.execute(args as never, { callId } as never, { abortSignal: new AbortController().signal } as never);
 const outputText = (r: ToolExecutionResult) => (r.output ?? []).map((c) => ("text" in c ? c.text : "")).join("");
@@ -1893,6 +1858,16 @@ it("[workspace-local-only-passed-to-backend] the container starts with MOUNT_IGN
   });
 });
 
+it("[workspace-local-only-passed-to-backend] localOnly: [] syncs everything: the container starts with no MOUNT_IGNORE", async () => {
+  await runInDurableObject(builder("local-empty"), async (instance: Builder, state) => {
+    const workspace = workspaceFor({ lifecycle: instance.lifecycle, ctx: state, env }, computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: [] }), { container: instance, binding: "BUILDER" });
+    instance.container.ports.set(8080, computerd(noComputerd));
+    await expect(workspace.runtime.exec("true", { backend: "container" })).rejects.toThrow(/stage=connect/);
+    const start = instance.container.calls.find((c) => c.op === "start")!.options as { env: Record<string, string> };
+    expect(Object.keys(start.env).sort()).toEqual(["MOUNT_POINT", "PORT", "RPC_CLIENT_SECRET"]);
+  });
+});
+
 it("[egress-registry-read] the gateway passes GET and HEAD to the npm and yarn registries, and answers 403 to anything else", async () => {
   const seen: Request[] = [];
   const gateway = new RegistryReadGateway({ fetch: async (r) => (seen.push(r), new Response("from the registry")) });
@@ -1960,13 +1935,13 @@ it("[egress-registry-read] what the container sends reaches the actor's gateway 
 it("[egress-none-by-default] a workspace that declares no egress gets a container without internet, intercepting only Computer's callback host", async () => {
   await runInDurableObject(builder("egress-none"), async (instance: Builder, state) => {
     // A gateway given anyway is not used: egress is what the workspace declares.
-    const workspace = workspaceFor({ lifecycle: instance.lifecycle, ctx: state, env }, computer({ backend: containerBackend({ image: "./Dockerfile" }) }), { container: instance, binding: "BUILDER", gateway: new RegistryReadGateway() });
+    const workspace = workspaceFor({ lifecycle: instance.lifecycle, ctx: state, env }, computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"] }), { container: instance, binding: "BUILDER", gateway: new RegistryReadGateway() });
     instance.container.ports.set(8080, computerd(noComputerd));
     await expect(workspace.runtime.exec("true", { backend: "container" })).rejects.toThrow(/stage=connect/);
     expect(intercepts(instance.container)).toEqual(["http computer.internal"]);
     const start = instance.container.calls.find((c) => c.op === "start")!.options as { env: Record<string, string> };
     expect(start).toMatchObject({ enableInternet: false });
-    expect(start.env.MOUNT_IGNORE).toBeUndefined();
+    expect(start.env.MOUNT_IGNORE).toBe("**/node_modules");
   });
 });
 
@@ -2068,4 +2043,77 @@ it("[workspace-exec-runs-to-end] an exec that runs to its end gives the model it
     expect(outputText(result)).toContain("3 passed");
     expect(outputText(result)).not.toMatch(/interrupted/);
   });
+});
+
+/** Run one exec through `workspace`'s pi tools on `held`, end it with `exit(0)`, and return the run the backend saw. */
+async function execOn(workspace: Workspace, held: HeldBackend, args: Record<string, unknown>): Promise<HeldRun> {
+  const before = held.runs.length;
+  const exec = toolCall(workspaceTools(workspace, ["workspace.exec"]), "exec", args, `c${before + 1}`);
+  await eventually(async () => expect(held.runs.length).toBe(before + 1));
+  const run = held.runs.at(-1)!;
+  run.exit(0, "ok\n");
+  expect((await exec).isError).toBeFalsy();
+  return run;
+}
+const CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
+
+it("[workspace-egress-ca] with registry-read egress every exec gets the gateway's CA in its env, under the caller's; with none, the env is the caller's", async () => {
+  await runInDurableObject(scribe("ws-ca"), async (instance: Scribe, state) => {
+    const host = { lifecycle: instance.lifecycle, ctx: state, env };
+    const on = (egress: "none" | "registry-read") => {
+      const held = new HeldBackend();
+      return { held, workspace: workspaceFor(host, computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"], egress }), { backend: held }) };
+    };
+    const none = on("none");
+    expect((await execOn(none.workspace, none.held, { command: "npm ci", env: { A: "1" } })).env).toEqual({ A: "1" });
+    expect((await execOn(none.workspace, none.held, { command: "npm ci" })).env).toBeUndefined();
+    const read = on("registry-read");
+    expect((await execOn(read.workspace, read.held, { command: "npm ci", env: { A: "1" } })).env).toEqual({ NODE_EXTRA_CA_CERTS: CA, A: "1" });
+    expect((await execOn(read.workspace, read.held, { command: "npm ci" })).env).toEqual({ NODE_EXTRA_CA_CERTS: CA });
+    expect((await execOn(read.workspace, read.held, { command: "npm ci", env: { NODE_EXTRA_CA_CERTS: "/mine.pem" } })).env).toEqual({ NODE_EXTRA_CA_CERTS: "/mine.pem" });
+  });
+});
+
+it("[workspace-exec-timeout] an exec gets the workspace's execTimeoutMs, 10 minutes by default, and a caller's timeoutMs wins", async () => {
+  await runInDurableObject(scribe("ws-timeout"), async (instance: Scribe, state) => {
+    const host = { lifecycle: instance.lifecycle, ctx: state, env };
+    const spec = (execTimeoutMs?: number) => computer({ backend: containerBackend({ image: "./Dockerfile" }), localOnly: ["**/node_modules"], ...(execTimeoutMs === undefined ? {} : { execTimeoutMs }) });
+    const byDefault = new HeldBackend();
+    expect((await execOn(workspaceFor(host, spec(), { backend: byDefault }), byDefault, { command: "npm test" })).timeoutMs).toBe(600_000);
+    const declared = new HeldBackend();
+    expect((await execOn(workspaceFor(host, spec(120_000), { backend: declared }), declared, { command: "npm test" })).timeoutMs).toBe(120_000);
+    // Computer's exec tool passes none; another caller of the tools' workspace may.
+    const caller = new HeldBackend();
+    const run = toolWorkspace(workspaceFor(host, spec(120_000), { backend: caller })).runtime.exec("npm test", { timeoutMs: 5_000 });
+    await eventually(async () => expect(caller.runs).toHaveLength(1));
+    caller.runs[0]!.exit(0, "ok\n");
+    await (await run).result();
+    expect(caller.runs[0]!.timeoutMs).toBe(5_000);
+    // A workspace built without workspaceFor has no spec: the default still applies.
+    const bare = new HeldBackend();
+    expect((await execOn(new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, backends: [bare] }), bare, { command: "npm test" })).timeoutMs).toBe(600_000);
+  });
+});
+
+it("[workspace-container-lost-mid-command] the lost-container shape spike 2 saw: the model is told the command was interrupted, and the session goes on", async () => {
+  const finals: ScriptedRequest[] = [];
+  const path = "/workspace/app.txt";
+  builderScript("held-lost", (r) => {
+    const last = lastResult(r);
+    if (!last) return { calls: [{ name: "write", args: { path, content: "v1\n" } }] };
+    if (last.toolName === "write") return { calls: [{ name: "exec", args: { command: "npm test", cwd: "/workspace" } }] };
+    finals.push(r);
+    return finish({ summary: "after the loss" });
+  });
+  // What a destroyed container's running exec rejected with in spike 2, 6 s into npm test.
+  builders.__builderRuns = { ...builders.__builderRuns, "held-lost": (run) => void setTimeout(() => run.lose(new Error("WritableStream RPC stub was disposed without calling close()")), 10) };
+  await build("held-lost", "the tests", "task-hl1");
+  await eventually(async () => expect(await builder("held-lost").done()).toEqual(["after the loss"]), 5000);
+  const exec = lastResult(finals[0]!)!;
+  expect(exec).toMatchObject({ toolName: "exec", isError: true });
+  expect(resultText(exec)).toBe(
+    "exec was interrupted: the container was lost before the command finished (WritableStream RPC stub was disposed without calling close()). It may have partly run. Files written or edited before it are kept in the workspace; check what the command changes before you run it again.",
+  );
+  expect(await builder("held-lost").failures()).toEqual([]);
+  expect(await builder("held-lost").readFile(path)).toBe("v1\n");
 });

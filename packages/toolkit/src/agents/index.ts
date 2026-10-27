@@ -44,7 +44,7 @@ import { createAI } from "agents/models/pi-ai";
 import { type Api, createModels, type Model, type ModelThinkingLevel, type MutableModels } from "@earendil-works/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type ConversationId, createRegistry, type Extension, Harness, type Registry, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
-import type { Workspace } from "@cloudflare/computer";
+import type { Workspace, WorkspaceRegisteredBackend } from "@cloudflare/computer";
 import {
   type ActorHost,
   type ActorRuntime,
@@ -226,6 +226,8 @@ export interface AgentRuntimeOptions<S extends AnySystem = AnySystem> extends Ru
   container?: unknown;
   /** For a workspace whose egress is "registry-read": where the container's requests go; default: a RegistryReadGateway. */
   gateway?: Gateway;
+  /** Test seam: a command backend in place of the container's (Computer's WorkspaceBackend, with id "container"). */
+  backend?: WorkspaceRegisteredBackend;
 }
 
 export interface AgentRuntime extends ActorRuntime {
@@ -335,7 +337,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   const returnsSchema = returnsSpec.payload;
   const wallClockMs = spec.budget?.wallClock === undefined ? null : durationMs(spec.budget.wallClock);
   if (wallClockMs === null) throw new Error(`actord: agent actor ${actor} must declare budget.wallClock, a duration like "30m"`);
-  const { instructions, model: scripted, render = defaultRender, extensions = [], transcripts, container, gateway, ...runtimeOptions } = options;
+  const { instructions, model: scripted, render = defaultRender, extensions = [], transcripts, container, gateway, backend, ...runtimeOptions } = options;
   const workspaceSpec = spec.harness?.workspace;
   // `actord check` reports workspace tools without a workspace (AGENT_WORKSPACE_TOOLS_WITHOUT_WORKSPACE).
   if (!workspaceSpec && (spec.tools ?? []).some((t) => t.startsWith("workspace."))) throw new Error(`actord: agent actor ${actor} lists workspace tools, but its harness has no workspace`);
@@ -344,7 +346,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   const sql = ctx.storage.sql;
   const self = `${actor}:${ctx.id.name ?? ctx.id.toString()}`;
   for (const q of SESSIONS_SCHEMA) sql.exec(q);
-  const workspace = workspaceSpec && workspaceFor(host, workspaceSpec, { container, gateway, binding: spec.binding });
+  const workspace = workspaceSpec && workspaceFor(host, workspaceSpec, { container, gateway, binding: spec.binding, ...(backend ? { backend } : {}) });
 
   const rowByKey = (key: string) => sql.exec<SessionRow>("SELECT * FROM _actors_agent_sessions WHERE key = ?", key).toArray()[0];
   const rowBySession = (session: string) => sql.exec<SessionRow>("SELECT * FROM _actors_agent_sessions WHERE session = ?", session).toArray()[0];

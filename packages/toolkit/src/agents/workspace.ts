@@ -6,7 +6,13 @@
 // Pi tools over it are Computer's (createPiTools), with this plan's replay classes: a tool pi may run again after a
 // restart cut it off is one whose rerun changes nothing (reads, a write of the same bytes, a delete), and the rest
 // (edit, exec, publish) pi reports to the model as interrupted. An exec that loses its container is reported the same
-// way: the command may have partly run.
+// way: the command may have partly run. Nothing is pulled from the container before a session resumes: across an
+// eviction no edit was lost and no sync was left pending (spike 4), and the next exec's sync brings back what an
+// interrupted command wrote.
+//
+// Each exec the tools run gets the workspace's timeout (10 minutes unless it declares execTimeoutMs; spike 2's longest
+// command was a 185 s install), and with registry-read egress, the gateway's CA: computerd's commands never see the
+// image's ENV, and Node refuses the gateway's certificate without NODE_EXTRA_CA_CERTS (spike 2).
 import {
   type DurableObjectStorageLike,
   type KillSignal,
@@ -33,16 +39,29 @@ const CONTAINER = "container";
 /** Each Workspace's container backend, which the Durable Object's fetch hands computerd's connection and egress to. */
 const backends = new WeakMap<Workspace, ContainerBackend>();
 
+/** What every exec the tools run gets unless its caller says otherwise. */
+interface ExecDefaults {
+  timeoutMs: number;
+  env?: Record<string, string>;
+}
+const DEFAULT_EXEC_TIMEOUT_MS = 600_000;
+/** Where the platform puts the certificate the egress gateway's HTTPS interception presents. */
+const EGRESS_CA = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
+/** Each Workspace's exec defaults, from its spec; a Workspace workspaceFor didn't build gets the timeout only. */
+const execDefaults = new WeakMap<Workspace, ExecDefaults>();
+
 /**
  * A Workspace in the host's SQLite for `spec`. With a container backend, `container` is the host built by Computer's
  * withWorkspaceContainer (the Durable Object, `this`), and `binding` its Durable Object binding, through which the
  * container's requests come back to it. Egress is `none` unless the spec declares `registry-read`, which sends the
  * container's HTTP and HTTPS through `gateway` (default: a RegistryReadGateway).
  */
-export function workspaceFor(host: ActorHost, spec: WorkspaceSpec, options: { container?: unknown; gateway?: Gateway; binding?: string } = {}): Workspace {
+export function workspaceFor(host: ActorHost, spec: WorkspaceSpec, options: { container?: unknown; gateway?: Gateway; binding?: string; backend?: WorkspaceRegisteredBackend } = {}): Workspace {
   const registered: WorkspaceRegisteredBackend[] = [];
   let backend: ContainerBackend | undefined;
-  if (spec.backend) {
+  // Test seam: a backend of the test's own in place of the container's, which needs a real container to run anything.
+  if (spec.backend && options.backend) registered.push(options.backend);
+  else if (spec.backend) {
     const { container, binding } = options;
     if (container === undefined) throw new Error("actord: a workspace with a container backend needs `container`, the Durable Object built with withWorkspaceContainer");
     if (binding === undefined) throw new Error("actord: a workspace with a container backend needs `binding`, the Durable Object binding its container's requests come back through");
@@ -51,14 +70,15 @@ export function workspaceFor(host: ActorHost, spec: WorkspaceSpec, options: { co
       workspace: { binding, id: host.ctx.id.toString() },
       id: CONTAINER,
       ...(spec.backend.instance === undefined ? {} : { instance: spec.backend.instance as ContainerInstanceSize }),
-      // MOUNT_IGNORE: never synced into the object.
-      ...(spec.localOnly === undefined ? {} : { ignore: spec.localOnly }),
+      // MOUNT_IGNORE: never synced into the object. [] syncs everything, as no ignore does, and asks nothing of computerd.
+      ...(spec.localOnly === undefined || spec.localOnly.length === 0 ? {} : { ignore: spec.localOnly }),
       egress: spec.egress === "registry-read" ? { mode: "http-gateway", gateway: (options.gateway ?? new RegistryReadGateway()) as never } : { mode: "none" },
     });
     registered.push(backend);
   }
   const workspace = new Workspace({ storage: host.ctx.storage as unknown as DurableObjectStorageLike, git: createGitClient(), backends: registered });
   if (backend) backends.set(workspace, backend);
+  execDefaults.set(workspace, { timeoutMs: spec.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS, ...(spec.egress === "registry-read" ? { env: { NODE_EXTRA_CA_CERTS: EGRESS_CA } } : {}) });
   return workspace;
 }
 
@@ -88,7 +108,7 @@ export function workspaceTools(workspace: Workspace, select: readonly string[]):
     if (name !== "*" && !Object.hasOwn(REPLAY, name)) throw new Error(`actord: workspace.${name} isn't one of Computer's workspace tools (${Object.keys(REPLAY).join(", ")})`);
   }
   if (names.length === 0) return [];
-  const { tools, execute } = createPiTools({ workspace: withLostContainers(workspace) });
+  const { tools, execute } = createPiTools({ workspace: toolWorkspace(workspace) });
   return tools
     .filter((tool) => names.includes("*") || names.includes(tool.name))
     .map(
@@ -163,18 +183,21 @@ function isTransportFailure(err: unknown): boolean {
 }
 
 /**
- * The workspace as the tools see it, its exec marking a lost container: a start that fails to reach the container, or
- * a run whose result never arrives. The handle it returns has no event stream, so Computer's exec tool waits for the
- * result (it shows output only at the end). Runs are utf8, as that tool always asks.
+ * The workspace as the tools see it (exported for tests). Its exec gives each run the workspace's exec defaults, under
+ * what the caller passes (the timeout, and env key by key), and marks a lost container: a start that fails to reach
+ * the container, or a run whose result never arrives. The handle it returns has no event stream, so Computer's exec
+ * tool waits for the result (it shows output only at the end). Runs are utf8, as that tool always asks.
  */
-function withLostContainers(workspace: Workspace): Workspace {
+export function toolWorkspace(workspace: Workspace): Workspace {
   const lost = (err: unknown) => new Error(`${LOST}${err instanceof Error ? err.message : String(err)}`);
+  const defaults = execDefaults.get(workspace) ?? { timeoutMs: DEFAULT_EXEC_TIMEOUT_MS };
   const runtime: Pick<Workspace["runtime"], "backends" | "exec"> = {
     backends: () => workspace.runtime.backends(),
     exec: (async (source: string, options?: WorkspaceRuntimeExecOptions<"utf8">) => {
+      const env = defaults.env ? { ...defaults.env, ...options?.env } : options?.env;
       let handle: WorkspaceRuntimeExecHandle<"utf8">;
       try {
-        handle = await workspace.runtime.exec(source, { ...options, encoding: "utf8" });
+        handle = await workspace.runtime.exec(source, { ...options, encoding: "utf8", timeoutMs: options?.timeoutMs ?? defaults.timeoutMs, ...(env ? { env } : {}) });
       } catch (err) {
         throw isTransportFailure(err) ? lost(err) : err;
       }

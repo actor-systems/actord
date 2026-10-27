@@ -6,6 +6,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { type Extension, hook, ToolTask, type ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { z } from "zod";
+import type { BackendHandle, WorkspaceBackend } from "@cloudflare/computer";
 import { agentRuntime, RegistryReadGateway, type ScriptedRequest, type ScriptedTurn, scriptedModel, withWorkspaceContainer } from "../../src/agents/index.ts";
 import type { EffectAdapter, Envelope } from "../../src/runtime/index.ts";
 // index.ts re-exports Scribe from here, so this import is circular: `system` is read only when an instance is built.
@@ -253,8 +254,60 @@ function withContainer(ctx: DurableObjectState, stub: ContainerStub): ContainerS
   return stub;
 }
 
-/** A test's script for one Builder instance, by its name; without one, it says hello. */
-const builders = globalThis as { __builderScripts?: Record<string, Script> };
+/** One command a HeldBackend runs: what it was asked, and how the test ends it. */
+export interface HeldRun {
+  source: string;
+  env: Record<string, string> | undefined;
+  timeoutMs: number | undefined;
+  exit(code: number, stdout: string): void;
+  lose(error: Error): void;
+}
+
+/**
+ * A command backend of the test's own (Computer's public WorkspaceBackend), for what the stub can't show: a command
+ * that is running. Each exec starts a run that stays open until the test ends it (`exit`) or loses it (`lose`: its
+ * event stream fails, as when the container's connection breaks mid-command); `onRun` sees each run as it starts, in
+ * the object's own context. Nothing syncs: the files stay in vfs_*.
+ */
+export class HeldBackend implements WorkspaceBackend {
+  readonly id = "container";
+  readonly type = "test-held";
+  readonly description = "A Linux shell (a stand-in the test drives).";
+  readonly runs: HeldRun[] = [];
+  constructor(readonly onRun?: (run: HeldRun) => void) {}
+  async connect(): Promise<BackendHandle> {
+    const shell = {
+      exec: async (input: { source: string; id?: string; env?: Record<string, string>; timeoutMs?: number }) => {
+        const id = input.id ?? `run-${this.runs.length + 1}`;
+        let events!: ReadableStreamDefaultController<unknown>;
+        const stream = new ReadableStream({ start: (c) => void (events = c) });
+        const run: HeldRun = {
+          source: input.source,
+          env: input.env,
+          timeoutMs: input.timeoutMs,
+          exit(code, stdout) {
+            events.enqueue({ id, seq: 0, name: "stdout", value: new TextEncoder().encode(stdout) });
+            events.enqueue({ id, seq: 1, name: "exit", code });
+            events.close();
+          },
+          lose: (error) => events.error(error),
+        };
+        this.runs.push(run);
+        this.onRun?.(run);
+        return { id, events: stream };
+      },
+      getExec: async () => {
+        throw new Error("the container was destroyed");
+      },
+      killExec: async () => {},
+      disposeExec: async () => {},
+    };
+    return { rpc: { shell, sync: {} } as unknown as BackendHandle["rpc"], sync: "none", close: async () => {} };
+  }
+}
+
+/** A test's script for one Builder instance, by its name (without one, it says hello), and what a "held-…" one's commands do. */
+const builders = globalThis as { __builderScripts?: Record<string, Script>; __builderRuns?: Record<string, (run: HeldRun) => void> };
 
 /**
  * Builder: the probe system's agent actor with a Computer workspace whose commands run in a container (declared in
@@ -291,6 +344,8 @@ export class Builder extends withWorkspaceContainer(class extends DurableObject<
       instructions: "You are Builder. Change the files the task names, run its command, then call finish with a summary.",
       model: scriptedModel(async (request) => builders.__builderScripts?.[this.#name]?.(request) ?? { text: "hello" }),
       container: this,
+      // A "held-…" instance runs its commands on a HeldBackend, which the test drives through `__builderRuns`.
+      ...(this.#name.startsWith("held-") ? { backend: new HeldBackend((run) => builders.__builderRuns?.[this.#name]?.(run)) } : {}),
       gateway: new RegistryReadGateway({
         fetch: async (request) => {
           this.upstream.push({ method: request.method, url: request.url, headers: Object.fromEntries(request.headers) });
