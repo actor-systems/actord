@@ -544,29 +544,36 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     async start(input, { key }) {
       const row = rowByKey(key);
       if (!row) throw new EffectRejected(`no agent session was recorded for ${key}`);
-      // Stopped or replaced while this start waited (to run, or to be tried again): pi is never asked.
-      const before = halted(key);
-      if (before) throw new EffectRejected(before);
       let session = row.session;
-      if (session === null) {
-        // A start retried after a restart reuses the session it recorded; a crash before the record leaves an empty one.
-        session = (await harness.sessions.create()).id;
-        sql.exec("UPDATE _actors_agent_sessions SET session = ? WHERE key = ?", session, key);
+      try {
+        // Stopped or replaced while this start waited (to run, or to be tried again): pi is never asked.
+        const before = halted(key);
+        if (before) throw new EffectRejected(before);
+        if (session === null) {
+          // A start retried after a restart reuses the session it recorded; a crash before the record leaves an empty one.
+          session = (await harness.sessions.create()).id;
+          sql.exec("UPDATE _actors_agent_sessions SET session = ? WHERE key = ?", session, key);
+        }
+        // The instructions the session started with, before its prompt; setting them again on a retry changes nothing.
+        const conversation = await (await harness.pi()).conversation(Number(session) as ConversationId, BACKGROUND_CONTEXT);
+        if (!conversation) throw new EffectRejected(`pi has no session ${session}`);
+        await conversation.configure({ instructions: row.instructions }, BACKGROUND_CONTEXT);
+        // The operation id makes the submit idempotent: a retry is accepted: false, and nothing runs twice.
+        const receipt = await harness.session(session).submit(input.prompt, { operationId: row.operation });
+        // A retry of this start is accepted: false, and was recorded the first time.
+        if (receipt.accepted) agentEvent("agent.started", key, session, { generation: row.generation });
+        // Stopped or replaced while this start ran, too early to cancel the job: stop the session now. Its probe then
+        // settles the job: failed "stopped", or, once replaced, a note.
+        if (halted(key)) await harness.abort({ session });
+        else guard(key, session, row.started_at);
+        watch(session, row.operation, key);
+        return { session, operation: row.operation, generation: row.generation };
+      } catch (err) {
+        // Refused once pi opened the session (on this try or an earlier one): the job fails with no probe to record the
+        // session's end, so this does. Any other failure is tried again, or ends the job in doubt, whose settlement records it.
+        if (session !== null && err instanceof EffectRejected) await recordEnd(key, session, "failed", await spentBy(harness, session).catch(() => null), err.message);
+        throw err;
       }
-      // The instructions the session started with, before its prompt; setting them again on a retry changes nothing.
-      const conversation = await (await harness.pi()).conversation(Number(session) as ConversationId, BACKGROUND_CONTEXT);
-      if (!conversation) throw new EffectRejected(`pi has no session ${session}`);
-      await conversation.configure({ instructions: row.instructions }, BACKGROUND_CONTEXT);
-      // The operation id makes the submit idempotent: a retry is accepted: false, and nothing runs twice.
-      const receipt = await harness.session(session).submit(input.prompt, { operationId: row.operation });
-      // A retry of this start is accepted: false, and was recorded the first time.
-      if (receipt.accepted) agentEvent("agent.started", key, session, { generation: row.generation });
-      // Stopped or replaced while this start ran, too early to cancel the job: stop the session now. Its probe then
-      // settles the job: failed "stopped", or, once replaced, a note.
-      if (halted(key)) await harness.abort({ session });
-      else guard(key, session, row.started_at);
-      watch(session, row.operation, key);
-      return { session, operation: row.operation, generation: row.generation };
     },
     async probe(handle, { key, reportUsage }) {
       // Owed results first, then pi's work and spending, then the row. A steer closes its wait once pi has the result,
@@ -604,16 +611,22 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       }
       return settle({ done: true, status: "failed", error: "ended without returning a result" });
     },
-    async cancel(handle, { key, reportUsage }) {
+    async cancel(handle, { key, signal, reportUsage }) {
       unguard(key);
       const aborted = await harness.abort({ session: handle.session });
       // No look reports what the session spent since the last one, the request the abort cut off included: this does.
+      let spent: Spent | null = null;
       try {
-        const spent = await spentBy(harness, handle.session);
+        spent = await spentBy(harness, handle.session);
         reportUsage(unreported(key, spent.usage));
-        await recordEnd(key, handle.session, "cancelled", spent);
       } catch (err) {
         note(key, `what a stopped session spent couldn't be read: ${messageOf(err)}`);
+      }
+      // Cancelled only if this answer counts: past the cancel's timeout the job settles in doubt, and that settlement
+      // records the end. Nothing is awaited between the check and the answer, so the timeout can't land between them.
+      if (aborted && !signal.aborted) {
+        const ending = recordEnd(key, handle.session, "cancelled", spent);
+        ctx.waitUntil?.(ending);
       }
       return aborted;
     },
@@ -656,9 +669,21 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     },
   };
 
-  /** Abort a session whose job settled in doubt. Aborting a session with nothing running does nothing, so a retry is safe. */
-  const abortCall: EffectAdapter<{ session: string }, boolean> = {
-    run: ({ session }) => harness.abort({ session }),
+  /**
+   * Abort a session whose job settled in doubt, and record its end: no probe settled the job (its deadline did, or a
+   * cancel that wasn't confirmed). Runs after the settlement commits, so nothing of pi's or R2's is awaited inside a
+   * handler's transaction. Aborting a session with nothing running does nothing, and an end is recorded once, so a
+   * retry is safe.
+   */
+  const abortCall: EffectAdapter<{ session: string; key?: string; error?: string }, boolean> = {
+    async run({ session, key, error }) {
+      try {
+        return await harness.abort({ session });
+      } finally {
+        // What it spent is unknown if pi can't say.
+        if (key !== undefined) await recordEnd(key, session, "in_doubt", await spentBy(harness, session).catch(() => null), error);
+      }
+    },
   };
 
   /** The tool the model returns its result with. Its parameters are the `returns` message's payload schema. */
@@ -809,14 +834,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     const session = row?.session ?? "";
     const spent = usage ? { usage } : {};
     unguard(key);
-    // Given up on in doubt (its deadline passed, a cancel wasn't confirmed): pi may still be running it, so stop it,
-    // after this commits. Replaced sessions too: nothing will use what they do.
-    if (status === "in_doubt" && row?.session) {
-      c.effect(ABORT as never, { session: row.session }, { key });
-      // No probe settled this job (its deadline did), so its end is recorded here; what it spent is unknown if pi can't say.
-      const spent = await spentBy(harness, row.session).catch(() => null);
-      await recordEnd(key, row.session, "in_doubt", spent, error);
-    }
+    // Given up on in doubt (its deadline passed, a cancel wasn't confirmed): pi may still be running it, so stop it and
+    // record its end, after this commits. Replaced sessions too: nothing will use what they do.
+    if (status === "in_doubt" && row?.session) c.effect(ABORT as never, { session: row.session, key, error }, { key });
     // To this actor by name: its returns message may also have routes to others, and these messages are its own.
     const send = (type: string, payload: unknown) => c.send(type as never, payload as never, { to: actor as never, key: c.key });
     if (!row || latest()?.generation !== row.generation) {

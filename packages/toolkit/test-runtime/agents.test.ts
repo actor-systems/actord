@@ -1177,6 +1177,132 @@ it("[agent-events-in-doubt] a session job expired in doubt records one agent.end
   expect(await env.TRANSCRIPTS.get(`transcripts/Scribe/task-ed1/${row!.session}.json`)).not.toBeNull();
 });
 
+it("[agent-in-doubt-end-after-commit] an in-doubt settlement reads pi and writes the transcript after its handler commits, so a slow read holds up none of the actor's other messages", { timeout: 20_000 }, async () => {
+  const events = captureEvents();
+  const turn = gate();
+  gates.push(turn.open);
+  script("wedge-1", async () => {
+    await turn.wait();
+    return finish({ summary: "too late" });
+  });
+  await task("wedge-1", "the endless one", "task-w1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("wedge-1", "fx:agent.session:task-w1")).toMatchObject({ status: "awaiting_job" }));
+  // Recording the session's end reads its transcript from pi; hold that read.
+  const read = gate();
+  gates.push(read.open);
+  await runInDurableObject(scribe("wedge-1"), (instance: Scribe) => {
+    const harness = instance.actor.harness;
+    const messages = harness.messages.bind(harness);
+    harness.messages = async (...args: Parameters<typeof messages>) => {
+      await read.wait();
+      return messages(...args);
+    };
+  });
+  const expired = expireJobs(env, system, "Scribe", "wedge-1");
+  await reached(read);
+  // Inside the handler's transaction, the held read would hold the object's input gate, and this tick with it.
+  const tick = ingress(env, system, "Scribe", "scribe.tick", { key: "after-w1" }, { key: "wedge-1" });
+  const first = await Promise.race([tick.then(() => "tick handled"), new Promise((r) => setTimeout(() => r("tick held"), 2_000))]);
+  read.open();
+  expect(first).toBe("tick handled");
+  expect(await expired).toBe(1);
+  expect(await scribe("wedge-1").fired()).toEqual(["after-w1"]);
+  const [row] = await scribe("wedge-1").sessions();
+  await eventually(async () => expect(await scribe("wedge-1").failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-w1", reason: "deadline passed" } }]));
+  await eventually(async () => expect(agentEvents(events, "task-w1").filter((e) => e.kind === "agent.ended")).toMatchObject([{ reason: "deadline passed", detail: { outcome: "in_doubt" } }]));
+});
+
+/** Hold the first call of `method` on instance `name`'s harness until `g` opens; later calls go straight through. */
+async function holdHarness(name: string, method: "abort" | "messages", g: ReturnType<typeof gate>): Promise<void> {
+  await runInDurableObject(scribe(name), (instance: Scribe) => {
+    const harness = instance.actor.harness as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    const real = harness[method]!.bind(harness);
+    let held = false;
+    harness[method] = async (...args: unknown[]) => {
+      if (!held) {
+        held = true;
+        await g.wait();
+      }
+      return real(...args);
+    };
+  });
+}
+
+it("[agent-ended-cancel-confirmed] a stop whose cancel is confirmed records agent.ended cancelled, however long the transcript takes to write", async () => {
+  const events = captureEvents();
+  const turn = gate();
+  gates.push(turn.open);
+  script("cancel-ok-1", async () => (await turn.wait(), finish({ summary: "never" })));
+  overrideEffectBudget("agent.session", { timeoutMs: 1_000 });
+  await task("cancel-ok-1", "the stop", "task-co1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("cancel-ok-1", "fx:agent.session:task-co1")).toMatchObject({ status: "awaiting_job" }));
+  // Recording the end reads the transcript: hold that read past the cancel's timeout.
+  const read = gate();
+  gates.push(read.open);
+  await holdHarness("cancel-ok-1", "messages", read);
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "cancel-ok-1", id: "halt-co1" })).toMatchObject({ status: "handled" });
+  await reached(read);
+  await new Promise((r) => setTimeout(r, 1_500));
+  expect(await jobRow("cancel-ok-1", "fx:agent.session:task-co1")).toMatchObject({ status: "failed", lastError: "cancelled" });
+  read.open();
+  await eventually(async () => expect(agentEvents(events, "task-co1").filter((e) => e.kind === "agent.ended")).toMatchObject([{ detail: { outcome: "cancelled" } }]));
+  await settle(env, system);
+  expect(agentEvents(events, "task-co1").filter((e) => e.kind === "agent.ended")).toHaveLength(1);
+});
+
+it("[agent-ended-cancel-late] a stop whose cancel answers past its timeout records agent.ended in doubt, as the job settled, never cancelled", async () => {
+  const events = captureEvents();
+  const turn = gate();
+  gates.push(turn.open);
+  script("cancel-late-1", async () => (await turn.wait(), finish({ summary: "never" })));
+  overrideEffectBudget("agent.session", { timeoutMs: 1_000 });
+  await task("cancel-late-1", "the slow stop", "task-cl1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("cancel-late-1", "fx:agent.session:task-cl1")).toMatchObject({ status: "awaiting_job" }));
+  // The cancel's abort answers only once the job has settled in doubt; the abort the settlement queues goes through.
+  const late = gate();
+  gates.push(late.open);
+  await holdHarness("cancel-late-1", "abort", late);
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "cancel-late-1", id: "halt-cl1" })).toMatchObject({ status: "handled" });
+  await eventually(async () => expect(await jobRow("cancel-late-1", "fx:agent.session:task-cl1")).toMatchObject({ status: "in_doubt", lastError: "cancel not confirmed" }), 4_000);
+  await eventually(async () => expect(agentEvents(events, "task-cl1").filter((e) => e.kind === "agent.ended")).toMatchObject([{ reason: "cancel not confirmed", detail: { outcome: "in_doubt" } }]));
+  late.open();
+  await settle(env, system);
+  expect(agentEvents(events, "task-cl1").filter((e) => e.kind === "agent.ended")).toHaveLength(1);
+}, 10_000);
+
+it("[agent-ended-start-refused] a start refused after pi opened its session records agent.ended", async () => {
+  const events = captureEvents();
+  script("start-refused-1", () => finish({ summary: "should not arrive" }));
+  // The first try opens the session, then fails at its submit; the stop lands while it waits to be tried again.
+  await runInDurableObject(scribe("start-refused-1"), (instance: Scribe) => {
+    const harness = instance.actor.harness;
+    const session = harness.session.bind(harness);
+    let failed = false;
+    harness.session = (id: string) => {
+      const s = session(id);
+      const submit = s.submit.bind(s);
+      s.submit = async (...args: Parameters<typeof submit>) => {
+        if (failed) return submit(...args);
+        failed = true;
+        throw new Error("the test failed this submit");
+      };
+      return s;
+    };
+  });
+  await task("start-refused-1", "the refused one", "task-sr1");
+  await eventually(async () => expect(await jobRow("start-refused-1", "fx:agent.session:task-sr1")).toMatchObject({ status: "pending", attempts: 1 }));
+  const [row] = await scribe("start-refused-1").sessions();
+  expect(row!.session).not.toBeNull();
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "start-refused-1", id: "halt-sr1" })).toMatchObject({ status: "handled" });
+  await settle(env, system); // the retry runs now, and finds the stop
+  expect(await jobRow("start-refused-1", "fx:agent.session:task-sr1")).toMatchObject({ status: "failed", lastError: "stopped" });
+  await eventually(async () => expect(agentEvents(events, "task-sr1").filter((e) => e.kind === "agent.ended")).toMatchObject([{ reason: "stopped", detail: { session: row!.session, outcome: "failed" } }]));
+  expect(await scribe("start-refused-1").failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-sr1", reason: "stopped" } }]);
+});
+
 // ---- Git from the Durable Object (Task 10) ----
 
 const TOKEN = "ghs_sekrit-installation-token-0123456789";
