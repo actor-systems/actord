@@ -120,7 +120,7 @@ it("[agent-start-returns] a start runs a session whose finish returns the result
   const s = scribe("returns-1");
   const started = Date.now();
   expect(await task("returns-1", "the release", "task-r1")).toMatchObject({ status: "handled" });
-  await eventually(async () => expect(await s.done()).toEqual([{ id: expect.any(String), sender: "Scribe:returns-1", summary: "ok" }]), 5000);
+  await eventually(async () => expect(await s.done()).toEqual([{ id: expect.any(String), sender: "Scribe:returns-1", summary: "ok" }]), 4000);
   // Settled by probeNow, well inside the 30s probe period.
   expect(Date.now() - started).toBeLessThan(30_000);
   // The prompt is the start message, rendered: its type, then its payload as indented JSON.
@@ -141,7 +141,7 @@ it("[agent-finish-invalid] a finish whose payload fails the returns schema is an
   script("invalid-1", (r) => (requests.push(r), r.turn === 0 ? finish({ summary: " " }) : finish({ summary: "fixed" })));
   const s = scribe("invalid-1");
   await task("invalid-1", "the bug", "task-i1");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["fixed"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["fixed"]), 4000);
   const [result] = requests[1]!.lastToolResults as Array<{ toolName: string; isError: boolean; content: Array<{ text: string }> }>;
   expect(result).toMatchObject({ toolName: "finish", isError: true });
   expect(result!.content.map((c) => c.text).join("")).toBe("The result doesn't match scribe.done:\n- summary: summary must not be blank");
@@ -154,7 +154,7 @@ it("[agent-duplicate-start] one start envelope delivered twice runs one session,
   const s = scribe("dup-1");
   const receipts = await Promise.all([task("dup-1", "the duplicate", "task-d1"), task("dup-1", "the duplicate", "task-d1")]);
   expect(receipts.map((r) => r.status).sort()).toEqual(["duplicate", "handled"]);
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["once"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["once"]), 4000);
   expect(await task("dup-1", "the duplicate", "task-d1")).toMatchObject({ status: "duplicate" });
   // Past the inbox's dedupe (its row expired): the handler runs again, and finds the session already started.
   await runInDurableObject(s, (_i, state) => state.storage.sql.exec("DELETE FROM _actors_inbox WHERE id = 'task-d1'"));
@@ -188,7 +188,7 @@ it("[agent-steer] a steer message joins the running turn with the hint's id; wit
   // The steer is with pi before the turn it joins ends.
   await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session.steer:hint-1")).toMatchObject({ status: "confirmed" }));
   held.open();
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["with bullets"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["with bullets"]), 4000);
   expect(users(requests[1]!).at(-1)).toBe('scribe.hint\n\n{\n  "text": "use bullet points"\n}');
   const [row] = await s.sessions();
   expect(await s.wait("hint-1", row!.session as string)).toMatchObject({ operationId: "hint-1", session: row!.session, status: "done" });
@@ -211,7 +211,7 @@ it("[agent-stop-during-model-call] a stop during a model call aborts the session
   await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-x1")).toMatchObject({ status: "awaiting_job" }));
   expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-1", id: "halt-1" })).toMatchObject({ status: "handled" });
   const [row] = await s.sessions();
-  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-x1", reason: "stopped" } }]), 5000);
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-x1", reason: "stopped" } }]), 4000);
   expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-x1")).toMatchObject({ status: "failed", lastError: "cancelled" });
   expect(await s.job("task-x1")).toMatchObject({ settledBy: "cancel" });
   expect(await s.wait("task-x1", row!.session as string)).toMatchObject({ status: "unanswered" });
@@ -236,7 +236,7 @@ it("[agent-start-replaces-session] a second start aborts the running session; th
   await reached(held);
   await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-a")).toMatchObject({ status: "awaiting_job" }));
   await task("replace-1", "second", "task-b");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 4000);
   await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-a")).toMatchObject({ status: "failed", lastError: "cancelled" }));
   const [first, second] = await s.sessions();
   expect([first, second].map((r) => [r!.key, r!.generation])).toEqual([["task-a", 1], ["task-b", 2]]);
@@ -264,7 +264,7 @@ it("[agent-start-replaces-pending] a start replaced while its job waits to start
   await task("replace-2", "second", "task-pb");
   expect(notes(events, "Scribe:replace-2", "replaced session hasn't started yet; its start stops it")).toMatchObject([{ detail: { key: "task-pa" } }]);
   const s = scribe("replace-2");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 4000);
   await settle(env, system); // the first start's retry runs now, and finds itself replaced
   expect(await jobRow("replace-2", "fx:agent.session:task-pa")).toMatchObject({ status: "failed", lastError: "replaced by a newer start" });
   expect(notes(events, "Scribe:replace-2", "stale session result")).toMatchObject([{ detail: { key: "task-pa", session: "", generation: 1, status: "failed" } }]);
@@ -280,12 +280,13 @@ it("[agent-ended-without-result] a run that answers without calling finish fails
   script("ended-1", () => ({ text: "All done, nothing to return." }));
   const s = scribe("ended-1");
   await task("ended-1", "the quick one", "task-e1");
-  await eventually(async () => expect(await s.failures()).toMatchObject([{ type: "agent.failed", payload: { key: "task-e1", reason: "ended without returning a result" } }]), 5000);
+  await eventually(async () => expect(await s.failures()).toMatchObject([{ type: "agent.failed", payload: { key: "task-e1", reason: "ended without returning a result" } }]), 4000);
   expect((await s.failures())[0]!.payload.session).toBe((await s.sessions())[0]!.session);
   expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-e1")).toMatchObject({ status: "failed", lastError: "ended without returning a result" });
   expect(await s.done()).toEqual([]);
 });
 
+// see [crash-loop-parked]
 it("[agent-restart-awaiting] a restart while the session runs: pi resumes it, the job isn't started again, and the result arrives once", async () => {
   const events = captureEvents();
   const held = gate();
@@ -308,8 +309,9 @@ it("[agent-restart-awaiting] a restart while the session runs: pi resumes it, th
   expect(calls).toBe(2);
   expect(events.filter((e) => e.kind === "job.started" && e.actor === "Scribe:restart-1")).toHaveLength(1);
   expect((await scribe("restart-1").outbox()).find((r) => r.id === "fx:agent.session:task-z1")).toMatchObject({ status: "confirmed", attempts: 1 });
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-instructions-pinned] a session keeps the instructions it started with across a restart; a new session gets the new ones", async () => {
   const held = gate();
   gates.push(held.open);
@@ -347,7 +349,7 @@ it("[agent-instructions-pinned] a session keeps the instructions it started with
   } finally {
     delete shared.__scribeInstructions;
   }
-});
+}, 20_000);
 
 it("[agent-stop-before-start-returns] a stop that lands before the session's start returns stops it: the actor hears stopped, not the result", async () => {
   const events = captureEvents();
@@ -379,7 +381,7 @@ it("[agent-stop-before-start-returns] a stop that lands before the session's sta
   expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-early-2", id: "halt-se2" })).toMatchObject({ status: "handled" });
   held.open();
   const s = scribe("stop-early-2");
-  await eventually(async () => expect((await s.failures()).map((f) => f.payload.reason)).toEqual(["stopped"]), 5000);
+  await eventually(async () => expect((await s.failures()).map((f) => f.payload.reason)).toEqual(["stopped"]), 4000);
   const [row] = await s.sessions();
   expect((await s.failures())[0]!.payload).toEqual({ session: row!.session, key: "task-se2", reason: "stopped" });
   expect(await jobRow("stop-early-2", "fx:agent.session:task-se2")).toMatchObject({ status: "failed", lastError: "stopped" });
@@ -408,7 +410,7 @@ it("[agent-stop-mark-aborts] a stop mark the probe finds on a running session st
   await s.probeNow("task-sm1");
   await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-sm1", reason: "stopped" } }]));
   // pi stopped the session: the held model call is cut off and nothing of the session is left to run.
-  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 4000);
   expect(await s.wait("task-sm1", session)).toMatchObject({ status: "unanswered" });
   turn.open();
   await settle(env, system);
@@ -429,7 +431,7 @@ it("[agent-steer-after-end] a steer that runs after its session ended is refused
   await eventually(async () => expect(await jobRow("steer-late-1", "fx:agent.session.steer:hint-sl1")).toMatchObject({ status: "pending", lastError: "the session's start hasn't returned yet" }));
   held.open();
   const s = scribe("steer-late-1");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["done before the hint"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["done before the hint"]), 4000);
   await settle(env, system); // the steer's retry runs now, after the session ended
   expect(await jobRow("steer-late-1", "fx:agent.session.steer:hint-sl1")).toMatchObject({ status: "failed", lastError: "the session has ended; not steered" });
   expect(notes(events, "Scribe:steer-late-1", "the session has ended; not steered")).toMatchObject([{ effectKey: "hint-sl1", detail: { key: "task-sl1" } }]);
@@ -444,7 +446,7 @@ it("[agent-returns-second-route] the result goes to the agent itself when its re
   const events = captureEvents();
   script("onward-1", () => finish({ summary: "routed" }));
   await task("onward-1", "the forwarded one", "task-o1");
-  await eventually(async () => expect((await scribe("onward-1").done()).map((d) => d.summary)).toEqual(["routed"]), 5000);
+  await eventually(async () => expect((await scribe("onward-1").done()).map((d) => d.summary)).toEqual(["routed"]), 4000);
   expect(events.filter((e) => e.actor === "Scribe:onward-1" && e.kind === "failed")).toEqual([]);
   expect(events.filter((e) => e.kind === "sent" && e.to?.startsWith("Probe:"))).toEqual([]);
 });
@@ -490,7 +492,7 @@ it("[agent-in-doubt] a session job past its deadline is in doubt, and the actor 
   await eventually(async () => expect(await scribe("doubt-1").failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-d1", reason: "deadline passed" } }]));
   expect(await jobRow("doubt-1", "fx:agent.session:task-d1")).toMatchObject({ status: "in_doubt", lastError: "deadline passed" });
   // A job given up on in doubt stops its session: pi aborts the run, so the held model call is cut off.
-  await eventually(async () => expect((await scribe("doubt-1").pending()).filter((p) => p.session === row!.session)).toEqual([]), 5000);
+  await eventually(async () => expect((await scribe("doubt-1").pending()).filter((p) => p.session === row!.session)).toEqual([]), 4000);
   expect(await jobRow("doubt-1", "fx:agent.session.abort:task-d1")).toMatchObject({ status: "confirmed" });
   expect(await scribe("doubt-1").wait("task-d1", row!.session as string)).toMatchObject({ status: "unanswered" });
   // Nothing the model answers now is delivered.
@@ -562,7 +564,7 @@ it("[agent-tool-runs-effect] a declared effect is a tool: the model's call runs 
   script("tool-1", (r) => (requests.push(r), r.turn === 0 ? call("note_keyed", { text: "a" }) : finish({ summary: "noted" })));
   const s = scribe("tool-1");
   await task("tool-1", "the note", "task-t1");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["noted"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["noted"]), 4000);
   const [row] = await s.sessions();
   const [result] = toolResults(requests[1]!);
   const key = `${row!.session}:${result!.toolCallId}`;
@@ -581,6 +583,7 @@ it("[agent-tool-runs-effect] a declared effect is a tool: the model's call runs 
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
 });
 
+// see [crash-loop-parked]
 it("[agent-restart-mid-tool-keyed] a restart while a keyed tool's effect runs: pi reruns the tool with the same call id, which finds the effect's row", async () => {
   const events = captureEvents();
   const held = gate();
@@ -614,8 +617,9 @@ it("[agent-restart-mid-tool-keyed] a restart while a keyed tool's effect runs: p
   expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "note.keyed")).toMatchObject([{ effectKey: key }]);
   // Twice, the most a keyed effect runs here: the attempt the restart cut off, then its retry.
   expect(runs).toBe(2);
-});
+}, 20_000);
 
+// see [crash-loop-parked]
 it("[agent-restart-mid-tool-unkeyed] a restart while an unkeyed tool's effect runs: the model hears it was interrupted, and actord records it in doubt and never reruns it", async () => {
   const events = captureEvents();
   const held = gate();
@@ -644,7 +648,7 @@ it("[agent-restart-mid-tool-unkeyed] a restart while an unkeyed tool's effect ru
   expect(events.filter((e) => e.kind === "effect.in_doubt" && e.effect === "note.plain")).toMatchObject([{ effectKey: key }]);
   expect(events.filter((e) => e.kind === "retry.scheduled" && e.effect === "note.plain")).toEqual([]);
   expect(runs).toBe(1);
-});
+}, 20_000);
 
 it("[agent-tool-approval] a tool that needs approval answers waiting at once; once approved, its result is steered in and the session finishes", async () => {
   const requests: ScriptedRequest[] = [];
@@ -655,7 +659,7 @@ it("[agent-tool-approval] a tool that needs approval answers waiting at once; on
   });
   const s = scribe("tool-approve-1");
   await task("tool-approve-1", "the approved note", "task-ta1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const [result] = toolResults(requests[1]!);
@@ -669,7 +673,7 @@ it("[agent-tool-approval] a tool that needs approval answers waiting at once; on
   expect(await jobRow("tool-approve-1", "fx:agent.session:task-ta1")).toMatchObject({ status: "awaiting_job" });
   expect(await s.noted()).toEqual([]);
   expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key, value: { noted: "b" } });
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["approved"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["approved"]), 4000);
   expect(await s.noted()).toEqual([{ effect: "note.approved", key, text: "b" }]);
   // The result started a new run in the session, as input of its own kind, with the operation id "result:<key>".
   expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.approved (request ${key}): confirmed {"noted":"b"}`);
@@ -693,12 +697,12 @@ it("[agent-tool-result-stale] an approval that resolves after its session was re
   });
   const s = scribe("tool-stale-1");
   await task("tool-stale-1", "first", "task-ts1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [first] = await s.sessions();
   const key = `${first!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
   await runEnded("tool-stale-1", first!.session as string, "task-ts1");
   await task("tool-stale-1", "second", "task-ts2");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 4000);
   expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
   await settle(env, system);
   expect(notes(events, "Scribe:tool-stale-1", "stale tool result")).toMatchObject([{ detail: { key, session: first!.session, generation: 1 } }]);
@@ -739,7 +743,7 @@ it("[agent-tool-undeclared] only the effects in `tools` are offered, and request
   expect(events.filter((e) => e.kind === "effect.denied" && e.actor === "Scribe:tool-undeclared-1")).toMatchObject([{ effect: "gateway.keyed", effectKey: "x", reason: "undeclared capability" }]);
   expect((await s.outbox()).filter((r) => r.kind === "effect" && r.target !== "agent.session")).toEqual([]);
   held.open();
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["listed"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["listed"]), 4000);
 });
 
 it("[agent-tool-denied] a person's denial sends no result message, so the session's probe steers it in, and the model hears it failed", async () => {
@@ -751,13 +755,13 @@ it("[agent-tool-denied] a person's denial sends no result message, so the sessio
   });
   const s = scribe("tool-deny-1");
   await task("tool-deny-1", "the denied note", "task-td1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [row] = await s.sessions();
   const key = `${row!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
   await runEnded("tool-deny-1", row!.session as string, "task-td1");
   expect(await s.decide(key, "deny")).toMatchObject({ status: "denied", key });
   await s.probeNow("task-td1");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["denied"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["denied"]), 4000);
   expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.approved (request ${key}): failed denied by a person`);
   expect(await s.noted()).toEqual([]);
 });
@@ -772,7 +776,7 @@ it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's 
   });
   const s = scribe("tool-handler-1");
   await task("tool-handler-1", "the handled note", "task-th1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
@@ -787,7 +791,7 @@ it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's 
     expect(await jobRow("tool-handler-1", `fx:agent.session.steer:result:${key}`)).toBeUndefined();
     expect(await s.results()).toEqual([]);
     await settle(env, system); // the delivery's retry
-    await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["handled"]), 5000);
+    await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["handled"]), 4000);
     expect(failed()).toHaveLength(1);
   } finally {
     delete shared.__scribeNotedThrows;
@@ -812,7 +816,7 @@ it("[agent-tool-approval-no-result] an approved effect with no result message is
   });
   const s = scribe("tool-silent-1");
   await task("tool-silent-1", "the silent note", "task-tq1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
@@ -824,7 +828,7 @@ it("[agent-tool-approval-no-result] an approved effect with no result message is
   expect(await jobRow("tool-silent-1", "fx:agent.session:task-tq1")).toMatchObject({ status: "awaiting_job" });
   // The next look at the session steers it in from the effect's row.
   await s.probeNow("task-tq1");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["silent"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["silent"]), 4000);
   expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.silent (request ${key}): confirmed {"noted":"s"}`);
   expect(await jobRow("tool-silent-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed" });
   expect(await s.noted()).toEqual([{ effect: "note.silent", key, text: "s" }]);
@@ -835,7 +839,7 @@ it("[agent-tool-result-steer-in-doubt] a result steer that ends in doubt gives u
   script("tool-steer-doubt-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_approved", { text: "q" }) : { text: "Waiting for the approval." }));
   const s = scribe("tool-steer-doubt-1");
   await task("tool-steer-doubt-1", "the lost result", "task-tsd1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
@@ -855,7 +859,7 @@ it("[agent-tool-result-steer-in-doubt] a result steer that ends in doubt gives u
   expect(await jobRow("tool-steer-doubt-1", "fx:agent.session:task-tsd1")).toMatchObject({ status: "awaiting_job" });
   // The next look gives the wait up; with no work left in pi, the session ends.
   await s.probeNow("task-tsd1");
-  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-tsd1", reason: "ended without returning a result" } }]), 5000);
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-tsd1", reason: "ended without returning a result" } }]), 4000);
   expect(await runInDurableObject(s, (_i, state) => state.storage.sql.exec("SELECT done_at FROM _actors_agent_waits WHERE key = ?", key).one().done_at)).toEqual(expect.any(Number));
   expect(await s.done()).toEqual([]);
 });
@@ -875,14 +879,14 @@ it("[agent-exhausted-turns] a session that calls tools forever is aborted once i
   script("turns-1", (r) => (requests.push(r), noteEvery(r)));
   const s = scribe("turns-1");
   await task("turns-1", "the endless one", "task-tn1");
-  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   expect((await s.failures())[0]).toMatchObject({ type: "agent.exhausted", payload: { session, key: "task-tn1", budget: "turns" } });
   expect(row).toMatchObject({ exhausted: "turns", result: null });
   expect(await jobRow("turns-1", "fx:agent.session:task-tn1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
   // pi stopped the session: nothing of it is left to run, and no more requests follow.
-  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 4000);
   await settle(env, system);
   expect(requests.length).toBeGreaterThanOrEqual(3);
   expect(requests.length).toBeLessThanOrEqual(4);
@@ -896,12 +900,12 @@ it("[agent-exhausted-usd] a session whose turns cost $0.40 each, with usd: 1, is
   script("usd-1", (r) => (requests.push(r), noteEvery(r, { input: 100, output: 10, costUsd: 0.4 })));
   const s = scribe("usd-1");
   await task("usd-1", "the costly one", "task-u1");
-  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const [exhausted] = (await s.failures()) as unknown as Exhausted[];
   expect(exhausted).toMatchObject({ type: "agent.exhausted", payload: { session, key: "task-u1", budget: "usd" } });
-  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 4000);
   await settle(env, system);
   // Three requests reach $1.20; a fourth may have been in flight when the abort landed.
   expect(requests.length).toBeGreaterThanOrEqual(3);
@@ -928,20 +932,21 @@ it("[agent-exhausted-wallclock] a session past its wallClock is exhausted while 
   const s = scribe("wall-1");
   const started = Date.now();
   await task("wall-1", "the slow one", "task-w1");
-  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 4000);
   // Its wallClock, not the job's 30s probe period, ended it.
   expect(Date.now() - started).toBeLessThan(30_000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   expect(await s.failures()).toEqual([{ type: "agent.exhausted", payload: { session, key: "task-w1", budget: "wallClock" } }]);
   expect(await jobRow("wall-1", "fx:agent.session:task-w1")).toMatchObject({ status: "failed", lastError: "exhausted:wallClock" });
-  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 4000);
   expect(await s.wait("task-w1", session)).toMatchObject({ status: "unanswered" });
   turn.open();
   await settle(env, system);
   expect(await s.done()).toEqual([]);
 });
 
+// see [crash-loop-parked]
 it("[agent-exhausted-after-restart] the turns budget reached while the instance restarts is enforced from its start: at most one request past the limit, and agent.exhausted once", async () => {
   overrideBudget("Scribe", { turns: 3 });
   const cut = gate();
@@ -977,7 +982,7 @@ it("[agent-exhausted-after-restart] the turns budget reached while the instance 
   expect(watchedAtResume).toEqual(["task-tr1"]);
   expect(await jobRow("turns-restart-1", "fx:agent.session:task-tr1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
   expect(await s.watched()).toEqual([]);
-});
+}, 20_000);
 
 it("[agent-stop-reports-usage] a session stopped mid-run settles with what it spent, though no look had reported it", async () => {
   const turn = gate();
@@ -993,7 +998,7 @@ it("[agent-stop-reports-usage] a session stopped mid-run settles with what it sp
   await eventually(async () => expect(await jobRow("stop-usage-1", "fx:agent.session:task-su1")).toMatchObject({ status: "awaiting_job" }));
   expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-usage-1", id: "halt-su1" })).toMatchObject({ status: "handled" });
   const [row] = await s.sessions();
-  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-su1", reason: "stopped", usage: { inputTokens: 50, outputTokens: 5, costUsd: 0.1 } } }]), 5000);
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-su1", reason: "stopped", usage: { inputTokens: 50, outputTokens: 5, costUsd: 0.1 } } }]), 4000);
   expect(await s.job("task-su1")).toMatchObject({ settledBy: "cancel", usage: { inputTokens: 50, outputTokens: 5, costUsd: 0.1 } });
 });
 
@@ -1027,7 +1032,7 @@ it("[agent-guard-not-after-settle] a look that ends after its session's job sett
   await s.probeNow("task-gl1");
   await reached(look);
   expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "guard-late-1", id: "halt-gl1" })).toMatchObject({ status: "handled" });
-  await eventually(async () => expect((await s.failures()).map((f) => f.payload.reason)).toEqual(["stopped"]), 5000);
+  await eventually(async () => expect((await s.failures()).map((f) => f.payload.reason)).toEqual(["stopped"]), 4000);
   expect(await s.watched()).toEqual([]);
   // The look goes on with what it read before the stop: the run looked busy. It must not watch a settled session.
   look.open();
@@ -1069,7 +1074,7 @@ it("[agent-budget-watch-fails] a budget watcher pi refuses is noted and dropped,
     delete refusing.__refuseEvents;
   }
   turn.open();
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["watched"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["watched"]), 4000);
   expect(await s.watched()).toEqual([]);
 });
 
@@ -1079,7 +1084,7 @@ it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for
   script("wall-approve-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_approved", { text: "w" }) : { text: "Waiting for the approval." }));
   const s = scribe("wall-approve-1");
   await task("wall-approve-1", "the parked one", "task-wa1");
-  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
   const [row] = await s.sessions();
   const session = row!.session as string;
   const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
@@ -1090,7 +1095,7 @@ it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for
   overrideBudget("Scribe", { wallClock: "50ms" });
   await new Promise((r) => setTimeout(r, 60));
   await s.probeNow("task-wa1");
-  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.exhausted", payload: { session, key: "task-wa1", budget: "wallClock" } }]), 5000);
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.exhausted", payload: { session, key: "task-wa1", budget: "wallClock" } }]), 4000);
   expect(await effectRow("wall-approve-1", "note.approved", key)).toMatchObject({ status: "awaiting_approval" });
   // Approved later, its result reaches the actor's own handler, and the ended session only as a note.
   expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
@@ -1111,7 +1116,7 @@ it("[agent-events] a two-turn session with one tool records agent.started, two a
   script("events-1", (r) => (r.turn === 0 ? call("note_keyed", { text: "secret text" }) : finish({ summary: "noted" })));
   const s = scribe("events-1");
   await task("events-1", "the note", "task-ev1");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["noted"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["noted"]), 4000);
   await eventually(async () => expect(agentEvents(events, "task-ev1").map((e) => e.kind)).toContain("agent.ended"));
   const [row] = await s.sessions();
   const session = row!.session as string;
@@ -1137,7 +1142,7 @@ it("[agent-transcript-r2] with an R2 binding, agent.ended writes the transcript 
   script("r2-1", (r) => (r.turn === 0 ? call("note_keyed", { text: "a" }) : finish({ summary: "stored" })));
   const s = scribe("r2-1");
   await task("r2-1", "the note", "task-r2");
-  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["stored"]), 5000);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["stored"]), 4000);
   await eventually(async () => expect(agentEvents(events, "task-r2").map((e) => e.kind)).toContain("agent.ended"));
   const [row] = await s.sessions();
   const name = `transcripts/Scribe/task-r2/${row!.session}.json`;
@@ -1697,7 +1702,7 @@ it("[workspace-container-lost-at-connect] the container is destroyed while an ex
     instance.container.failStart = "no container could be started";
     return instance.container.destroy();
   });
-  await eventually(async () => expect(await builder("lost-1").done()).toEqual(["lost"]), 5000);
+  await eventually(async () => expect(await builder("lost-1").done()).toEqual(["lost"]), 4000);
   const exec = lastResult(finals[0]!)!;
   expect(exec).toMatchObject({ toolName: "exec", isError: true });
   expect(resultText(exec)).toMatch(/interrupted/);
