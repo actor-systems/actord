@@ -260,7 +260,7 @@ function doctor(cwd, env = process.env) {
       id: "node",
       status: "error",
       message: `Node.js ${process.versions.node} is older than 22.18, which loads system.ts natively`,
-      fix: "Install Node.js 22.18 or later (24 LTS recommended)."
+      fix: "Install Node.js 22.19 or later, the floor @actord/toolkit declares (24 LTS recommended)."
     }
   );
   const source = env.ACTORD_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORD_LAUNCHER === "project-pin" ? "project pin" : "direct";
