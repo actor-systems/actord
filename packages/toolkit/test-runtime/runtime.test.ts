@@ -4,6 +4,7 @@ import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
 import { captureEvents, eventually, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { DurableObjectSqliteDatabase } from "@earendil-works/chord/sqlite/cloudflare";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
@@ -154,6 +155,57 @@ it("[request-effect-beside-handler] a requestEffect made beside a handler, while
   // Only the request's own result: the failed delivery recorded nothing.
   expect(await probe("rq-wait").outcomes()).toEqual([{ key: "rq", status: "confirmed", error: null }]);
 });
+
+for (const yields of [false, true]) {
+  it(`[beside-transaction-nested] a transaction started beside an open handler transaction, from outside it (as pi's storage starts one), ${yields ? "runs inside it once the handler yields to the event loop, and the handler's throw rolls its write back" : "waits while the handler awaits only microtasks, and survives the handler's throw"}`, async () => {
+    const gate = globalThis as { __probeGate?: unknown };
+    const name = `nest-${yields ? "yields" : "microtasks"}`;
+    try {
+      const result = await runInDurableObject(probe(name), async (instance: { actor: { receive(e: unknown): Promise<{ status: string }> } }, state) => {
+        state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
+        const db = new DurableObjectSqliteDatabase(state.storage);
+        const log: string[] = [];
+        // Registered here, outside any transaction: the write starts in this context, as pi's run starts its own.
+        let start!: () => void;
+        let ran!: () => void;
+        const running = new Promise<void>((r) => (ran = r));
+        const written = new Promise<void>((r) => (start = r)).then(() =>
+          db
+            .transaction(async (t) => {
+              log.push("beside runs");
+              await t.run("INSERT INTO beside (v) VALUES ('pi')");
+              ran();
+            })
+            .then(() => log.push("beside committed")),
+        );
+        // The slow probe.outcome handler awaits this inside its transaction: it starts the write, then fails. A handler
+        // that yields waits for the write to run (or 2 s), as one awaiting I/O would; one that doesn't waits 500 microtasks.
+        gate.__probeGate = {
+          then: (_resolve: () => void, reject: (err: Error) => void) => {
+            start();
+            const waited = yields ? Promise.race([running, new Promise((r) => setTimeout(r, 2_000))]) : (async () => { for (let i = 0; i < 500; i++) await Promise.resolve(); })();
+            void waited.then(() => {
+              log.push("handler throws");
+              reject(new Error("the handler failed"));
+            });
+          },
+        };
+        const receipt = await instance.actor.receive({ v: 1, id: `${name}-1`, type: "probe.outcome", version: 1, from: `Probe:${name}`, to: `Probe:${name}`, correlationId: `${name}-1`, causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-nest", status: "confirmed" } });
+        await written;
+        return { receipt: receipt.status, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
+      });
+      expect(result.receipt).toBe("failed");
+      if (yields) {
+        // Nested: it ran before the handler threw, its own commit resolved, and the handler's rollback took its row.
+        expect(result).toMatchObject({ log: ["beside runs", "handler throws", "beside committed"], rows: [] });
+      } else {
+        expect(result).toMatchObject({ log: ["handler throws", "beside runs", "beside committed"], rows: ["pi"] });
+      }
+    } finally {
+      delete gate.__probeGate;
+    }
+  });
+}
 
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
   for (const [key, effect] of [["orph-plain", "gateway.plain"], ["orph-keyed", "gateway.keyed"]] as const) {
