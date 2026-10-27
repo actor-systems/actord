@@ -7,6 +7,11 @@ Commit `.claude/settings.json` with `deny` rules for deployment, secrets, remote
 publishing, tag pushes and force pushes, plus `ask` rules for plain `git push`, PR/issue creation and
 `claude plugin eval` (which spends model usage).
 
+*Amended 2026-10-27:* at the owner's request, plain `git push`, `gh pr create` and `gh issue create` no
+longer ask. An `ask` rule prompts even in `bypassPermissions` mode, so a session the owner had already put
+in bypass mode stopped at each one. Force, tag, delete and mirror pushes stay denied. `claude plugin eval`
+still asks.
+
 ## Verified platform behavior (Claude Code 2.1.310, docs read 2026-10-24)
 - Deny rules block in every permission mode, including `bypassPermissions` (permission-modes doc).
 - Bash rules match command text; deny rules apply to every subcommand of a compound command and match
