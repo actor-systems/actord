@@ -1,6 +1,9 @@
 // Git from the Durable Object's side, with Computer's git client. The token is minted by the caller and handed to the
 // git client as an Authorization header for one call; it never reaches the container, a row, an event or an error.
+// Where the header goes is the app's choice, never the workspace's: the agent can write .git/config, and isomorphic-git
+// takes a missing `url` from `remote.<name>.url` (or `pushurl`) and a missing `corsProxy` from `http.corsProxy`.
 import type { Workspace } from "@cloudflare/computer";
+import type { GitPushOptions } from "@cloudflare/computer/git";
 import { type EffectAdapter, EffectRejected } from "../runtime/index.ts";
 
 /** The forms a token can take in anything that quotes the request: raw, as Bearer, and as Basic. */
@@ -21,11 +24,25 @@ async function scrubbed<T>(token: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** Clone in full (a branch that will be pushed must not be shallow) on the Durable Object side; the token never reaches the container. */
+/** `url` if it is an https URL with no credentials in it; otherwise a throw, since a header sent there could leave in clear. */
+function httpsUrl(url: string, what: string): string {
+  let parsed: URL | undefined;
+  try {
+    parsed = new URL(url);
+  } catch {}
+  if (parsed?.protocol !== "https:" || parsed.username || parsed.password) throw new Error(`actord: ${what} must be an https URL with no credentials in it`);
+  return url;
+}
+
+/**
+ * Clone in full (a branch that will be pushed must not be shallow) on the Durable Object side; the token never reaches
+ * the container. `corsProxy: ""` keeps a proxy in an existing .git/config from receiving the request.
+ */
 export async function gitClone(workspace: Workspace, options: { url: string; dir: string; ref?: string; token?: () => Promise<string> }): Promise<void> {
+  const url = httpsUrl(options.url, "the clone URL");
   const token = options.token ? await options.token() : undefined;
   await scrubbed(token ?? "", () =>
-    workspace.git.clone({ url: options.url, dir: options.dir, ref: options.ref, singleBranch: true, headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+    workspace.git.clone({ url, dir: options.dir, ref: options.ref, singleBranch: true, corsProxy: "", headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
   );
 }
 
@@ -49,25 +66,33 @@ function isAuthFailure(failure: unknown): boolean {
 }
 
 /**
- * An effect adapter that pushes `input.branch` from `dir`; declare it `idempotency: "key"` (pushing the same commit again is harmless).
+ * An effect adapter that pushes `input.branch` from `dir` to `url`, the repository's https URL, which the app supplies
+ * and the workspace never does; declare it `idempotency: "key"` (pushing the same commit again is harmless).
  * It tries Bearer first and Basic (`x-access-token`, as GitHub Actions does) only if that push fails to authenticate,
  * since GitHub's acceptance of Bearer on the git endpoint is unconfirmed until spike 5 runs. Any other failure
  * (non-fast-forward, network) surfaces as itself.
+ *
+ * Computer 0.8.0's push drops `corsProxy`, so isomorphic-git falls back to the repo's `http.corsProxy`: a push from a
+ * repo whose config names one is refused before the token is minted. `corsProxy: ""` is passed as well, so a client
+ * that forwards it closes the gap between that check and the push's own read of the config.
  */
-export function gitPushEffect(options: { workspace: () => Workspace; dir: string; remote?: string; token: () => Promise<string>; allow?: (branch: string) => boolean }): EffectAdapter<{ branch: string }, { branch: string; refs: unknown }> {
+export function gitPushEffect(options: { workspace: () => Workspace; dir: string; url: string; token: () => Promise<string>; allow?: (branch: string) => boolean }): EffectAdapter<{ branch: string }, { branch: string; refs: unknown }> {
+  const url = httpsUrl(options.url, "gitPushEffect's url");
   const allow = options.allow ?? factoryBranch;
   return {
     async run({ branch }, { signal }) {
       if (typeof branch !== "string" || !allow(branch)) throw new EffectRejected("may push only factory/ branches");
+      const git = options.workspace().git;
+      if (await git.configGet({ dir: options.dir, path: "http.corsProxy" })) throw new EffectRejected("the repo's .git/config sets http.corsProxy; refusing to push through it");
       const token = await options.token();
       const scrub = scrubber(token);
-      const git = options.workspace().git;
       let failure = "push was refused";
       for (const authorization of [`Bearer ${token}`, `Basic ${btoa(`x-access-token:${token}`)}`]) {
         signal.throwIfAborted();
         let cause: unknown;
         try {
-          const result = await git.push({ dir: options.dir, remote: options.remote ?? "origin", ref: branch, remoteRef: `refs/heads/${branch}`, headers: { Authorization: authorization } });
+          const push: GitPushOptions & { corsProxy: string } = { dir: options.dir, url, ref: branch, remoteRef: `refs/heads/${branch}`, corsProxy: "", headers: { Authorization: authorization } };
+          const result = await git.push(push);
           if (result.ok) return { branch, refs: JSON.parse(scrub(JSON.stringify(result.refs ?? {}))) };
           cause = result.error ?? failure;
         } catch (e) {

@@ -31,7 +31,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { type DurableObjectStorageLike, Workspace, WorkspaceProxy, type WorkspaceRuntimeExecHandle, type WorkspaceRuntimeResult } from "@cloudflare/computer";
 import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
-import { createGitClient } from "@cloudflare/computer/git";
+import { createGitClient, type GitPushOptions } from "@cloudflare/computer/git";
 import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -48,6 +48,8 @@ export { WorkspaceProxy };
 type SpikeEnv = Env & { SPIKE_TOKEN?: string; GITHUB_APP_ID?: string; GITHUB_APP_INSTALLATION_ID?: string; GITHUB_APP_PRIVATE_KEY?: string };
 
 const REPOSITORY = "actor-systems/actord";
+/** Where the clone comes from and the push goes, always: never `origin` from the clone's .git/config, which the agent can write. */
+const REPOSITORY_URL = `https://github.com/${REPOSITORY}`;
 const REPO = "/workspace/actord";
 const BACKEND_ID = "container";
 const MODEL_ID = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
@@ -372,7 +374,8 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     const phases: Record<string, { loaded: number; total?: number }> = {};
     const started = Date.now();
     // Full history: no depth, so the clone can be pushed from (spike 5).
-    await this.workspace.git.clone({ url: `https://github.com/${REPOSITORY}`, dir: REPO, onProgress: (e) => void (phases[e.phase] = { loaded: e.loaded, total: e.total }) });
+    // corsProxy "": isomorphic-git otherwise takes the proxy from http.corsProxy in the repo's config.
+    await this.workspace.git.clone({ url: REPOSITORY_URL, dir: REPO, corsProxy: "", onProgress: (e) => void (phases[e.phase] = { loaded: e.loaded, total: e.total }) });
     const cloneMs = Date.now() - started;
     const [head] = await this.workspace.git.log({ dir: REPO, depth: 1 });
     const files = await this.workspace.fs.find(REPO, "**/*", { exclude: [".git/**"] });
@@ -455,6 +458,11 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     const { GITHUB_APP_ID: appId, GITHUB_APP_INSTALLATION_ID: installationId, GITHUB_APP_PRIVATE_KEY: key } = this.env;
     if (!appId || !installationId || !key) throw new Error("set GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY first");
     if (!(await this.#cloned())) throw new Error("no clone yet: POST /clone first");
+    // The agent can write .git/config (/long gives it exec over this clone). The push below pins its URL, but Computer
+    // 0.8.0's push drops corsProxy, so isomorphic-git would send the header through a configured http.corsProxy.
+    const gitConfig = await this.workspace.fs.readFile(`${REPO}/.git/config`, "utf8").catch((err: unknown) => `unreadable: ${errorOf(err).message}`);
+    const proxy = await this.workspace.git.configGet({ dir: REPO, path: "http.corsProxy" });
+    if (proxy) return { refused: "the clone's .git/config sets http.corsProxy; not minting a token", gitConfig };
     // Start or adopt the container before minting, so the token isn't waiting on a boot, and the search below has one.
     const container = await this.#connect();
     const { token, grant } = await installationToken(await appJwt(appId, key), installationId, REPOSITORY.split("/")[1]!);
@@ -471,7 +479,9 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       const attempts: Array<{ scheme: string; ok: boolean; error: string | null; refs?: unknown }> = [];
       for (const [scheme, authorization] of [["bearer", `Bearer ${token}`], ["basic", `Basic ${basic}`]] as const) {
         try {
-          const r = await git.push({ dir: REPO, remote: "origin", ref: BRANCH, remoteRef: `refs/heads/${BRANCH}`, force: true, headers: { Authorization: authorization } });
+          // The URL is pinned here, never read from .git/config's remote; corsProxy "" for a client that forwards it.
+          const options: GitPushOptions & { corsProxy: string } = { dir: REPO, url: REPOSITORY_URL, ref: BRANCH, remoteRef: `refs/heads/${BRANCH}`, force: true, corsProxy: "", headers: { Authorization: authorization } };
+          const r = await git.push(options);
           attempts.push({ scheme, ok: r.ok, error: r.error === null ? null : scrub(r.error), refs: JSON.parse(scrub(JSON.stringify(r.refs))) });
           if (r.ok) break;
         } catch (err) {
@@ -481,7 +491,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       const remoteHead = await branchHead(token, REPOSITORY, BRANCH);
       // A failed search must not lose what is already known about the push.
       const search = await this.#searchForToken(job, token).catch((err: unknown) => ({ error: scrub(errorOf(err).message) }));
-      return { container, grant, commit: oid, attempts, landed: remoteHead === oid, remoteHead, search };
+      return { container, grant, commit: oid, attempts, landed: remoteHead === oid, remoteHead, search, gitConfig };
     } finally {
       this.#event("push.token-revoked", { status: await revoke(token).catch((err: unknown) => scrub(errorOf(err).message)) });
     }
