@@ -18,6 +18,7 @@ export const system = defineSystem({
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
     "probe.storage": message({ version: 1, description: "Await every storage API a handler can reach", payload: z.object({ key: z.string() }) }),
+    "probe.io": message({ version: 1, description: "Write, await something, then use ctx again", payload: z.object({ key: z.string(), io: z.enum(["wait", "timeout", "fetch", "storage", "microtasks"]) }) }),
     "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
@@ -114,6 +115,7 @@ export const system = defineSystem({
   routes: [
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
     { from: "@ingress", message: "probe.storage", to: "Probe" },
+    { from: "@ingress", message: "probe.io", to: "Probe" },
     { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
@@ -227,6 +229,43 @@ export class Probe extends DurableObject<Env> {
         clearTimeout(sentinel);
       }
       ctx.sql.exec("INSERT INTO storage_awaits (key, crossed) VALUES (?, ?)", payload.key, JSON.stringify(crossed));
+    },
+    // Writes a row and queues a message and an effect, awaits `io`, then calls every ctx method again. What each later
+    // call did, and the ctx itself, go to globalThis.__probeIO[key] for the test to read: an abandoned handler (one
+    // whose delivery failed while it awaited) has no other way to report ([handler-io-fails-loudly], [handler-ctx-closed]).
+    "probe.io": async ({ payload: { key, io } }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:before`);
+      ctx.send("probe.outcome", { key: `${key}:sent-before`, status: "confirmed" }, { key: ctx.key });
+      ctx.effect("gateway.keyed", { key: `${key}:before` }, { key: `${key}:before` });
+      if (io === "wait") await scheduler.wait(1);
+      else if (io === "timeout") await new Promise((r) => setTimeout(r, 0));
+      else if (io === "fetch") await (globalThis as { __probeFetch?: () => Promise<unknown> }).__probeFetch!();
+      else if (io === "storage") {
+        await this.ctx.storage.put(`${key}:stored`, 1);
+        await this.ctx.storage.get(`${key}:stored`);
+      } else for (let i = 0; i < 500; i++) await Promise.resolve();
+      const tried: Record<string, string> = {};
+      const attempt = (name: string, call: () => unknown) => {
+        try {
+          call();
+          tried[name] = "ok";
+        } catch (err) {
+          tried[name] = (err as Error).message;
+        }
+      };
+      attempt("sql.exec", () => ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:after`));
+      attempt("send", () => ctx.send("probe.outcome", { key: `${key}:sent-after`, status: "confirmed" }, { key: ctx.key }));
+      attempt("effect", () => ctx.effect("gateway.keyed", { key: `${key}:after` }, { key: `${key}:after` }));
+      attempt("approve", () => ctx.approve("gateway.approval", key));
+      attempt("deny", () => ctx.deny("gateway.approval", key, "no"));
+      attempt("after", () => ctx.after(60_000, "probe.timer.fired", { key }, { key }));
+      attempt("at", () => ctx.at(Date.now() + 60_000, "probe.timer.fired", { key }, { key }));
+      attempt("cancelTimer", () => ctx.cancelTimer(key));
+      attempt("settleJob", () => ctx.settleJob("gateway.job", key, { status: "confirmed" }));
+      attempt("cancelJob", () => ctx.cancelJob("gateway.job", key));
+      attempt("note", () => ctx.note("after the await"));
+      const probeIO = ((globalThis as { __probeIO?: Record<string, unknown> }).__probeIO ??= {});
+      probeIO[key] = { tried, readable: { self: ctx.self, key: ctx.key, now: typeof ctx.now() }, ctx };
     },
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });

@@ -157,11 +157,11 @@ it("[request-effect-beside-handler] a requestEffect made beside a handler, while
 });
 
 for (const yields of [false, true]) {
-  it(`[beside-transaction-nested] a transaction started beside an open handler transaction, from outside it (as pi's storage starts one), ${yields ? "runs inside it once the handler yields to the event loop, and the handler's throw rolls its write back" : "doesn't start within the 500 microtasks the handler awaits before it throws, and commits after the rollback"}`, async () => {
+  it(`[beside-transaction-nested] a transaction started beside an open handler transaction, from outside it (as pi's storage starts one), ${yields ? "runs inside it once the handler awaits I/O, before the delivery fails for that (#80), and the rollback takes its write" : "doesn't start within the 500 microtasks the handler awaits before it throws, and commits after the rollback"}`, async () => {
     const gate = globalThis as { __probeGate?: unknown };
     const name = `nest-${yields ? "yields" : "microtasks"}`;
     try {
-      const result = await runInDurableObject(probe(name), async (instance: { actor: { receive(e: unknown): Promise<{ status: string }> } }, state) => {
+      const result = await runInDurableObject(probe(name), async (instance: { actor: { receive(e: unknown): Promise<{ status: string; error?: string }> } }, state) => {
         state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
         const db = new DurableObjectSqliteDatabase(state.storage);
         const log: string[] = [];
@@ -179,27 +179,31 @@ for (const yields of [false, true]) {
             .then(() => log.push("beside committed")),
         );
         // The slow probe.outcome handler awaits this inside its transaction: it starts the write, then fails. A handler
-        // that yields waits for the write to run (or 2 s), as one awaiting I/O would; one that doesn't waits 500 microtasks.
+        // that yields awaits I/O (scheduler.wait(1)) and then the write (or 2 s); one that doesn't waits 500 microtasks.
+        let thrown!: () => void;
+        const handlerDone = new Promise<void>((r) => (thrown = r));
         gate.__probeGate = {
           then: (_resolve: () => void, reject: (err: Error) => void) => {
             start();
-            const waited = yields ? Promise.race([running, new Promise((r) => setTimeout(r, 2_000))]) : (async () => { for (let i = 0; i < 500; i++) await Promise.resolve(); })();
+            const waited = yields ? scheduler.wait(1).then(() => Promise.race([running, new Promise((r) => setTimeout(r, 2_000))])) : (async () => { for (let i = 0; i < 500; i++) await Promise.resolve(); })();
             void waited.then(() => {
               log.push("handler throws");
               reject(new Error("the handler failed"));
+              thrown();
             });
           },
         };
         const receipt = await instance.actor.receive({ v: 1, id: `${name}-1`, type: "probe.outcome", version: 1, from: `Probe:${name}`, to: `Probe:${name}`, correlationId: `${name}-1`, causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-nest", status: "confirmed" } });
         await written;
-        return { receipt: receipt.status, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
+        await handlerDone;
+        return { receipt, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
       });
-      expect(result.receipt).toBe("failed");
       if (yields) {
-        // Nested: it ran before the handler threw, its own commit resolved, and the handler's rollback took its row.
-        expect(result).toMatchObject({ log: ["beside runs", "handler throws", "beside committed"], rows: [] });
+        // The delivery fails at the first event-loop turn, as the handler awaits. The beside write had already run nested
+        // ([sentinel-ordering]): its own commit resolved, and the rollback took its row. The handler threw later, abandoned.
+        expect(result).toMatchObject({ receipt: { status: "failed", error: "Probe.probe.outcome: handlers may not await I/O; use ctx.effect" }, log: ["beside runs", "beside committed", "handler throws"], rows: [] });
       } else {
-        expect(result).toMatchObject({ log: ["handler throws", "beside runs", "beside committed"], rows: ["pi"] });
+        expect(result).toMatchObject({ receipt: { status: "failed", error: "the handler failed" }, log: ["handler throws", "beside runs", "beside committed"], rows: ["pi"] });
       }
     } finally {
       delete gate.__probeGate;
@@ -248,13 +252,13 @@ it("[storage-await-no-macrotask] a handler's awaits on Durable Object storage al
 
 // A beside writer (pi's session store, say) whose transaction is requested as the handler starts, or only once an I/O
 // callback arrives after the handler started; the handler awaits I/O, as one that fetches would. A macrotask queued as
-// the handler starts marks the first event-loop turn: the sentinel #80 races the handler against.
+// the handler starts marks the first event-loop turn, where the runtime's own sentinel fails the delivery (#80).
 for (const io of ["wait", "fetch"] as const) {
   for (const beside of ["pending", "after-io"] as const) {
     const what =
       beside === "pending"
-        ? "a transaction requested beside the handler as it starts runs nested, and is told it committed, before a macrotask queued as the handler started; the handler's rollback takes its row"
-        : "a transaction that an I/O callback arriving after the handler started begins runs after a macrotask queued as the handler started";
+        ? "a transaction requested beside the handler as it starts runs nested, and is told it committed, before a macrotask queued as the handler started; the failed delivery's rollback still takes its row"
+        : "a transaction that an I/O callback arriving after the handler started begins runs after a macrotask queued as the handler started, so after the failed delivery's rollback, and commits";
     it(`[sentinel-ordering] ${what} (the handler awaits ${io === "wait" ? "scheduler.wait(1)" : "a fetch"})`, async () => {
       const gate = globalThis as { __probeGate?: unknown };
       const name = `order-${io}-${beside}`;
@@ -304,22 +308,104 @@ for (const io of ["wait", "fetch"] as const) {
           return { receipt, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
         });
         const at = (entry: string) => result.log.indexOf(entry);
-        expect(result.receipt).toMatchObject({ status: "failed", error: "the handler failed" });
+        expect(result.receipt).toMatchObject({ status: "failed", error: "Probe.probe.outcome: handlers may not await I/O; use ctx.effect" });
         if (beside === "pending") {
           expect(at("beside runs")).toBeLessThan(at("sentinel"));
           expect(at("beside committed")).toBeLessThan(at("sentinel"));
+          expect(result.rows).toEqual([]);
         } else {
           expect(at("sentinel")).toBeLessThan(at("io callback"));
           expect(at("io callback")).toBeLessThan(at("beside runs"));
+          expect(result.rows).toEqual(["pi"]);
         }
-        // Without a sentinel the handler holds its transaction open until it throws, so either way the write is lost.
-        expect(result.rows).toEqual([]);
       } finally {
         delete gate.__probeGate;
       }
     });
   }
 }
+
+const IO_REFUSED = "Probe.probe.io: handlers may not await I/O; use ctx.effect";
+const CTX_CLOSED = "Probe: this handler's delivery has ended; its ctx can't be used";
+type ProbeIO = { tried: Record<string, string>; readable: { self: string; key: string; now: string }; ctx: { send(...a: unknown[]): void; effect(...a: unknown[]): void; sql: { exec(...a: unknown[]): unknown } } };
+/** What a probe.io handler recorded after its await (src/index.ts). */
+const probeIO = (key: string) => (globalThis as { __probeIO?: Record<string, ProbeIO> }).__probeIO?.[key];
+const ioCall = (key: string, io: "wait" | "timeout" | "fetch" | "storage" | "microtasks") => ingress(env, system, "Probe", "probe.io", { key, io }, { key });
+/** What a probe.io delivery left in its instance's storage. */
+const leftBy = (key: string) =>
+  runInDurableObject(probe(key), async (_i, s) => ({
+    fired: s.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key),
+    effects: s.storage.sql.exec<{ id: string; status: string }>("SELECT id, status FROM _actors_outbox WHERE kind = 'effect' ORDER BY seq").toArray(),
+    messages: s.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM _actors_outbox WHERE kind = 'message'").one().n,
+    handled: s.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM _actors_inbox WHERE type = 'probe.io'").one().n,
+    timers: s.storage.sql.exec<{ key: string }>("SELECT key FROM _actors_timers").toArray().map((r) => r.key),
+    stored: [...(await (s.storage as unknown as { list(o: { prefix: string }): Promise<Map<string, unknown>> }).list({ prefix: `${key}:` })).keys()],
+  }));
+const NOTHING = { fired: [], effects: [], messages: 0, handled: 0, timers: [], stored: [] };
+
+for (const io of ["wait", "timeout", "fetch"] as const) {
+  it(`[handler-io-fails-loudly] a handler that awaits ${{ wait: "scheduler.wait(1)", timeout: "setTimeout(0)", fetch: "a fetch" }[io]} fails its delivery with "handlers may not await I/O", and nothing it wrote or queued commits`, async () => {
+    const events = captureEvents();
+    const key = `io-${io}`;
+    const fetched = vi.fn(() => SELF.fetch("https://probe/other").then((r) => r.text()));
+    (globalThis as { __probeFetch?: unknown }).__probeFetch = fetched;
+    onTestFinished(() => void delete (globalThis as { __probeFetch?: unknown }).__probeFetch);
+    expect(await ioCall(key, io)).toMatchObject({ status: "failed", error: IO_REFUSED });
+    expect(events.filter((e) => e.kind === "failed" && e.type === "probe.io")).toMatchObject([{ reason: IO_REFUSED }]);
+    if (io === "fetch") expect(fetched).toHaveBeenCalledTimes(1);
+    // The handler carries on once its await returns, after the rollback: it can't write through ctx any more ([handler-ctx-closed]).
+    await eventually(async () => expect(probeIO(key)).toBeDefined());
+    expect(await leftBy(key)).toEqual(NOTHING);
+    expect(events.filter((e) => e.kind === "sent" || e.kind === "effect.requested" || e.kind === "handled")).toEqual([]);
+  });
+}
+
+for (const io of ["storage", "microtasks"] as const) {
+  it(`[handler-storage-awaits-pass] a handler that awaits only ${io === "storage" ? "storage" : "microtasks (500 of them)"} isn't caught: it uses ctx after the await and everything commits`, async () => {
+    overrideEffect("gateway.keyed", { run: async () => "ran" });
+    const key = `pass-${io}`;
+    expect(await ioCall(key, io)).toMatchObject({ status: "handled" });
+    expect(probeIO(key)?.tried).toEqual({ "sql.exec": "ok", send: "ok", effect: "ok", approve: "ok", deny: "ok", after: "ok", at: "ok", cancelTimer: "ok", settleJob: "ok", cancelJob: "ok", note: "ok" });
+    await settle(env, system);
+    expect(await leftBy(key)).toMatchObject({
+      fired: [`${key}:before`, `${key}:after`],
+      effects: [
+        { id: `fx:gateway.keyed:${key}:before`, status: "confirmed" },
+        { id: `fx:gateway.keyed:${key}:after`, status: "confirmed" },
+      ],
+      handled: 1,
+      timers: [], // set, replaced, then cancelled after the await
+      stored: io === "storage" ? [`${key}:stored`] : [],
+    });
+    // The messages it sent before and after the await were delivered, and its effects' results came back.
+    expect((await probe(key).outcomes()).map((o) => o.key)).toEqual([`${key}:after`, `${key}:before`, `${key}:sent-after`, `${key}:sent-before`]);
+  });
+}
+
+it("[handler-ctx-closed] once its delivery has ended, a handler's ctx refuses every call, and nothing it asks for is sent: an abandoned handler's, and a committed one's kept past it", async () => {
+  const events = captureEvents();
+  // Abandoned: the delivery failed while the handler awaited; it resumes after the rollback.
+  expect(await ioCall("closed-io", "wait")).toMatchObject({ status: "failed", error: IO_REFUSED });
+  await eventually(async () => expect(probeIO("closed-io")).toBeDefined());
+  const abandoned = probeIO("closed-io")!;
+  expect(abandoned.tried).toEqual({ "sql.exec": CTX_CLOSED, send: CTX_CLOSED, effect: CTX_CLOSED, approve: CTX_CLOSED, deny: CTX_CLOSED, after: CTX_CLOSED, at: CTX_CLOSED, cancelTimer: CTX_CLOSED, settleJob: CTX_CLOSED, cancelJob: CTX_CLOSED, note: CTX_CLOSED });
+  // Only what the handler is, not what it does, stays readable.
+  expect(abandoned.readable).toEqual({ self: "Probe:closed-io", key: "closed-io", now: "number" });
+  await settle(env, system);
+  expect(await leftBy("closed-io")).toEqual(NOTHING);
+  // Committed: a ctx kept past its handler's delivery refuses too, and its calls queue nothing.
+  overrideEffect("gateway.keyed", { run: async () => "ran" });
+  expect(await ioCall("closed-kept", "storage")).toMatchObject({ status: "handled" });
+  await settle(env, system);
+  const before = await leftBy("closed-kept");
+  const kept = probeIO("closed-kept")!.ctx;
+  expect(() => kept.send("probe.outcome", { key: "late", status: "confirmed" }, { key: "closed-kept" })).toThrow(CTX_CLOSED);
+  expect(() => kept.effect("gateway.keyed", { key: "late" }, { key: "late" })).toThrow(CTX_CLOSED);
+  expect(() => kept.sql.exec("INSERT INTO fired (key) VALUES ('late')")).toThrow(CTX_CLOSED);
+  await settle(env, system);
+  expect(await leftBy("closed-kept")).toEqual(before);
+  expect(events.filter((e) => (e.kind === "sent" || e.kind === "effect.requested") && JSON.stringify(e).includes("late"))).toEqual([]);
+});
 
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
   for (const [key, effect] of [["orph-plain", "gateway.plain"], ["orph-keyed", "gateway.keyed"]] as const) {
