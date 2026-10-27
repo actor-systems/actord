@@ -11,6 +11,13 @@
 // - The `finish` tool, whose parameters are the `returns` message's schema, records the session's result and asks
 //   for a look now. The job's probe settles it: confirmed with the result; failed once pi has no work left for the
 //   session and no tool effect of it awaits approval; failed "exhausted:<budget>" once a budget ran out.
+// - Budgets (budget.ts): a watcher of the session's events marks it exhausted once its turns or cost reach the actor's
+//   `turns` or `usd`, aborts it, and asks for a look; a timer asks for one at its `wallClock`, counted from the start
+//   message, waits for a person included. Each look reads turns and cost again from what pi recorded, checks all
+//   three, and reports what the session spent since the last (EffectUsage), so the job's events and agent.* carry it.
+//   The watcher and the timer are in memory only: a look re-arms them after a restart.
+// - A session whose job settles in doubt (its deadline passed, or a cancel wasn't confirmed) is aborted after the
+//   settlement commits (agent.session.abort), so pi doesn't keep spending on a job actord has given up on.
 // - The job's result message, agent.session.settled, becomes the `returns` message, agent.exhausted or agent.failed,
 //   sent to the actor itself. A session a later start replaced settles with a note only, and so does its finish.
 // - Each session keeps the instructions it started with, so a deploy that changes the instructions reaches new
@@ -33,6 +40,7 @@ import {
   type ActorHost,
   type ActorRuntime,
   actorRuntime,
+  budgetOverride,
   type EffectAdapter,
   EffectNotDelivered,
   EffectRejected,
@@ -42,11 +50,13 @@ import {
   type Handlers,
   type InternalHandlers,
   type JobAdapter,
+  type JobProbe,
   type Message,
   type RuntimeOptions,
 } from "../runtime/index.ts";
 import { jsonSchemaOf } from "../model/manifest.ts";
 import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectName, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
+import { reachedLimit, type SessionBudget, type Spent, spentBy, watchBudget } from "./budget.ts";
 import type { scriptedModel } from "./scripted-model.ts";
 import { effectTools, shown, type ToolSession } from "./tools.ts";
 
@@ -59,6 +69,8 @@ const SESSION = "agent.session";
 const SETTLED = "agent.session.settled";
 /** The internal call effect that hands a steering message, or a tool's owed result, to a running session. */
 const STEER = "agent.session.steer";
+/** The internal call effect that aborts a session whose job settled in doubt, once that settlement has committed. */
+const ABORT = "agent.session.abort";
 /** The kind of the transcript entry a tool's owed result enters a session as. */
 const RESULT_ENTRY = "actord.effect_result";
 /** How often a waiting session is looked at, and how long past the actor's wallClock budget its job may wait. */
@@ -246,6 +258,8 @@ const SESSIONS_SCHEMA = [
 /** Job statuses of a session that is still running or about to: a steer joins it, a start replaces it. */
 const LIVE = new Set(["pending", "running", "awaiting_job"]);
 const STOPPED = "stopped";
+/** setTimeout's longest delay: a timer for a longer wallClock waits in steps. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 const NOT_STEERED = "the session has ended; not steered";
 
 const defaultRender = (type: string, payload: unknown) => `${type}\n\n${JSON.stringify(payload, null, 2)}`;
@@ -347,6 +361,66 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       .catch(() => undefined); // pi closed, or the object went away: the job's probe period is the backstop
   };
 
+  // ---- Budgets ----
+  /** The actor's session budget, with a test's override laid over it; read at each use. */
+  const budget = (): SessionBudget & { wallClockMs: number } => {
+    const o = budgetOverride(actor);
+    return { usd: o?.usd ?? spec.budget?.usd ?? Infinity, turns: o?.turns ?? spec.budget?.turns ?? Infinity, wallClockMs: o?.wallClockMs ?? wallClockMs };
+  };
+  /** The first budget a session has used up, if any: turns, then cost, then its wallClock since its start message. */
+  const overBudget = (row: SessionRow, spent: Spent): AgentExhausted["budget"] | null => {
+    const b = budget();
+    return reachedLimit(b, spent.turns, spent.usage.costUsd) ?? (now() - row.started_at >= b.wallClockMs ? "wallClock" : null);
+  };
+  /** Mark a session exhausted. The first budget recorded stays; returns it. */
+  const markExhausted = (key: string, which: string): string => {
+    sql.exec("UPDATE _actors_agent_sessions SET exhausted = ? WHERE key = ? AND exhausted IS NULL", which, key);
+    return rowByKey(key)?.exhausted ?? which;
+  };
+  /** What a session spent beyond what its job has recorded: the delta a look reports. Fields with nothing new are left out. */
+  const unreported = (key: string, total: Spent["usage"]): EffectUsage => {
+    const u = sql.exec<{ u: string | null }>("SELECT json_extract(body, '$.usage') AS u FROM _actors_outbox WHERE id = ?", `fx:${SESSION}:${key}`).toArray()[0]?.u;
+    const recorded = (u ? JSON.parse(u) : {}) as EffectUsage;
+    const delta: EffectUsage = {};
+    for (const [field, value] of Object.entries(total) as Array<[keyof Spent["usage"], number]>) {
+      const d = value - (recorded[field] ?? 0);
+      // A billionth of a dollar is float noise from summing the same costs in another order, not spending.
+      if (d > 1e-9) delta[field] = d;
+    }
+    return delta;
+  };
+  /**
+   * In memory, per running session: its budget watcher and its wallClock timer, both of which ask for a look. Armed
+   * when the start returns, and again by a look that finds none (after a restart); disarmed once the job is settled.
+   */
+  const guards = new Map<string, () => void>();
+  const look = (key: string) => runtime.probeNow(SESSION, key).catch((err) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, effectKey: key, reason: `look at a session's budget failed: ${String(err)}` }));
+  const guard = (key: string, session: string, startedAt: number) => {
+    if (guards.has(key)) return;
+    const b = budget();
+    const unwatch = watchBudget(harness, session, b, async (which) => {
+      markExhausted(key, which);
+      // The look aborts it too, so one failed abort here still ends the session.
+      await harness.abort({ session }).catch((err) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, effectKey: key, reason: `abort of an exhausted session failed: ${String(err)}` }));
+      await look(key);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Looks once the wallClock has passed by this instance's clock: a timer that fires early, or a step of a long
+    // wallClock, waits again.
+    const atWallClock = () => {
+      const left = startedAt + b.wallClockMs - now();
+      if (left > 0) timer = setTimeout(atWallClock, Math.min(left, MAX_TIMER_MS));
+      else void look(key);
+    };
+    atWallClock();
+    guards.set(key, () => {
+      guards.delete(key);
+      unwatch();
+      clearTimeout(timer);
+    });
+  };
+  const unguard = (key: string) => guards.get(key)?.();
+
   const sessionJob: JobAdapter<{ prompt: string }, SessionHandle> = {
     async start(input, { key }) {
       const row = rowByKey(key);
@@ -369,26 +443,38 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       // Stopped or replaced while this start ran, too early to cancel the job: stop the session now. Its probe then
       // settles the job: failed "stopped", or, once replaced, a note.
       if (halted(key)) await harness.abort({ session });
+      else guard(key, session, row.started_at);
       watch(session, row.operation, key);
       return { session, operation: row.operation, generation: row.generation };
     },
-    async probe(handle, { key }) {
-      // Owed results first, then pi's work, then the row. A steer closes its wait once pi has the result, so a wait
-      // found closed shows as pi's work; and finish records a result before its run ends, so a run found ended had it.
+    async probe(handle, { key, reportUsage }) {
+      // Owed results first, then pi's work and spending, then the row. A steer closes its wait once pi has the result,
+      // so a wait found closed shows as pi's work; and finish records a result before its run ends, so a run found
+      // ended had it.
       const waits = openWaits(handle.session);
       const pending = await harness.pending({ session: handle.session });
+      const spent = await spentBy(harness, handle.session);
+      reportUsage(unreported(key, spent.usage));
       const row = rowByKey(key);
-      if (row?.result != null) return { done: true, status: "confirmed", value: JSON.parse(row.result) as unknown };
-      if (row?.exhausted != null) {
-        // Out of budget: the session must stop spending, whatever it was doing.
-        await harness.abort({ session: handle.session });
-        return { done: true, status: "failed", error: `exhausted:${row.exhausted}` };
-      }
-      if (row?.stopped_at != null) return { done: true, status: "failed", error: STOPPED };
+      const settle = async (outcome: JobProbe) => {
+        unguard(key);
+        // A session that ends without its result must stop spending, whatever it was doing.
+        if (outcome.done && outcome.status === "failed") await harness.abort({ session: handle.session });
+        return outcome;
+      };
+      if (row?.result != null) return settle({ done: true, status: "confirmed", value: JSON.parse(row.result) as unknown });
+      // Out of budget, as marked by its watcher, or found now (turns and cost again from pi's records, and wallClock).
+      const over = row && (row.exhausted ?? overBudget(row, spent));
+      if (row && over) return settle({ done: true, status: "failed", error: `exhausted:${markExhausted(key, over)}` });
+      // A stop kept on the row, which may have landed after the start's last look at it: pi may still be running.
+      if (row?.stopped_at != null) return settle({ done: true, status: "failed", error: STOPPED });
       const owed = row && waits.length > 0 ? await steerSettled(row, waits) : waits;
       // A session being stopped has no work left by design: its cancel, not this look, settles it.
-      if (pending.length > 0 || owed.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") return { done: false };
-      return { done: true, status: "failed", error: "ended without returning a result" };
+      if (pending.length > 0 || owed.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") {
+        if (row) guard(key, handle.session, row.started_at); // a restart lost them
+        return { done: false };
+      }
+      return settle({ done: true, status: "failed", error: "ended without returning a result" });
     },
     async cancel(handle) {
       return harness.abort({ session: handle.session });
@@ -430,6 +516,11 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       watch(session, operationId, input.key);
       return receipt;
     },
+  };
+
+  /** Abort a session whose job settled in doubt. Aborting a session with nothing running does nothing, so a retry is safe. */
+  const abortCall: EffectAdapter<{ session: string }, boolean> = {
+    run: ({ session }) => harness.abort({ session }),
   };
 
   /** The tool the model returns its result with. Its parameters are the `returns` message's payload schema. */
@@ -579,6 +670,10 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     const row = rowByKey(key);
     const session = row?.session ?? "";
     const spent = usage ? { usage } : {};
+    unguard(key);
+    // Given up on in doubt (its deadline passed, a cancel wasn't confirmed): pi may still be running it, so stop it,
+    // after this commits. Replaced sessions too: nothing will use what they do.
+    if (status === "in_doubt" && row?.session) c.effect(ABORT as never, { session: row.session }, { key });
     // To this actor by name: its returns message may also have routes to others, and these messages are its own.
     const send = (type: string, payload: unknown) => c.send(type as never, payload as never, { to: actor as never, key: c.key });
     if (!row || latest()?.generation !== row.generation) {
@@ -604,13 +699,14 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
           description: `A Pi session of ${actor}`,
           kind: "job",
           idempotency: "key",
-          // The budget's wallClock ends a session (Task 7); the deadline is the backstop for a session nothing ended.
+          // The budget's wallClock ends a session (a look exhausts it); the deadline is the backstop for one nothing ended.
           deadline: `${(wallClockMs + DEADLINE_GRACE_MS) / 1000}s`,
           probe: { every: PROBE_EVERY },
           result: SETTLED,
           adapter: sessionJob as JobAdapter,
         },
         [STEER]: { description: `Steer a running Pi session of ${actor}`, idempotency: "key", adapter: steerCall as EffectAdapter },
+        [ABORT]: { description: `Abort a Pi session of ${actor} whose job settled in doubt`, idempotency: "key", adapter: abortCall as EffectAdapter },
       },
       messages: { [SETTLED]: { version: 1, description: "An agent session's job settled", payload: settled } },
       handlers: internalHandlers,

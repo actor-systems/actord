@@ -4,7 +4,7 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
 import { type ActorEvent, ingress } from "../src/runtime/index.ts";
-import { captureEvents, eventually, expireJobs, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
+import { captureEvents, eventually, expireJobs, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
 import type { Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
@@ -384,6 +384,31 @@ it("[agent-stop-before-start-returns] a stop that lands before the session's sta
   expect(row).toMatchObject({ result: null, stopped_at: expect.any(Number) });
 });
 
+it("[agent-stop-mark-aborts] a stop mark the probe finds on a running session stops pi too, not only the job", async () => {
+  const turn = gate();
+  gates.push(turn.open);
+  script("stop-mark-1", async () => {
+    await turn.wait();
+    return finish({ summary: "should not arrive" });
+  });
+  const s = scribe("stop-mark-1");
+  await task("stop-mark-1", "the gap", "task-sm1");
+  await reached(turn);
+  await eventually(async () => expect(await jobRow("stop-mark-1", "fx:agent.session:task-sm1")).toMatchObject({ status: "awaiting_job" }));
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  // A stop handled after the start's last look at its row, before the job was waiting, is kept on the row only.
+  await runInDurableObject(s, (_i, state) => state.storage.sql.exec("UPDATE _actors_agent_sessions SET stopped_at = ? WHERE key = ?", Date.now(), "task-sm1"));
+  await s.probeNow("task-sm1");
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-sm1", reason: "stopped" } }]));
+  // pi stopped the session: the held model call is cut off and nothing of the session is left to run.
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  expect(await s.wait("task-sm1", session)).toMatchObject({ status: "unanswered" });
+  turn.open();
+  await settle(env, system);
+  expect(await s.done()).toEqual([]);
+});
+
 it("[agent-steer-after-end] a steer that runs after its session ended is refused with a note, and starts no run", async () => {
   const events = captureEvents();
   const held = gate();
@@ -458,7 +483,11 @@ it("[agent-in-doubt] a session job past its deadline is in doubt, and the actor 
   const [row] = await scribe("doubt-1").sessions();
   await eventually(async () => expect(await scribe("doubt-1").failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-d1", reason: "deadline passed" } }]));
   expect(await jobRow("doubt-1", "fx:agent.session:task-d1")).toMatchObject({ status: "in_doubt", lastError: "deadline passed" });
-  // The model answers after the job settled: its result is a note, not a delivery.
+  // A job given up on in doubt stops its session: pi aborts the run, so the held model call is cut off.
+  await eventually(async () => expect((await scribe("doubt-1").pending()).filter((p) => p.session === row!.session)).toEqual([]), 5000);
+  expect(await jobRow("doubt-1", "fx:agent.session.abort:task-d1")).toMatchObject({ status: "confirmed" });
+  expect(await scribe("doubt-1").wait("task-d1", row!.session as string)).toMatchObject({ status: "unanswered" });
+  // Nothing the model answers now is delivered.
   turn.open();
   await settle(env, system);
   expect(await scribe("doubt-1").done()).toEqual([]);
@@ -823,4 +852,151 @@ it("[agent-tool-result-steer-in-doubt] a result steer that ends in doubt gives u
   await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session, key: "task-tsd1", reason: "ended without returning a result" } }]), 5000);
   expect(await runInDurableObject(s, (_i, state) => state.storage.sql.exec("SELECT done_at FROM _actors_agent_waits WHERE key = ?", key).one().done_at)).toEqual(expect.any(Number));
   expect(await s.done()).toEqual([]);
+});
+
+// ---- Budgets ----
+
+/**
+ * The tool the budget tests' sessions call every turn: a keyed note, so a turn's tool round always has work. Past 10
+ * requests the model gives up, so a budget that doesn't stop the session fails the test instead of running forever.
+ */
+const noteEvery = (r: ScriptedRequest, usage?: ScriptedTurn["usage"]): ScriptedTurn => (r.turn >= 10 ? { text: "No budget stopped this session." } : { ...call("note_keyed", { text: `turn ${r.turn}` }), ...(usage ? { usage } : {}) });
+type Exhausted = { type: string; payload: { session: string; key: string; budget: string; usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } } };
+
+it("[agent-exhausted-turns] a session that calls tools forever is aborted once it has used its turns: at most one request past the limit", async () => {
+  overrideBudget("Scribe", { turns: 3 });
+  const requests: ScriptedRequest[] = [];
+  script("turns-1", (r) => (requests.push(r), noteEvery(r)));
+  const s = scribe("turns-1");
+  await task("turns-1", "the endless one", "task-tn1");
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  expect((await s.failures())[0]).toMatchObject({ type: "agent.exhausted", payload: { session, key: "task-tn1", budget: "turns" } });
+  expect(row).toMatchObject({ exhausted: "turns", result: null });
+  expect(await jobRow("turns-1", "fx:agent.session:task-tn1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
+  // pi stopped the session: nothing of it is left to run, and no more requests follow.
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await settle(env, system);
+  expect(requests.length).toBeGreaterThanOrEqual(3);
+  expect(requests.length).toBeLessThanOrEqual(4);
+  expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
+  expect(await s.done()).toEqual([]);
+});
+
+it("[agent-exhausted-usd] a session whose turns cost $0.40 each, with usd: 1, is exhausted after its third request, and its usage says what it spent", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("usd-1", (r) => (requests.push(r), noteEvery(r, { input: 100, output: 10, costUsd: 0.4 })));
+  const s = scribe("usd-1");
+  await task("usd-1", "the costly one", "task-u1");
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const [exhausted] = (await s.failures()) as unknown as Exhausted[];
+  expect(exhausted).toMatchObject({ type: "agent.exhausted", payload: { session, key: "task-u1", budget: "usd" } });
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await settle(env, system);
+  // Three requests reach $1.20; a fourth may have been in flight when the abort landed.
+  expect(requests.length).toBeGreaterThanOrEqual(3);
+  expect(requests.length).toBeLessThanOrEqual(4);
+  const usage = exhausted!.payload.usage!;
+  expect(usage.costUsd).toBeGreaterThanOrEqual(1.2 - 1e-9);
+  expect(usage.costUsd).toBeLessThanOrEqual(1.6 + 1e-9);
+  // Tokens are reported beside the cost, in step with it: 100 in and 10 out per $0.40 turn.
+  expect(usage.inputTokens).toBeCloseTo((usage.costUsd! / 0.4) * 100, 6);
+  expect(usage.outputTokens).toBeCloseTo((usage.costUsd! / 0.4) * 10, 6);
+  // The job's own events carry the same usage.
+  expect(events.filter((e) => e.kind === "effect.failed" && e.effect === "agent.session" && e.effectKey === "task-u1")).toMatchObject([{ reason: "exhausted:usd", detail: { usage } }]);
+  expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
+});
+
+it("[agent-exhausted-wallclock] a session past its wallClock is exhausted while its model call is held, and pi aborts it", async () => {
+  overrideBudget("Scribe", { wallClock: "50ms" });
+  const turn = gate();
+  gates.push(turn.open);
+  script("wall-1", async () => {
+    await turn.wait();
+    return finish({ summary: "too late" });
+  });
+  const s = scribe("wall-1");
+  const started = Date.now();
+  await task("wall-1", "the slow one", "task-w1");
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  // Its wallClock, not the job's 30s probe period, ended it.
+  expect(Date.now() - started).toBeLessThan(30_000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  expect(await s.failures()).toEqual([{ type: "agent.exhausted", payload: { session, key: "task-w1", budget: "wallClock" } }]);
+  expect(await jobRow("wall-1", "fx:agent.session:task-w1")).toMatchObject({ status: "failed", lastError: "exhausted:wallClock" });
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  expect(await s.wait("task-w1", session)).toMatchObject({ status: "unanswered" });
+  turn.open();
+  await settle(env, system);
+  expect(await s.done()).toEqual([]);
+});
+
+it("[agent-exhausted-after-restart] the turns budget reached while the instance restarts is found by the probe, and agent.exhausted is delivered once", async () => {
+  overrideBudget("Scribe", { turns: 3 });
+  const cut = gate();
+  const held = gate();
+  gates.push(cut.open, held.open);
+  let calls = 0;
+  script("turns-restart-1", async (r) => {
+    calls++;
+    // The third request is cut off by the restart; pi asks again once it resumes the run. The one after that is held.
+    if (calls === 3) await cut.wait();
+    if (calls >= 5) await held.wait();
+    return noteEvery(r);
+  });
+  await task("turns-restart-1", "the restarted one", "task-tr1");
+  await reached(cut);
+  await abortAllDurableObjects();
+  await settle(env, system);
+  // The resumed run finishes its third turn and asks for a fourth, which is held. No watcher survived the restart.
+  await reached(held);
+  const s = scribe("turns-restart-1");
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  expect(await s.failures()).toEqual([]);
+  await s.probeNow("task-tr1");
+  await eventually(async () => expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]), 5000);
+  expect((await s.failures())[0]).toMatchObject({ payload: { session, key: "task-tr1", budget: "turns" } });
+  await eventually(async () => expect((await s.pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  // Another look, and the rest of the system's work, deliver nothing more.
+  await s.probeNow("task-tr1");
+  await settle(env, system);
+  expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
+  expect(calls).toBe(5);
+  expect(await jobRow("turns-restart-1", "fx:agent.session:task-tr1")).toMatchObject({ status: "failed", lastError: "exhausted:turns" });
+});
+
+it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for approval: the session is exhausted, the effect stays parked, and its later result is a note", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("wall-approve-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_approved", { text: "w" }) : { text: "Waiting for the approval." }));
+  const s = scribe("wall-approve-1");
+  await task("wall-approve-1", "the parked one", "task-wa1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("wall-approve-1", session, "task-wa1");
+  expect(await effectRow("wall-approve-1", "note.approved", key)).toMatchObject({ status: "awaiting_approval" });
+  expect(await jobRow("wall-approve-1", "fx:agent.session:task-wa1")).toMatchObject({ status: "awaiting_job" });
+  // The time spent waiting for the person counts: with a wallClock shorter than it, the next look exhausts the session.
+  overrideBudget("Scribe", { wallClock: "50ms" });
+  await new Promise((r) => setTimeout(r, 60));
+  await s.probeNow("task-wa1");
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.exhausted", payload: { session, key: "task-wa1", budget: "wallClock" } }]), 5000);
+  expect(await effectRow("wall-approve-1", "note.approved", key)).toMatchObject({ status: "awaiting_approval" });
+  // Approved later, its result reaches the actor's own handler, and the ended session only as a note.
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
+  await settle(env, system);
+  expect(notes(events, "Scribe:wall-approve-1", "stale tool result")).toMatchObject([{ detail: { key, session } }]);
+  expect((await s.outbox()).filter((r) => r.id.startsWith("fx:agent.session.steer:"))).toEqual([]);
+  expect((await s.messages(session)).filter((e) => e.kind === "actord.effect_result")).toEqual([]);
+  expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
+  expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
+  expect(requests).toHaveLength(2);
 });

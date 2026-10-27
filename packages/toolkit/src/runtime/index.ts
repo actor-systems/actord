@@ -381,7 +381,7 @@ export type FaultPoint = "before-handler" | "after-handler" | "deliver";
 interface TestSeams {
   faults: Array<{ actor: string; type?: string; at: FaultPoint; remaining: number; error: string }>;
   effects: Record<string, EffectAdapter | JobAdapter>;
-  budgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
+  budgets?: Record<string, BudgetOverride>;
   effectBudgets?: Record<string, { maxAttempts?: number; timeoutMs?: number }>;
   /** Each instance's runtime by ctx.id.toString(), so test helpers can drive it without the alarm. */
   runtimes?: Map<string, ActorRuntime>;
@@ -392,6 +392,18 @@ interface TestSeams {
 }
 function seams(): TestSeams | undefined {
   return (globalThis as { __actorsTestSeams?: TestSeams }).__actorsTestSeams;
+}
+/** A test's override of an actor's budget (overrideBudget): a model-assisted actor's bounds, an agent's (wallClock in ms). */
+export interface BudgetOverride {
+  maxAttempts?: number;
+  timeoutMs?: number;
+  usd?: number;
+  turns?: number;
+  wallClockMs?: number;
+}
+/** @internal for @actord/toolkit/agents: the test's override of an actor's budget, if one is set. */
+export function budgetOverride(actor: string): BudgetOverride | undefined {
+  return seams()?.budgets?.[actor];
 }
 function maybeFault(actor: string, type: string | undefined, at: FaultPoint): void {
   const f = seams()?.faults.find((x) => x.actor === actor && x.at === at && (!x.type || x.type === type) && x.remaining > 0);
