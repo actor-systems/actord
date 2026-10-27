@@ -84,19 +84,36 @@ A real Gmail reply through Cloudflare Email Routing approved a parked effect.
   `authenticated: "pass"`, and email can approve an effect declared `publishes: true`. Without `authserv`, every reply
   stays `"unknown"`.
 - **`gmail.com` publishes `p=none`.** So Cloudflare doesn't reject mail at SMTP time that forges the owner's Gmail
-  address. Such mail arrives with Cloudflare's `dmarc=fail`, and rule 4.2 refuses it.
-- **Still unverified:** whether Cloudflare always adds its own header, and whether it strips an inbound one claiming
-  `mx.cloudflare.net` (RFC 8601 §5). Only the topmost header is read, and Cloudflare's sat above everything inbound,
-  so a forged header could win only on a path where Cloudflare adds none. That rests on one sample.
+  address. The spike expected such mail to carry Cloudflare's `dmarc=fail`. Issue #68 found `dmarc=none` instead
+  (below).
 - **The hardening has landed** (plan 2's final fix wave, 2026-10-26), in decision 5:
   - every `dmarc` result in the trusted header must be `pass`, and there must be at least one;
   - `header.from` must equal the owner's domain;
   - the authserv-id is compared case-insensitively.
 
-  So an app may set `authserv` now. Whether the factory turns it on is the owner's decision at factory design time.
+## Forged headers (issue #68, 2026-10-27, `docs/evidence/issue-68-forged-auth.md`)
+Four messages went over SMTP straight to Cloudflare's three MX hosts. They passed neither SPF nor DKIM, and each
+carried a forged `Authentication-Results: mx.cloudflare.net; dmarc=pass …` as its first header.
+- **Cloudflare added its own header on top every time.** It didn't strip the forged one, in either spelling; the
+  forged line arrived below Cloudflare's. With five messages over three hosts, IPv4 and IPv6, signed and unsigned,
+  Cloudflare's header was always topmost. That is still not proof.
+- **Reading only the topmost header is what keeps a forged `pass` out, and it does.** Cloudflare's header said
+  `dmarc=none`, so with `authserv` set the reply is `"unknown"` (runtime test `[email-forged-auth] (em-forged-b)`).
+- **Cloudflare accepted the unauthenticated mail.** Its SPF-or-DKIM requirement applies to forwarding, not to
+  mail routed to a Worker.
+- **Cloudflare writes `dmarc=none`, not `dmarc=fail`, for an unaligned message from a `p=none` domain** such as
+  `gmail.com`. So rule 4.2 didn't fire, mail forging the owner's address passed rule 4.1, and the owner got a
+  missing-token reply. A stranger who forges the owner's address can therefore make the system email the owner.
+  Nothing is approved without a valid token. Filed as #69.
+- **The factory's choice:** the factory sets `authserv` to `mx.cloudflare.net`. The ruling on #68 made that choice
+  depend on this result: Cloudflare's header must be topmost on forged mail, with the forged one removed or below
+  it. The subject token remains the second barrier.
 
 ## Known edges
 - An auto-responder that marks its mail in none of the ways in rule 4.3 isn't detected. Its text is read like a
   person's: unless its first line is `approve` or `deny`, it gets the reply asking again. Because every answer
   now gets a `Received: …` reply, such a responder can loop with the handler until the token expires.
 - Strict envelope equality refuses an owner whose provider rewrites MAIL FROM (VERP or SRS). It fails closed.
+- Under Cloudflare, rule 4.1 doesn't stop mail that forges the owner's address on both envelope and `From`, because
+  Cloudflare reports such mail as `dmarc=none` (issue #68). The forger can make the handler reply to the owner, but
+  can't read the reply or approve anything without a valid token (#69).

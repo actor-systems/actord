@@ -135,6 +135,10 @@ Only the topmost header is read, and in this one sample Cloudflare's header sat 
 message. So a forged header could win only on a path where Cloudflare adds none. This is one sample, not proof.
 Testing it needs mail with a forged header sent over SMTP, which the spike didn't do.
 
+**Update (2026-10-27): issue #68 ran that test** (`docs/evidence/issue-68-forged-auth.md`):
+- Cloudflare added its own header on top of all four forged messages, and it didn't strip the forged ones;
+- mail forging the owner's Gmail address arrived with `dmarc=none`, not the `dmarc=fail` expected above (#69).
+
 **Hardening, deferred to plan 2's final fix wave.** This should land before the factory turns `authserv` on:
 - every `dmarc` result in the trusted header must be `pass`;
 - `header.from` must equal the owner's domain;

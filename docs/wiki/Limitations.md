@@ -23,11 +23,15 @@
     domain, and such a reply can approve an effect declared `publishes: true`.
   - **Leaving it unset:** every reply is `"unknown"`. An email can then approve mid-run tool calls but never a
     `publishes: true` effect; approve those in GitHub.
-  - **Not verified:** whether Cloudflare always adds its header, or strips an inbound one claiming `mx.cloudflare.net`.
-    One sample showed Cloudflare's header above everything inbound.
+  - **Forged headers (issue #68):** Cloudflare doesn't strip an inbound header that claims `mx.cloudflare.net`. It
+    adds its own above it, and only the topmost header is read. In five messages over three MX hosts, signed and
+    unsigned, Cloudflare's header was always topmost. That isn't proof that it always will be.
   - **The hardening has landed:** every `dmarc` result must be `pass`, `header.from` must be the owner's domain, and
-    the authserv-id compares case-insensitively. Whether the factory turns `authserv` on is the owner's call at
-    factory design time.
+    the authserv-id compares case-insensitively. The factory sets `authserv` to `mx.cloudflare.net`.
+  - **Forging the owner's address gets the owner a reply.** For an unaligned message from a `p=none` domain such as
+    `gmail.com`, Cloudflare writes `dmarc=none`, not `dmarc=fail`. So mail forging the owner's address on both
+    envelope and `From` passes the sender check and gets the handler's reply, which goes to the owner. It can't
+    approve anything without a valid token (#69).
   - **The owner's acknowledgement says what arrived, not what it did.** After a delivered answer the reply reads
     `Received: approve for <effect> (<key>). If it had already been decided or had expired, this changed nothing.`
     Whether `ctx.approve` or `ctx.deny` changed anything isn't reported back by email.
