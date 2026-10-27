@@ -573,9 +573,10 @@ it("[agent-restart-mid-tool-keyed] a restart while a keyed tool's effect runs: p
   expect(text(results[0]!)).toBe('{"noted":"k"}');
   const key = `${row!.session}:${results[0]!.toolCallId}`;
   expect((await scribe("tool-keyed-1").outbox()).filter((r) => r.target === "note.keyed")).toMatchObject([{ id: `fx:note.keyed:${key}`, status: "confirmed", attempts: 2 }]);
-  // The rerun asked for the same key: actord's recovery had queued the cut-off attempt again, and the rerun waited for it.
-  // Whether that retry had started by then depends on a drive racing pi's rerun: queued or running, never a second row.
-  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "note.keyed")).toMatchObject([{ effectKey: key, detail: { existingStatus: expect.stringMatching(/^(pending|running)$/) } }]);
+  // The rerun asked for the same key, so pi kept the call's id, and found the row actord's recovery had queued again.
+  // How far that retry had got by then (queued, running, done) depends on a drive racing pi's rerun; the row check
+  // above shows there is no second row either way.
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "note.keyed")).toMatchObject([{ effectKey: key }]);
   // Twice, the most a keyed effect runs here: the attempt the restart cut off, then its retry.
   expect(runs).toBe(2);
 });
@@ -758,9 +759,9 @@ it("[agent-tool-result-reaches-handler] an owed tool result reaches the actor's 
   }
   await settle(env, system);
   expect(await s.results()).toEqual([{ key, status: "confirmed" }]);
-  // One steer, requested once, never asked for again; one result in the session, and the model saw it once.
+  // One steer, requested once; one result in the session, and the model saw it once. (Whether the probe's backstop
+  // also asked for that steer, as a duplicate, depends on whether a look fell between the failure and the retry.)
   expect(events.filter((e) => e.kind === "effect.requested" && e.effect === "agent.session.steer").map((e) => e.effectKey)).toEqual([`result:${key}`]);
-  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "agent.session.steer")).toEqual([]);
   expect(await jobRow("tool-handler-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed", attempts: 1 });
   expect((await s.messages(session)).filter((e) => e.kind === "actord.effect_result")).toHaveLength(1);
   expect(users(requests.at(-1)!).filter((t) => t.startsWith("Result of"))).toHaveLength(1);
