@@ -621,8 +621,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         inHandlerTransaction = true;
         // Queued before the handler runs, so it fires at the next event-loop turn, ahead of any timer the handler sets. A
         // handler still unsettled then awaited I/O (a fetch, a timer), and its transaction would stay open across turns,
-        // where other writers' transactions run nested in it and its rollback takes their rows (#80). Storage and
-        // microtask awaits finish first ([storage-await-no-macrotask]).
+        // where other writers' transactions run nested in it and its rollback takes their rows (#80). Microtasks and most
+        // storage awaits (the KV calls, alarms, sql, kv, transactionSync, Lifecycle's jobs.push) keep those writers out.
+        // A nested transaction(), sync(), getCurrentBookmark() and a Request or Response body read let a waiting one in,
+        // yet finish before this fires, so it misses them ([storage-await-no-macrotask]; #82).
         const turn = sentinel(`${actorName}.${envelope.type}: handlers may not await I/O; use ctx.effect`);
         try {
           inHandlerCall = true;

@@ -200,16 +200,26 @@ export class Probe extends DurableObject<Env> {
       if (payload.after) await Promise.resolve();
       await this.actor.requestEffect("gateway.keyed", { key: payload.key }, { key: payload.key });
     },
-    // Awaits each storage API a handler can reach, through ctx or this, and records whether a macrotask queued as the
-    // handler started had run by the time that await finished ([storage-await-no-macrotask]).
+    // Awaits each storage API a handler can reach, through ctx or this, and a few other awaits. After each, it records
+    // whether a macrotask queued as the handler started has run (what #80's sentinel sees), and whether a transaction
+    // waiting beside the handler has run, nested in its transaction (the hazard itself). The test supplies the beside
+    // writers (__probeBeside): the first is requested from outside as the handler starts, and the next once one has run
+    // ([storage-await-no-macrotask]).
     "probe.storage": async ({ payload }, ctx) => {
+      const beside = (globalThis as { __probeBeside?: { request(n: number): void; ran(n: number): boolean } }).__probeBeside!;
       let turned = false;
       const sentinel = setTimeout(() => (turned = true), 0);
+      let writer = 0;
+      beside.request(writer);
       const s = this.ctx.storage;
-      const crossed: Record<string, boolean> = {};
+      const seen: Record<string, { turn: boolean; beside: boolean }> = {};
       const step = async (api: string, call: () => unknown) => {
+        // A microtask first, so a writer just requested has asked for its transaction before the await under test.
+        await Promise.resolve();
         await call();
-        crossed[api] = turned;
+        const ran = beside.ran(writer);
+        seen[api] = { turn: turned, beside: ran };
+        if (ran) beside.request(++writer);
       };
       try {
         await step("put", () => s.put("storage-probe", 1));
@@ -220,8 +230,8 @@ export class Probe extends DurableObject<Env> {
         await step("delete", () => s.delete("a"));
         await step("delete-many", () => s.delete(["b", "absent"]));
         // Lifecycle owns the alarm: put it back as it was.
-        const alarm = await s.getAlarm();
-        crossed.getAlarm = turned;
+        let alarm: number | null = null;
+        await step("getAlarm", async () => void (alarm = await s.getAlarm()));
         await step("setAlarm", () => s.setAlarm(Date.now() + 86_400_000));
         await step("deleteAlarm", () => s.deleteAlarm());
         if (alarm !== null) await s.setAlarm(alarm);
@@ -231,15 +241,21 @@ export class Probe extends DurableObject<Env> {
         await step("kv.delete", () => s.kv.delete("storage-probe-kv"));
         await step("transaction", () => s.transaction(async () => s.get("storage-probe")));
         await step("transactionSync", () => s.transactionSync(() => s.sql.exec("SELECT 1").toArray()));
+        await step("lifecycle.jobs.push", () => this.pinger.pingAt(Date.now() + 86_400_000));
         await step("getCurrentBookmark", () => s.getCurrentBookmark());
         await step("sync", () => s.sync());
-        await step("lifecycle.jobs.push", () => this.pinger.pingAt(Date.now() + 86_400_000));
+        // Not storage, but often awaited.
+        await step("Response.text", () => new Response("x").text());
+        await step("Response.json", () => new Response("{}").json());
+        await step("Request.json", () => new Request("https://probe/", { method: "POST", body: "{}" }).json());
+        await step("Blob.text", () => new Blob(["x"]).text());
+        await step("crypto.subtle.digest", () => crypto.subtle.digest("SHA-256", new TextEncoder().encode("x")));
         // Not here: deleteAll() (it would delete actord's own tables), and getBookmarkForTime() and
         // onNextSessionRestoreBookmark(), which local workerd refuses (no point-in-time recovery).
       } finally {
         clearTimeout(sentinel);
       }
-      ctx.sql.exec("INSERT INTO storage_awaits (key, crossed) VALUES (?, ?)", payload.key, JSON.stringify(crossed));
+      ctx.sql.exec("INSERT INTO storage_awaits (key, crossed) VALUES (?, ?)", payload.key, JSON.stringify(seen));
     },
     // Writes a row and queues a message and an effect, awaits `io`, then calls every ctx method again. What each later
     // call did, and the ctx itself, go to globalThis.__probeIO[key] for the test to read: an abandoned handler (one
