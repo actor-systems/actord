@@ -40,3 +40,5 @@ jobs:
           path: |
             verify-report.json
             docs/verification-report.md
+            docs/evidence/clean-checkout-verify-report.json
+            docs/evidence/clean-checkout-verification-report.md
