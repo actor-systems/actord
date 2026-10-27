@@ -1520,8 +1520,8 @@ const BASIC = `Basic ${btoa(`x-access-token:${TOKEN}`)}`;
 const REPO = "https://github.com/acme/repo.git";
 type PushCall = { dir?: string; url?: string; corsProxy?: string; remote?: string; ref?: string; remoteRef?: string; headers?: Record<string, string> };
 
-/** A workspace whose git client is a spy: pushes go to `onPush`, clones are recorded. */
-function spyWorkspace(state: DurableObjectState, onPush: (call: PushCall) => { ok: boolean; error: string | null; refs: Record<string, unknown> } = () => ({ ok: true, error: null, refs: {} })) {
+/** A workspace with a plain /repo/.git directory, whose git client is a spy: pushes go to `onPush`, clones are recorded. */
+async function spyWorkspace(state: DurableObjectState, onPush: (call: PushCall) => { ok: boolean; error: string | null; refs: Record<string, unknown> } = () => ({ ok: true, error: null, refs: {} })) {
   const pushes: PushCall[] = [];
   const clones: Array<Record<string, unknown>> = [];
   const git = {
@@ -1537,6 +1537,8 @@ function spyWorkspace(state: DurableObjectState, onPush: (call: PushCall) => { o
     },
   } as unknown as GitClient;
   const workspace = new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, git: () => git });
+  // A push refuses a repo whose .git isn't a plain directory.
+  await workspace.fs.mkdir("/repo/.git", { recursive: true });
   return { workspace, pushes, clones };
 }
 
@@ -1550,7 +1552,7 @@ function everything(state: DurableObjectState): string {
 it("[git-push-header-only] the token reaches the git client as a header, and nowhere else", async () => {
   // That no secret reaches the container is [workspace-local-only-passed-to-backend]'s evidence: git runs here, not there.
   await runInDurableObject(scribe("git-header"), async (_i, state) => {
-    const { workspace, pushes, clones } = spyWorkspace(state);
+    const { workspace, pushes, clones } = await spyWorkspace(state);
     await gitClone(workspace, { url: "https://github.com/acme/repo", dir: "/repo", token: async () => TOKEN });
     const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
     const out = await adapter.run({ branch: "factory/one" }, { key: "k1", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
@@ -1567,7 +1569,7 @@ it("[git-push-header-only] the token reaches the git client as a header, and now
 
 it("[git-push-header-only] a push is one attempt, with Basic x-access-token: GitHub's git endpoint answers Bearer with 401 (spike 5)", async () => {
   await runInDurableObject(scribe("git-basic"), async (_i, state) => {
-    const { workspace, pushes } = spyWorkspace(state);
+    const { workspace, pushes } = await spyWorkspace(state);
     await gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
     expect(pushes.map((p) => p.headers?.Authorization)).toEqual([BASIC]);
   });
@@ -1576,10 +1578,10 @@ it("[git-push-header-only] a push is one attempt, with Basic x-access-token: Git
 it("[git-push-header-only] an authentication failure surfaces as itself, with the token scrubbed, and isn't tried again", async () => {
   await runInDurableObject(scribe("git-auth-failed"), async (_i, state) => {
     const run = (w: Workspace) => gitPushEffect({ workspace: () => w, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
-    const refused = spyWorkspace(state, () => ({ ok: false, error: "HTTP Error: 401 Unauthorized", refs: {} }));
+    const refused = await spyWorkspace(state, () => ({ ok: false, error: "HTTP Error: 401 Unauthorized", refs: {} }));
     await expect(run(refused.workspace)).rejects.toThrow(/^git push failed: HTTP Error: 401 Unauthorized$/);
     expect(refused.pushes).toHaveLength(1);
-    const failing = spyWorkspace(state, (call) => {
+    const failing = await spyWorkspace(state, (call) => {
       throw Object.assign(new Error(`git push failed: HTTP Error: 401 Unauthorized for ${call.headers?.Authorization} (${TOKEN}, ${btoa(`x-access-token:${TOKEN}`)})`), { code: "EPUSHFAIL" });
     });
     const err = await run(failing.workspace).then(() => null, (e: Error) => e);
@@ -1590,7 +1592,7 @@ it("[git-push-header-only] an authentication failure surfaces as itself, with th
 
 it("[git-push-only-factory-branches] a branch outside factory/ is rejected before git is called", async () => {
   await runInDurableObject(scribe("git-main"), async (_i, state) => {
-    const { workspace, pushes } = spyWorkspace(state);
+    const { workspace, pushes } = await spyWorkspace(state);
     const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
     const err = await adapter.run({ branch: "main" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} }).then(() => null, (e: unknown) => e);
     expect(err).toBeInstanceOf(EffectRejected);
@@ -1604,7 +1606,7 @@ it("[git-push-only-factory-branches] a branch outside factory/ is rejected befor
 
 it("[git-push-only-factory-branches] the default guard refuses anything that isn't a valid refname under factory/", async () => {
   await runInDurableObject(scribe("git-refnames"), async (_i, state) => {
-    const { workspace, pushes } = spyWorkspace(state);
+    const { workspace, pushes } = await spyWorkspace(state);
     const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
     const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
     for (const bad of ["factory/../x", "factory/a..b", "factory/a@{1}", "factory/a/", "factory/a.lock", "factory/a/.hidden", "factory/a b", "factory/a~1", "factory/a^", "factory/a:b", "factory/a?", "factory/a*", "factory/a[", "factory/a\\b", "factory/a\nb", "factory//a", "factory/a.", "factory/", "-factory/x", "refs/heads/factory/x"]) {
@@ -1619,10 +1621,10 @@ it("[git-push-only-factory-branches] the default guard refuses anything that isn
 it("[git-push-header-only] any other failure surfaces as itself, after one attempt", async () => {
   await runInDurableObject(scribe("git-nonauth"), async (_i, state) => {
     const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
-    const nff = spyWorkspace(state, () => ({ ok: false, error: "non-fast-forward", refs: {} }));
+    const nff = await spyWorkspace(state, () => ({ ok: false, error: "non-fast-forward", refs: {} }));
     await expect(gitPushEffect({ workspace: () => nff.workspace, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, ctx)).rejects.toThrow("git push failed: non-fast-forward");
     expect(nff.pushes).toHaveLength(1);
-    const net = spyWorkspace(state, () => {
+    const net = await spyWorkspace(state, () => {
       throw new Error("network down");
     });
     await expect(gitPushEffect({ workspace: () => net.workspace, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, ctx)).rejects.toThrow("network down");
@@ -1638,6 +1640,7 @@ it("[git-clone-no-token] a failing clone without a token (or with an empty one) 
   await runInDurableObject(scribe("git-notoken"), async (_i, state) => {
     const boom = { async clone() { throw new Error("repository not found"); }, async configGet() { return undefined; }, async push() { return { ok: false, error: "non-fast-forward", refs: {} }; } };
     const workspace = new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, git: () => boom as unknown as GitClient });
+    await workspace.fs.mkdir("/repo/.git", { recursive: true });
     await expect(gitClone(workspace, { url: "https://github.com/acme/public", dir: "/repo" })).rejects.toThrow(/^repository not found$/);
     await expect(gitClone(workspace, { url: "https://github.com/acme/public", dir: "/repo", token: async () => "" })).rejects.toThrow(/^repository not found$/);
     const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
@@ -1650,9 +1653,10 @@ it("[git-push-header-only] run as a registered effect, a client error carrying t
   const forms = [TOKEN, `Bearer ${TOKEN}`, btoa(`x-access-token:${TOKEN}`), `Basic ${btoa(`x-access-token:${TOKEN}`)}`];
   const leaks = (text: string) => forms.filter((f) => text.includes(f));
   let calls = 0;
-  const holder = scribe("git-pipeline-state");
+  // The workspace is the pushing object's own, as an app's is: the push reads its .git from the object's storage.
+  const holder = env.PROBE.getByName("git-pipeline");
   await runInDurableObject(holder, async (_i, state) => {
-    const { workspace } = spyWorkspace(state, (call) => {
+    const { workspace } = await spyWorkspace(state, (call) => {
       calls++;
       throw new Error(`push failed: ${forms.join(" | ")} | ${call.headers?.Authorization}`);
     });
@@ -1752,7 +1756,7 @@ it("[git-push-url-pinned] a corsProxy written while the token is minted refuses 
   });
 });
 
-it("[git-push-url-pinned] a symlinked .git or .git/config refuses the push, before the token is minted and again just before the push", async () => {
+it("[git-push-url-pinned] a .git that isn't a plain directory, or a symlinked .git/config, refuses the push, before the token is minted and again just before the push", async () => {
   await runInDurableObject(scribe("git-symlinked"), async (_i, state) => {
     const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
     // The agent's exec could run `mv .git meta && ln -s meta .git`; the sync brings the link into the vfs, and a pi write
@@ -1764,7 +1768,7 @@ it("[git-push-url-pinned] a symlinked .git or .git/config refuses the push, befo
     const push = (w: Workspace, token: () => Promise<string>) => gitPushEffect({ workspace: () => w, dir: "/repo", url: REPO, token }).run({ branch: "factory/one" }, ctx);
     const first = await outbound(() => push(gitdir, async () => (minted++, TOKEN)));
     expect(first.result).toBeInstanceOf(EffectRejected);
-    expect((first.result as Error).message).toBe("/repo/.git is a symlink; refusing to push");
+    expect((first.result as Error).message).toBe("/repo/.git is not a plain directory; refusing to push");
     expect(minted).toBe(0);
     expect(first.requests).toEqual([]);
   });
@@ -1789,7 +1793,31 @@ it("[git-push-url-pinned] a symlinked .git or .git/config refuses the push, befo
     };
     const { requests, result } = await outbound(() => gitPushEffect({ workspace: () => late, dir: "/repo", url: REPO, token: async () => (await plant(), TOKEN) }).run({ branch: "factory/one" }, ctx));
     expect(result).toBeInstanceOf(EffectRejected);
-    expect((result as Error).message).toBe("/repo/.git is a symlink; refusing to push");
+    expect((result as Error).message).toBe("/repo/.git is not a plain directory; refusing to push");
+    expect(requests).toEqual([]);
+  });
+  await runInDurableObject(scribe("git-gitfile"), async (_i, state) => {
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    // Or `mv .git meta && printf 'gitdir: meta' > .git`: isomorphic-git reads a .git file's gitdir, so the push and
+    // configGet would read /repo/meta/config, which a pi write may change.
+    const gitfile = await plantedRepo(state, false);
+    await gitfile.fs.rename("/repo/.git", "/repo/meta");
+    await gitfile.fs.writeFile("/repo/.git", "gitdir: meta\n");
+    let minted = 0;
+    const { requests, result } = await outbound(() => gitPushEffect({ workspace: () => gitfile, dir: "/repo", url: REPO, token: async () => (minted++, TOKEN) }).run({ branch: "factory/one" }, ctx));
+    expect(result).toBeInstanceOf(EffectRejected);
+    expect((result as Error).message).toBe("/repo/.git is not a plain directory; refusing to push");
+    expect(minted).toBe(0);
+    expect(requests).toEqual([]);
+  });
+  await runInDurableObject(scribe("git-no-gitdir"), async (_i, state) => {
+    const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
+    // No .git at all: nothing the push could trust.
+    const none = new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, git: createGitClient() });
+    let minted = 0;
+    const { requests, result } = await outbound(() => gitPushEffect({ workspace: () => none, dir: "/repo/", url: REPO, token: async () => (minted++, TOKEN) }).run({ branch: "factory/one" }, ctx));
+    expect((result as Error).message).toBe("/repo/.git is not a plain directory; refusing to push");
+    expect(minted).toBe(0);
     expect(requests).toEqual([]);
   });
 });
@@ -1829,7 +1857,7 @@ it("[git-clone-url-pinned] the real git client clones from the app's URL with no
 
 it("[git-push-url-pinned] the push and clone URLs must be https, with no credentials in them", async () => {
   await runInDurableObject(scribe("git-url-checked"), async (_i, state) => {
-    const { workspace } = spyWorkspace(state);
+    const { workspace } = await spyWorkspace(state);
     for (const url of ["http://github.com/acme/repo.git", "https://x-access-token:t@github.com/acme/repo.git", "ssh://git@github.com/acme/repo.git", "not a url", ""]) {
       expect(() => gitPushEffect({ workspace: () => workspace, dir: "/repo", url, token: async () => TOKEN }), url).toThrow(/https/);
       await expect(gitClone(workspace, { url, dir: "/repo" }), url).rejects.toThrow(/https/);
