@@ -1264,6 +1264,12 @@ function checkAgent(project, m, a, add) {
   }
   if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
     add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, "Add backend: containerBackend({ image }) to the workspace.");
+  if (workspace?.backend && workspace.localOnly === void 0)
+    add("error", "AGENT_LOCAL_ONLY_MISSING", `${a.name} workspace`, "a workspace with a container backend must declare localOnly: without it, node_modules syncs into the Durable Object (spike 2: npm ci 7.8x slower, 405 MB in the object)", 'Add localOnly: ["**/node_modules"], or localOnly: [] to sync everything.');
+  const declared = project.system?.actors[a.name]?.harness?.workspace;
+  const timeout = declared ? declared.execTimeoutMs : workspace?.execTimeoutMs;
+  if (timeout !== void 0 && !(Number.isInteger(timeout) && timeout > 0))
+    add("error", "AGENT_EXEC_TIMEOUT_INVALID", `${a.name} execTimeoutMs ${String(timeout)}`, `execTimeoutMs ${String(timeout)} isn't a positive whole number of milliseconds, so no command could be given it as a timeout`, "Write it as a whole number of milliseconds, such as 600000 for 10 minutes.");
   for (const pattern of workspace?.localOnly ?? [])
     if (localOnlyInvalid(pattern)) add("error", "AGENT_LOCAL_ONLY_INVALID", `${a.name} localOnly ${pattern}`, `localOnly pattern "${pattern}" would be rejected by Computer: it must start with "/" or "**/", use only * and **, and avoid {}[]?\\,`, 'Write it as "/dir" or "**/*.log".');
   if (workspace?.backend) {
