@@ -72,6 +72,10 @@ cd my-app && npm install && npm test
 ```
 
 To add it to an existing Worker project: `npm install -D @actord/toolkit zod`, then `npx actord init --adopt`.
+
+The runtime is built on Cloudflare's Agents SDK. `agents` (0.30.1, pinned) is a required peer dependency, so npm
+installs it with the toolkit. With its own dependencies and required peers, that is about 170 packages (168 in
+this repository's lockfile).
 See [The actord CLI](CLI) and [The runtime and its guarantees](Runtime).
 
 ## Which agent a project is set up for

@@ -54,6 +54,10 @@ export function checkProject(project: Project): Diagnostic[] {
       add("error", "ACTOR_UNJUSTIFIED", a.name, `${a.name} lists no justification for being an actor`, "Name which of identity, state, lifecycle, isolation, scheduling, or permissions applies, or make it a function.");
     if ((a.kind === "agent" || a.kind === "model-assisted") && !a.budget)
       add("error", "ACTOR_BUDGET_MISSING", a.name, `${a.name} is ${a.kind} but declares no budget`, "Add budget: { maxAttempts, timeoutMs } so model work is bounded.");
+    // The manifest writes an absent maxTokens as null.
+    for (const [field, v] of Object.entries(a.budget ?? {}))
+      if (v !== null && (!Number.isInteger(v) || (v as number) < 1))
+        add("error", "ACTOR_BUDGET_INVALID", a.name, `${a.name} declares budget.${field} ${String(v)}, which isn't a positive whole number`, "Use a positive integer.");
     const scheduled = new Set<string>();
     for (const s of a.schedules) {
       if (s.cron !== null && !cronParses(s.cron)) add("error", "SCHEDULE_INVALID", a.name, `schedule cron "${s.cron}" isn't a valid cron expression like 0 9 * * *`);
