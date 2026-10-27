@@ -66,6 +66,8 @@ function checkAgent(project: Project, m: Manifest, a: Manifest["actors"][number]
     }
     if (!a.effects.includes(t) || !effects.has(t)) add("error", "AGENT_TOOL_UNDECLARED", `${a.name} → ${t}`, `${a.name} lists tool "${t}", which is neither workspace.* nor an effect in its effects`, `Declare ${t} under effects and list it in ${a.name}'s effects, or remove the tool.`);
     else if (effects.get(t)!.input === undefined) add("error", "AGENT_TOOL_INPUT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} but declares no input, so the agent can't be told its parameters`, "Add input: a schema of the tool's parameters.");
+    else if (effects.get(t)!.approval === "human" && effects.get(t)!.result === null)
+      add("error", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} → ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome only from the job's probe, not from a result message`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
   }
   if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
     add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, "Add backend: containerBackend({ image }) to the workspace.");

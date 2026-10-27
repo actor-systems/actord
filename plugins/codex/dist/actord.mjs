@@ -448,10 +448,28 @@ function outcomeOf(evs) {
   return "unknown";
 }
 var OUTCOME_MARK = { handled: "\u2713", duplicate: "\u2261", rejected: "\u2717", failed: "\u2717", undeliverable: "\u2717", "retry.exhausted": "\u2717", "in-flight": "\u2026", unknown: "?" };
+function agentOf(evs) {
+  const usageOf = (e) => e?.detail?.usage ?? null;
+  const ended = evs.find((e) => e.kind === "agent.ended");
+  const turns = evs.filter((e) => e.kind === "agent.turn");
+  const tools = {};
+  for (const e of evs) if (e.kind === "agent.tool") tools[String(e.detail?.tool)] = (tools[String(e.detail?.tool)] ?? 0) + 1;
+  const session = evs.find((e) => typeof e.detail?.session === "string")?.detail?.session;
+  return {
+    session: typeof session === "string" ? session : null,
+    turns: Math.max(0, ...turns.map((e) => Number(e.detail?.turn) || 0), Number(ended?.detail?.turns) || 0),
+    tools,
+    usage: usageOf(ended) ?? usageOf(turns.at(-1)),
+    outcome: typeof ended?.detail?.outcome === "string" ? ended.detail.outcome : null,
+    reason: ended?.reason ?? null,
+    transcript: typeof ended?.detail?.transcript === "string" ? ended.detail.transcript : null
+  };
+}
 function buildTrace(log, id2) {
   const byMessage = /* @__PURE__ */ new Map();
   const children = /* @__PURE__ */ new Map();
   const effectsBy = /* @__PURE__ */ new Map();
+  const agentBy = /* @__PURE__ */ new Map();
   for (const e of log.events) {
     if (e.messageId && e.kind !== "scheduled" && !(e.kind.startsWith("effect.") && !e.messageId)) {
       byMessage.set(e.messageId, [...byMessage.get(e.messageId) ?? [], e]);
@@ -460,6 +478,10 @@ function buildTrace(log, id2) {
     if (e.effect && e.effectKey && (e.kind.startsWith("effect.") || e.kind.startsWith("job."))) {
       const k = `${e.effect}:${e.effectKey}`;
       effectsBy.set(k, [...effectsBy.get(k) ?? [], e]);
+    }
+    if (e.kind.startsWith("agent.") && e.effect && e.effectKey) {
+      const k = `${e.effect}:${e.effectKey}`;
+      agentBy.set(k, [...agentBy.get(k) ?? [], e]);
     }
     if (e.kind === "retry.scheduled" && e.effect && e.effectKey) {
       const k = `${e.effect}:${e.effectKey}`;
@@ -510,6 +532,7 @@ function buildTrace(log, id2) {
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
         result: rid && !visited.has(rid) ? node(rid) : null,
+        ...agentBy.has(k) ? { agent: agentOf(agentBy.get(k)) } : {},
         ...started ? {
           job: {
             handle: started.detail?.handle ?? null,
@@ -556,6 +579,17 @@ function formatWait(ms) {
   const m = Math.floor(s / 60);
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
+function renderAgent(a, key) {
+  const tools = Object.entries(a.tools).map(([tool, n]) => `${tool} \xD7 ${n}`);
+  const parts = [
+    `${a.turns} turn${a.turns === 1 ? "" : "s"}`,
+    ...tools.length ? [tools.join(", ")] : ["no tool calls"],
+    ...a.usage ? [`${a.usage.inputTokens} in / ${a.usage.outputTokens} out \xB7 $${a.usage.costUsd.toFixed(4)}`] : [],
+    a.outcome ? `${a.outcome}${a.reason ? ` (${a.reason})` : ""}` : "still running",
+    ...a.transcript ? [`transcript ${a.transcript}`] : []
+  ];
+  return `agent.session ${key}: ${parts.join(" \xB7 ")}`;
+}
 function renderTrace(t, source) {
   if (!t.found || !t.root) {
     return `unknown: no recorded event has id ${t.target}.
@@ -592,6 +626,7 @@ coverage: ${source} (local test and dev runs only; production history isn't avai
           const waited = e.job.waitedMs !== null ? ` after ${formatWait(e.job.waitedMs)}` : "";
           lines.push(`${inner}${isLast ? "   " : "\u2502  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}${waited}` : "not settled yet"}`);
         }
+        if (e.agent) lines.push(`${inner}${isLast ? "   " : "\u2502  "}  ${renderAgent(e.agent, e.key)}`);
         if (e.result) walk(e.result, inner + (isLast ? "   " : "\u2502  "), true, false);
       }
     });
@@ -1224,6 +1259,8 @@ function checkAgent(project, m, a, add) {
     }
     if (!a.effects.includes(t) || !effects.has(t)) add("error", "AGENT_TOOL_UNDECLARED", `${a.name} \u2192 ${t}`, `${a.name} lists tool "${t}", which is neither workspace.* nor an effect in its effects`, `Declare ${t} under effects and list it in ${a.name}'s effects, or remove the tool.`);
     else if (effects.get(t).input === void 0) add("error", "AGENT_TOOL_INPUT_MISSING", `${a.name} \u2192 ${t}`, `${t} is a tool of ${a.name} but declares no input, so the agent can't be told its parameters`, "Add input: a schema of the tool's parameters.");
+    else if (effects.get(t).approval === "human" && effects.get(t).result === null)
+      add("error", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} \u2192 ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome only from the job's probe, not from a result message`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
   }
   if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
     add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, "Add backend: containerBackend({ image }) to the workspace.");

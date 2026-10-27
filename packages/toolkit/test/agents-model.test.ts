@@ -119,6 +119,13 @@ describe("agent check rules", () => {
     const noInput = { description: "Open a PR", idempotency: "key" } as EffectSpec;
     expect(codes(project(build({ effects: { "open-pr": noInput } })))).toEqual(["error:AGENT_TOOL_INPUT_MISSING"]);
   });
+  it("AGENT_TOOL_APPROVAL_RESULT_MISSING: a tool that needs a person's approval declares a result message", () => {
+    const approved = { ...tool, approval: "human" } as EffectSpec;
+    expect(codes(project(build({ effects: { "open-pr": approved } })))).toEqual(["error:AGENT_TOOL_APPROVAL_RESULT_MISSING"]);
+    expect(codes(project(build({ effects: { "open-pr": { ...approved, result: "task.done" } as EffectSpec } })))).toEqual([]);
+    // Only the actor's tools count: an effect it requests itself may go without.
+    expect(codes(project(build({ tools: ["workspace.*"], effects: { "open-pr": approved } })))).toEqual([]);
+  });
   it("AGENT_WORKSPACE_TOOLS_WITHOUT_WORKSPACE", () => {
     expect(codes(project(build({ harness: pi() })))).toEqual(["error:AGENT_WORKSPACE_TOOLS_WITHOUT_WORKSPACE"]);
   });

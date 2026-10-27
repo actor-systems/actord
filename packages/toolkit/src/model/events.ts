@@ -77,6 +77,17 @@ export function outcomeOf(evs: LoggedEvent[]): Outcome {
 
 export const OUTCOME_MARK: Record<Outcome, string> = { handled: "✓", duplicate: "≡", rejected: "✗", failed: "✗", undeliverable: "✗", "retry.exhausted": "✗", "in-flight": "…", unknown: "?" };
 
+/** An agent session as one node: what its agent.* events record. Usage is the session's latest; outcome is null while it runs. */
+export interface TraceAgent {
+  session: string | null;
+  turns: number;
+  tools: Record<string, number>;
+  usage: { inputTokens: number; outputTokens: number; costUsd: number } | null;
+  outcome: string | null;
+  reason: string | null;
+  transcript: string | null;
+}
+
 export interface TraceEffect {
   effect: string;
   key: string;
@@ -88,6 +99,8 @@ export interface TraceEffect {
   duplicateOf?: string | null;
   /** With duplicateOf: the first request's status when this one was made. */
   existingStatus?: string | null;
+  /** For an agent.session job: its session's events, summarised. */
+  agent?: TraceAgent;
   /** For a job effect that started: its handle, what settled it, and how long after starting (both null while it waits). */
   job?: { handle: unknown; settledBy: "message" | "probe" | "deadline" | "cancel" | null; waitedMs: number | null };
 }
@@ -115,10 +128,30 @@ export interface Trace {
   root: TraceNode | null;
 }
 
+/** A session's agent.* events as one summary. The latest event with usage wins; a late turn's usage is the session's final. */
+function agentOf(evs: LoggedEvent[]): TraceAgent {
+  const usageOf = (e: LoggedEvent | undefined) => (e?.detail?.usage as TraceAgent["usage"] | undefined) ?? null;
+  const ended = evs.find((e) => e.kind === "agent.ended");
+  const turns = evs.filter((e) => e.kind === "agent.turn");
+  const tools: Record<string, number> = {};
+  for (const e of evs) if (e.kind === "agent.tool") tools[String(e.detail?.tool)] = (tools[String(e.detail?.tool)] ?? 0) + 1;
+  const session = evs.find((e) => typeof e.detail?.session === "string")?.detail?.session;
+  return {
+    session: typeof session === "string" ? session : null,
+    turns: Math.max(0, ...turns.map((e) => Number(e.detail?.turn) || 0), Number(ended?.detail?.turns) || 0),
+    tools,
+    usage: usageOf(ended) ?? usageOf(turns.at(-1)),
+    outcome: typeof ended?.detail?.outcome === "string" ? ended.detail.outcome : null,
+    reason: ended?.reason ?? null,
+    transcript: typeof ended?.detail?.transcript === "string" ? ended.detail.transcript : null,
+  };
+}
+
 export function buildTrace(log: EventLog, id: string): Trace {
   const byMessage = new Map<string, LoggedEvent[]>();
   const children = new Map<string, Set<string>>();
   const effectsBy = new Map<string, LoggedEvent[]>();
+  const agentBy = new Map<string, LoggedEvent[]>();
   for (const e of log.events) {
     if (e.messageId && e.kind !== "scheduled" && !(e.kind.startsWith("effect.") && !e.messageId)) {
       byMessage.set(e.messageId, [...(byMessage.get(e.messageId) ?? []), e]);
@@ -127,6 +160,10 @@ export function buildTrace(log: EventLog, id: string): Trace {
     if (e.effect && e.effectKey && (e.kind.startsWith("effect.") || e.kind.startsWith("job."))) {
       const k = `${e.effect}:${e.effectKey}`;
       effectsBy.set(k, [...(effectsBy.get(k) ?? []), e]);
+    }
+    if (e.kind.startsWith("agent.") && e.effect && e.effectKey) {
+      const k = `${e.effect}:${e.effectKey}`;
+      agentBy.set(k, [...(agentBy.get(k) ?? []), e]);
     }
     if (e.kind === "retry.scheduled" && e.effect && e.effectKey) {
       const k = `${e.effect}:${e.effectKey}`;
@@ -182,6 +219,7 @@ export function buildTrace(log: EventLog, id: string): Trace {
         attempts: Math.max(1, ...evs2.map((e) => e.attempt ?? 1)),
         reason: last?.reason ?? null,
         result: rid && !visited.has(rid) ? node(rid) : null,
+        ...(agentBy.has(k) ? { agent: agentOf(agentBy.get(k)!) } : {}),
         ...(started
           ? {
               job: {
@@ -233,6 +271,19 @@ export function formatWait(ms: number): string {
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/** "agent.session task-1: 2 turns · note_keyed × 2 · 20 in / 6 out · $0.0020 · confirmed · transcript …" */
+function renderAgent(a: TraceAgent, key: string): string {
+  const tools = Object.entries(a.tools).map(([tool, n]) => `${tool} × ${n}`);
+  const parts = [
+    `${a.turns} turn${a.turns === 1 ? "" : "s"}`,
+    ...(tools.length ? [tools.join(", ")] : ["no tool calls"]),
+    ...(a.usage ? [`${a.usage.inputTokens} in / ${a.usage.outputTokens} out · $${a.usage.costUsd.toFixed(4)}`] : []),
+    a.outcome ? `${a.outcome}${a.reason ? ` (${a.reason})` : ""}` : "still running",
+    ...(a.transcript ? [`transcript ${a.transcript}`] : []),
+  ];
+  return `agent.session ${key}: ${parts.join(" · ")}`;
+}
+
 export function renderTrace(t: Trace, source: string): string {
   if (!t.found || !t.root) {
     return `unknown: no recorded event has id ${t.target}.\ncoverage: ${source} (local test and dev runs only; production history isn't available here).`;
@@ -268,6 +319,7 @@ export function renderTrace(t: Trace, source: string): string {
           const waited = e.job.waitedMs !== null ? ` after ${formatWait(e.job.waitedMs)}` : "";
           lines.push(`${inner}${isLast ? "   " : "│  "}  job ${JSON.stringify(e.job.handle)} ${e.job.settledBy ? `settled by ${e.job.settledBy}${waited}` : "not settled yet"}`);
         }
+        if (e.agent) lines.push(`${inner}${isLast ? "   " : "│  "}  ${renderAgent(e.agent, e.key)}`);
         if (e.result) walk(e.result, inner + (isLast ? "   " : "│  "), true, false);
       }
     });

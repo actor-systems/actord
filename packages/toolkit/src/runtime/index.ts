@@ -154,6 +154,10 @@ export type EventKind =
   | "source.ignored"
   | "source.invalid"
   | "source.failed"
+  | "agent.started"
+  | "agent.turn"
+  | "agent.tool"
+  | "agent.ended"
   | "note";
 
 /** One structured event, written as a single JSON console line (Workers Logs in production). */
@@ -176,7 +180,7 @@ export interface ActorEvent {
   detail?: Record<string, unknown>;
 }
 
-/** Kinds that the monitor and `actord events --notable` surface. */
+/** Kinds that the monitor and `actord events --notable` surface. The agent.* kinds aren't among them: a session that fails is already notable as its job's effect.failed. */
 export const NOTABLE_KINDS: readonly EventKind[] = ["rejected", "failed", "retry.exhausted", "undeliverable", "effect.in_doubt", "effect.parked", "effect.denied", "effect.failed", "source.rejected", "source.invalid", "source.failed"];
 
 // ---- Effects ----

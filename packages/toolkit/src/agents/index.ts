@@ -23,6 +23,10 @@
 // - Each session keeps the instructions it started with, so a deploy that changes the instructions reaches new
 //   sessions only. They are the session's own pi instructions (its "instructions" prompt section, a key pi reserves
 //   for them), set from its row when it starts.
+// - Events (agent.started, agent.turn, agent.tool, agent.ended) are recorded under the session job's effect and key, so
+//   `actord trace` shows a session as one node. The watcher records turns and tool calls (never a tool's arguments);
+//   agent.ended carries the outcome and what the session spent, and, given `transcripts`, names the R2 object its
+//   messages were written to. The transcript is never copied into events.
 // - The effects in the actor's `tools` are pi tools (tools.ts), each call one effect request keyed
 //   "<session>:<callId>". One that needs a person answers "waiting" at once, and the wait is recorded
 //   (_actors_agent_waits): the session's job isn't done while a result is owed to it. When the effect's result message
@@ -56,7 +60,7 @@ import {
 } from "../runtime/index.ts";
 import { jsonSchemaOf } from "../model/manifest.ts";
 import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectName, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
-import { reachedLimit, type SessionBudget, type Spent, spentBy, watchBudget } from "./budget.ts";
+import { reachedLimit, type SessionBudget, type SessionObserver, type Spent, spentBy, watchBudget } from "./budget.ts";
 import type { scriptedModel } from "./scripted-model.ts";
 import { effectTools, shown, type ToolSession } from "./tools.ts";
 
@@ -190,6 +194,11 @@ const settled: StandardSchemaV1<Settled> = {
 
 // ---- agentRuntime ----
 
+/** What the runtime needs of an R2 bucket (structurally compatible with R2Bucket). */
+export interface TranscriptBucket {
+  put(key: string, value: string, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
+}
+
 export interface AgentRuntimeOptions<S extends AnySystem = AnySystem> extends RuntimeOptions<S> {
   /** The text of the actor's `instructions` file, imported by the Worker (a wrangler Text module). */
   instructions: string;
@@ -199,6 +208,8 @@ export interface AgentRuntimeOptions<S extends AnySystem = AnySystem> extends Ru
   render?(type: string, payload: unknown): string;
   /** More pi extensions to install beside the agent's own (its `finish` tool and instructions). */
   extensions?: readonly Extension[];
+  /** Where a session's transcript is written when it ends: transcripts/<actor>/<key>/<session>.json. Without it, none is kept. */
+  transcripts?: TranscriptBucket;
 }
 
 export interface AgentRuntime extends ActorRuntime {
@@ -302,7 +313,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   const returnsSchema = returnsSpec.payload;
   const wallClockMs = spec.budget?.wallClock === undefined ? null : durationMs(spec.budget.wallClock);
   if (wallClockMs === null) throw new Error(`actord: agent actor ${actor} must declare budget.wallClock, a duration like "30m"`);
-  const { instructions, model: scripted, render = defaultRender, extensions = [], ...runtimeOptions } = options;
+  const { instructions, model: scripted, render = defaultRender, extensions = [], transcripts, ...runtimeOptions } = options;
   const now = options.now ?? (() => Date.now());
   const { ctx } = host;
   const sql = ctx.storage.sql;
@@ -405,6 +416,39 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
    */
   const guards = new Map<string, () => void>();
   const note = (key: string, reason: string) => emit({ kind: "note", at: now(), actor: self, effect: SESSION, effectKey: key, reason });
+  /** The tool each effect in `tools` is, by pi's name for it: a call of one is a request keyed "<session>:<callId>". */
+  const toolEffects = new Set((spec.tools ?? []).filter((t) => !t.startsWith("workspace.")).map((t) => t.replaceAll(".", "_")));
+  const agentEvent = (kind: "agent.started" | "agent.turn" | "agent.tool" | "agent.ended", key: string, session: string, detail: Record<string, unknown>, reason?: string) =>
+    emit({ kind, at: now(), actor: self, effect: SESSION, effectKey: key, ...(reason ? { reason } : {}), detail: { session, key, ...detail } });
+  /** The last turn recorded for each session this instance watches. */
+  const turnsSeen = new Map<string, number>();
+  const observer = (key: string, session: string): SessionObserver => ({
+    attached: (turns) => void turnsSeen.set(key, Math.max(turns, turnsSeen.get(key) ?? 0)),
+    turn: (turn, usage) => (turnsSeen.set(key, turn), agentEvent("agent.turn", key, session, { turn, usage })),
+    // The call's arguments stay out of the event: they are in the transcript, and in the effect's own record.
+    tool: (tool, callId) => agentEvent("agent.tool", key, session, { tool, callId, ...(toolEffects.has(tool) ? { effectKey: `${session}:${callId}` } : {}) }),
+  });
+  const ended = new Set<string>();
+  /** Record a session's end once: its outcome and spending, and its transcript in R2 when there is a bucket. Never throws. */
+  const recordEnd = async (key: string, session: string, outcome: string, spent: Spent | null, reason?: string) => {
+    if (ended.has(key)) return;
+    ended.add(key);
+    // A session's end settles its job and stops the watcher, which can be before pi's last turn_end reaches it: record
+    // the turns it missed, with the session's final usage.
+    if (spent && turnsSeen.has(key)) for (let turn = turnsSeen.get(key)! + 1; turn <= spent.turns; turn++) agentEvent("agent.turn", key, session, { turn, usage: spent.usage, late: true });
+    turnsSeen.delete(key);
+    let transcript: string | undefined;
+    if (transcripts) {
+      const name = `transcripts/${actor}/${key}/${session}.json`;
+      try {
+        await transcripts.put(name, JSON.stringify(await harness.messages({ session })), { httpMetadata: { contentType: "application/json" } });
+        transcript = name;
+      } catch (err) {
+        note(key, `the transcript of session ${session} couldn't be written: ${messageOf(err)}`);
+      }
+    }
+    agentEvent("agent.ended", key, session, { outcome, ...(spent ? { turns: spent.turns, usage: spent.usage } : {}), ...(transcript ? { transcript } : {}) }, reason);
+  };
   const look = (key: string) => runtime.probeNow(SESSION, key).catch((err) => note(key, `look at a session's budget failed: ${messageOf(err)}`));
   /** Whether a session's job may still spend: started or waiting, not settled or being cancelled. Read fresh. */
   const unsettled = (key: string) => ["running", "awaiting_job"].includes(jobStatus(key) ?? "");
@@ -438,6 +482,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
         note(key, `budget watcher failed: ${messageOf(err)}`);
         dispose();
       },
+      observer(key, session),
     );
     // Looks once the wallClock has passed by this instance's clock: a timer that fires early, or a step of a long
     // wallClock, waits again. Always from a timer, so a look is never asked for from inside the instance's start.
@@ -485,7 +530,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       if (!conversation) throw new EffectRejected(`pi has no session ${session}`);
       await conversation.configure({ instructions: row.instructions }, BACKGROUND_CONTEXT);
       // The operation id makes the submit idempotent: a retry is accepted: false, and nothing runs twice.
-      await harness.session(session).submit(input.prompt, { operationId: row.operation });
+      const receipt = await harness.session(session).submit(input.prompt, { operationId: row.operation });
+      // A retry of this start is accepted: false, and was recorded the first time.
+      if (receipt.accepted) agentEvent("agent.started", key, session, { generation: row.generation });
       // Stopped or replaced while this start ran, too early to cancel the job: stop the session now. Its probe then
       // settles the job: failed "stopped", or, once replaced, a note.
       if (halted(key)) await harness.abort({ session });
@@ -511,6 +558,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
           final = await spentBy(harness, handle.session);
         }
         reportUsage(unreported(key, final.usage));
+        await recordEnd(key, handle.session, outcome.done && outcome.status === "confirmed" ? "confirmed" : "failed", final, outcome.done && outcome.status === "failed" ? outcome.error : undefined);
         return outcome;
       };
       if (row?.result != null) return settle({ done: true, status: "confirmed", value: JSON.parse(row.result) as unknown });
@@ -533,7 +581,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       const aborted = await harness.abort({ session: handle.session });
       // No look reports what the session spent since the last one, the request the abort cut off included: this does.
       try {
-        reportUsage(unreported(key, (await spentBy(harness, handle.session)).usage));
+        const spent = await spentBy(harness, handle.session);
+        reportUsage(unreported(key, spent.usage));
+        await recordEnd(key, handle.session, "cancelled", spent);
       } catch (err) {
         note(key, `what a stopped session spent couldn't be read: ${messageOf(err)}`);
       }

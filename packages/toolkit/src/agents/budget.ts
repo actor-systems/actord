@@ -74,12 +74,24 @@ async function turnsAt(pi: Harness, session: string, snapshot: SnapshotEvent): P
   return newest === undefined ? 0 : turnsOf(pi, session, newest);
 }
 
+/** What a watcher reports of a session as it runs, besides enforcing its budget. */
+export interface SessionObserver {
+  /** The watch attached, the session having had `turns` turns already. */
+  attached(turns: number): void;
+  /** A turn ended: its number (from 1) and the session's usage so far. */
+  turn(turn: number, usage: Spent["usage"]): void;
+  /** The model's call of a tool began: the tool's name and the call's id. Nested calls aren't reported. */
+  tool(tool: string, callId: string): void;
+}
+
 /**
- * Watch a session's events; abort it from outside the run once turns or cost reach the budget. Returns a stop
+ * Watch a session's events; abort it from outside the run once turns or cost reach the budget, and report its turns
+ * and tool calls to `observe`. Returns a stop
  * function, whose `ready` resolves once the watcher counts (or has failed, or was stopped first).
  * - Turns are counted from the transcript as the watch attaches, then from turn_end events. Cost is the session's
  *   UsageDoc, which the attach's snapshot and each usage_changed carry.
  * - `harness` may be the pi a harness factory has just opened, so a session is watched before pi resumes its run.
+ * - The watcher attaches whenever there is a finite limit or an `observe`.
  * - `onError` hears of a watch that couldn't attach or ended on its own, and of an `onExhausted` that failed. The
  *   watcher is gone then, and nothing enforces the budget early until the session is watched again.
  */
@@ -89,6 +101,7 @@ export function watchBudget(
   budget: { usd: number; turns: number },
   onExhausted: (which: "usd" | "turns") => Promise<void>,
   onError: (err: unknown) => void = () => undefined,
+  observe?: SessionObserver,
 ): (() => void) & { readonly ready: Promise<void> } {
   let stopped = false;
   let stream: AgentEventStream | undefined;
@@ -96,7 +109,7 @@ export function watchBudget(
     stopped = true;
     void stream?.stop();
   };
-  if (!Number.isFinite(budget.usd) && !Number.isFinite(budget.turns)) return Object.assign(stop, { ready: Promise.resolve() });
+  if (!observe && !Number.isFinite(budget.usd) && !Number.isFinite(budget.turns)) return Object.assign(stop, { ready: Promise.resolve() });
   const fail = (err: unknown) => {
     if (stopped) return;
     stop();
@@ -110,23 +123,28 @@ export function watchBudget(
     void events.closed.then((end) => fail(new Error(`the watch ended: ${end.reason}`)));
     // Batches wait for start(), so none is missed or counted twice while the transcript is read.
     let turns = await turnsAt(pi, session, events.snapshot);
-    let costUsd = usageOf(events.snapshot.usage).costUsd;
+    let usage = usageOf(events.snapshot.usage);
     const check = () => {
-      const which = stopped ? null : reachedLimit(budget, turns, costUsd);
+      const which = stopped ? null : reachedLimit(budget, turns, usage.costUsd);
       if (!which) return;
       stop();
       // Not awaited: the listener must return for pi's later batches, and the abort waits on the run.
       onExhausted(which).catch(onError);
     };
     if (stopped) return;
+    observe?.attached(turns);
     events.start(async (batch) => {
       for (const e of batch) {
-        if (e.type === "turn_end") turns++;
-        else if (e.type === "usage_changed") costUsd = usageOf(e.usage).costUsd;
-        else if (e.type === "snapshot") {
+        if (e.type === "turn_end") {
+          turns++;
+          observe?.turn(turns, usage);
+        } else if (e.type === "usage_changed") usage = usageOf(e.usage);
+        else if (e.type === "tool_execution_start") {
+          if (e.parentToolCallId === undefined) observe?.tool(e.toolName, e.toolCallId);
+        } else if (e.type === "snapshot") {
           // Batches overflowed into one snapshot: count again from it.
           turns = await turnsAt(pi, session, e);
-          costUsd = usageOf(e.usage).costUsd;
+          usage = usageOf(e.usage);
         }
       }
       check();

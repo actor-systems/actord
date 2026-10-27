@@ -1096,3 +1096,51 @@ it("[agent-exhausted-awaiting-approval] wallClock runs on while a tool waits for
   expect((await s.failures()).map((f) => f.type)).toEqual(["agent.exhausted"]);
   expect(requests).toHaveLength(2);
 });
+
+/** The agent.* events of a session's key, from the captured events. */
+const agentEvents = (events: ActorEvent[], key: string) => events.filter((e) => e.kind.startsWith("agent.") && e.effectKey === key);
+
+it("[agent-events] a two-turn session with one tool records agent.started, two agent.turn, one agent.tool and agent.ended, in order, each with the session", async () => {
+  const events = captureEvents();
+  script("events-1", (r) => (r.turn === 0 ? call("note_keyed", { text: "secret text" }) : finish({ summary: "noted" })));
+  const s = scribe("events-1");
+  await task("events-1", "the note", "task-ev1");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["noted"]), 5000);
+  await eventually(async () => expect(agentEvents(events, "task-ev1").map((e) => e.kind)).toContain("agent.ended"));
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const mine = agentEvents(events, "task-ev1");
+  // pi's turn_end for the first turn follows its tool call, and finish is a tool call too.
+  expect(mine.filter((e) => e.kind !== "agent.tool" || e.detail?.tool === "note_keyed").map((e) => e.kind)).toEqual(["agent.started", "agent.tool", "agent.turn", "agent.turn", "agent.ended"]);
+  // The second turn's turn_end can reach the watcher after the session settled: then the end records it, as late.
+  for (const e of mine) expect(e).toMatchObject({ actor: "Scribe:events-1", effect: "agent.session", effectKey: "task-ev1", detail: { session, key: "task-ev1" } });
+  expect(mine.filter((e) => e.kind === "agent.turn").map((e) => e.detail?.turn)).toEqual([1, 2]);
+  const tool = mine.find((e) => e.kind === "agent.tool" && e.detail?.tool === "note_keyed")!;
+  // The effect request's key, so the event leads to the effect; the arguments aren't in the event.
+  expect(tool.detail).toEqual({ session, key: "task-ev1", tool: "note_keyed", callId: expect.any(String), effectKey: `${session}:${tool.detail!.callId}` });
+  expect(JSON.stringify(mine)).not.toContain("secret text");
+  const ended = mine.find((e) => e.kind === "agent.ended")!;
+  expect(ended.detail).toMatchObject({ outcome: "confirmed", turns: 2 });
+  // The events name the transcript's object and never hold it.
+  expect(ended.detail).toMatchObject({ transcript: `transcripts/Scribe/task-ev1/${session}.json` });
+  expect(JSON.stringify(mine)).not.toContain("noted\"");
+});
+
+it("[agent-transcript-r2] with an R2 binding, agent.ended writes the transcript as JSON to transcripts/<actor>/<key>/<session>.json and names it", async () => {
+  const events = captureEvents();
+  script("r2-1", (r) => (r.turn === 0 ? call("note_keyed", { text: "a" }) : finish({ summary: "stored" })));
+  const s = scribe("r2-1");
+  await task("r2-1", "the note", "task-r2");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["stored"]), 5000);
+  await eventually(async () => expect(agentEvents(events, "task-r2").map((e) => e.kind)).toContain("agent.ended"));
+  const [row] = await s.sessions();
+  const name = `transcripts/Scribe/task-r2/${row!.session}.json`;
+  expect(agentEvents(events, "task-r2").find((e) => e.kind === "agent.ended")!.detail).toMatchObject({ transcript: name });
+  const object = await env.TRANSCRIPTS.get(name);
+  expect(object).not.toBeNull();
+  const transcript = JSON.parse(await object!.text()) as unknown[];
+  expect(Array.isArray(transcript)).toBe(true);
+  expect(JSON.stringify(transcript)).toContain("stored");
+  // What the harness reports as the session's messages.
+  expect(transcript).toEqual(JSON.parse(JSON.stringify(await s.messages(row!.session as string))));
+});
