@@ -4,10 +4,10 @@
 # - Node 24, as CI runs, from NodeSource, in place of 22;
 # - git trusts every directory, because the repository under the FUSE mount at /workspace may not be owned by the
 #   user that runs a command, and git refuses such a repository otherwise;
-# - Node and npm trust the egress CA. The backend intercepts outbound HTTPS so the Durable Object's gateway can
+# - NODE_EXTRA_CA_CERTS names the egress CA. The backend intercepts outbound HTTPS so the Durable Object's gateway can
 #   decide each request, and the platform writes that CA to /etc/cloudflare/certs once the intercept is registered.
-#   Node reads NODE_EXTRA_CA_CERTS when a process starts; computerd itself starts before the file exists, and only
-#   warns;
+#   The spike showed computerd's commands don't get this image's ENV (only HOME, OLDPWD, PATH, PWD and the exec's own
+#   env), so this line and the ones below reach computerd only; a command that needs one sets it itself;
 # - git in the container takes no optional locks, so `git diff` and `git status` don't rewrite .git/index. The object's
 #   git client owns the index, and a rewrite would sync back over it;
 # - npm's update check, funding messages and audit are off: the gateway refuses the audit's POST anyway.

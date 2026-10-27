@@ -420,5 +420,12 @@ names this spike's config or this spike's application.
 
 ## Results
 
-Not yet run. The results will go in `docs/evidence/spike-2-computer.md`, `docs/evidence/spike-4-long-run.md` and
-`docs/evidence/spike-5-push.md`.
+Run on 2026-10-27. The results are in `docs/evidence/spike-2-computer.md`, `docs/evidence/spike-4-long-run.md` and
+`docs/evidence/spike-5-push.md`. What the run changed about the steps above:
+- **Restarts.** A running object keeps its version through a deploy or a secret change, until it restarts. A busy one
+  restarts minutes later. To put new code in front of the next request, `POST /evict` after the deploy.
+- **The long run.** It finished in 16 to 17 minutes, so the redeploy and the eviction belong 3 and 8 minutes in, not 10
+  and 20.
+- **Commands and the image's `ENV`.** Commands don't get the image's `ENV`, so the install sets `NODE_EXTRA_CA_CERTS`
+  itself.
+- **`/test`.** It builds the toolkit first.
