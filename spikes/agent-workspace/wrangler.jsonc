@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  // Spikes 2, 4 and 5: Pi on Workers AI working in a Computer workspace on a real container. Deployed by the owner
+  // only; see README.md.
+  "name": "spike-agent-workspace",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // Computer's git client and its VFS adapter import node:crypto, node:events, node:fs and node:zlib.
+  "compatibility_flags": ["nodejs_compat"],
+  "ai": { "binding": "AI" },
+  // Each boot records the version it runs, so the evidence can tell a deploy from an eviction.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // Under the durable_object policy the object starts the container itself: wrangler rejects instance_type and
+  // max_instances here, so the size is the backend's `instance` option, and one object name ("main") means one
+  // container at most.
+  "containers": [{ "class_name": "Bench", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "./Dockerfile" } } }],
+  "durable_objects": { "bindings": [{ "name": "BENCH", "class_name": "Bench" }] },
+  "exports": { "Bench": { "type": "durable-object", "storage": "sqlite" } },
+  "observability": { "enabled": true }
+}

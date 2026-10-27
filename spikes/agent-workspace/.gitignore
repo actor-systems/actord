@@ -1,0 +1,6 @@
+# The bearer token for the spike's endpoints, the deploy log holding the Worker's URL, and the GitHub App's private
+# key in any form. Never commit any of them.
+.spike-token
+.deploy.log
+*.pem
+worker-configuration.d.ts
