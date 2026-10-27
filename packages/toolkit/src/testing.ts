@@ -130,6 +130,16 @@ export async function settle(env: unknown, system: System, options: { rounds?: n
   return busy;
 }
 
+/**
+ * The runtime an instance registered when it was constructed. A helper that drove nothing would let a test pass
+ * for the wrong reason, so a missing one is an error, not a no-op.
+ */
+function registered(state: { id: { toString(): string } }, actor: string, key: string): ActorRuntime {
+  const runtime = seams().runtimes.get(state.id.toString());
+  if (!runtime) throw new Error(`${actor} "${key}" has no actord runtime registered: send it a message first, so the instance constructs its runtime`);
+  return runtime;
+}
+
 let lastWake = 0;
 
 /**
@@ -149,25 +159,30 @@ export async function tick(env: unknown, system: System, actor: string, key = "m
   if (at > Date.now()) await new Promise((r) => setTimeout(r, at - Date.now() + 1));
   const due = String(at);
   await runInDurableObject(stub, async (_i, state) => {
+    const runtime = registered(state, actor, key);
     state.storage.sql.exec("INSERT INTO _actors_meta (k, v) VALUES (?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v", scheduleKey(target), due);
-    await seams().runtimes.get(state.id.toString())?.drive();
+    await runtime.drive();
   });
   return true;
 }
 
 /**
  * Make an instance's pending timers due now and drive it, as when its job fires after their delays.
- * Returns how many were due.
+ * Returns how many the drive fired, whether or not their delivery was handled.
  */
 export async function fireTimers(env: unknown, system: System, actor: string, key = "main"): Promise<number> {
   const spec = system.actors[actor];
   if (!spec) throw new Error(`${actor} is not declared`);
   const stub = (env as Env)[spec.binding]!.getByName(key);
   return runInDurableObject(stub, async (_i, state) => {
-    const due = Number(state.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_timers").toArray()[0]!.n);
+    const runtime = registered(state, actor, key);
+    const before = state.storage.sql.exec<{ key: string; attempts: number }>("SELECT key, attempts FROM _actors_timers").toArray();
     state.storage.sql.exec("UPDATE _actors_timers SET due_at = 0");
-    await seams().runtimes.get(state.id.toString())?.drive();
-    return due;
+    await runtime.drive();
+    // A fired timer's row is gone (handled or out of attempts), or pushed out to its retry or a new setting; a row
+    // still due at 0 with the same attempts didn't fire.
+    const unfired = new Set(state.storage.sql.exec<{ key: string; attempts: number }>("SELECT key, attempts FROM _actors_timers WHERE due_at = 0").toArray().map((r) => `${r.attempts}:${r.key}`));
+    return before.filter((r) => !unfired.has(`${r.attempts}:${r.key}`)).length;
   });
 }
 
@@ -180,8 +195,9 @@ export async function expireJobs(env: unknown, system: System, actor: string, ke
   if (!spec) throw new Error(`${actor} is not declared`);
   const stub = (env as Env)[spec.binding]!.getByName(key);
   return runInDurableObject(stub, async (_i, state) => {
+    const runtime = registered(state, actor, key);
     const waiting = expireJobRows(state.storage.sql, Date.now());
-    await seams().runtimes.get(state.id.toString())?.drive();
+    await runtime.drive();
     return waiting;
   });
 }
@@ -195,9 +211,10 @@ export async function expireApprovals(env: unknown, system: System, actor: strin
   if (!spec) throw new Error(`${actor} is not declared`);
   const stub = (env as Env)[spec.binding]!.getByName(key);
   return runInDurableObject(stub, async (_i, state) => {
+    const runtime = registered(state, actor, key);
     const waiting = state.storage.sql.exec("SELECT COUNT(*) AS n FROM _actors_outbox WHERE status = 'awaiting_approval'").one().n as number;
     state.storage.sql.exec("UPDATE _actors_outbox SET next_at = ? WHERE status = 'awaiting_approval'", Date.now());
-    await seams().runtimes.get(state.id.toString())?.drive();
+    await runtime.drive();
     return waiting;
   });
 }
