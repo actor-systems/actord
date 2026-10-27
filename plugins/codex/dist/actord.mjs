@@ -1263,7 +1263,7 @@ function checkAgent(project, m, a, add) {
       add("warning", "AGENT_TOOL_APPROVAL_RESULT_MISSING", `${a.name} \u2192 ${t}`, `${t} is a tool of ${a.name} that needs a person's approval but declares no result message, so the session learns its outcome from the job's probe, up to a probe period after it settles`, `Add result: a declared message to ${t}, and a route that delivers it to ${a.name}.`);
   }
   if (workspace && !workspace.backend && (a.tools ?? []).some((t) => t === "workspace.*" || t === "workspace.exec"))
-    add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, "Add backend: containerBackend({ image }) to the workspace.");
+    add("warning", "AGENT_EXEC_WITHOUT_BACKEND", a.name, `${a.name} lists workspace.exec (or workspace.*) but its workspace has no container backend, so exec is left out`, 'Add backend: containerBackend({ image }) and localOnly: ["**/node_modules"] to the workspace.');
   if (workspace?.backend && workspace.localOnly === void 0)
     add("error", "AGENT_LOCAL_ONLY_MISSING", `${a.name} workspace`, "a workspace with a container backend must declare localOnly: without it, node_modules syncs into the Durable Object (spike 2: npm ci 7.8x slower, 405 MB in the object)", 'Add localOnly: ["**/node_modules"], or localOnly: [] to sync everything.');
   const declared = project.system?.actors[a.name]?.harness?.workspace;
