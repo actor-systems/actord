@@ -3,7 +3,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability } from "agents/lifecycle";
 import { Type } from "@earendil-works/pi-ai";
-import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { type Extension, hook, ToolTask, type ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { z } from "zod";
 import { agentRuntime, RegistryReadGateway, type ScriptedRequest, type ScriptedTurn, scriptedModel, withWorkspaceContainer } from "../../src/agents/index.ts";
@@ -13,7 +13,7 @@ import { system } from "./index.ts";
 
 /** A test's script for one instance, by its name: answers each model request (agents.test.ts installs them). */
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
-const shared = globalThis as { __scribeGate?: Promise<void>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
+const shared = globalThis as { __scribeGate?: Promise<void>; __scribeToolGates?: Record<string, () => Promise<void>>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
 
 /** The instructions an instance is built with, unless a test set others for its name. */
 const INSTRUCTIONS = "You are Scribe. Write up the task you're given, then call finish with a summary.";
@@ -104,7 +104,7 @@ export class Scribe extends DurableObject<Env> {
       model: scriptedModel(scriptFor(this.#name)),
       transcripts: this.env.TRANSCRIPTS,
       effects: { "note.keyed": noteAdapter(this.ctx.storage.sql, "note.keyed"), "note.plain": noteAdapter(this.ctx.storage.sql, "note.plain"), "note.approved": noteAdapter(this.ctx.storage.sql, "note.approved"), "note.silent": noteAdapter(this.ctx.storage.sql, "note.silent"), "note.hidden": noteAdapter(this.ctx.storage.sql, "note.hidden") },
-      extensions: this.#name.startsWith("echo-") ? [{ name: "echo", tools: [echoTool(this.ctx.storage.sql)] }] : this.#name.startsWith("json-") ? [{ name: "echo", tools: [jsonEchoTool(this.ctx.storage.sql)] }] : [],
+      extensions: this.#name.startsWith("echo-") ? [{ name: "echo", tools: [echoTool(this.ctx.storage.sql)] }] : this.#name.startsWith("json-") ? [{ name: "echo", tools: [jsonEchoTool(this.ctx.storage.sql)] }] : this.#name.startsWith("toolgate-") ? [toolGate(this.#name)] : [],
     },
   );
 
@@ -332,6 +332,11 @@ function noteAdapter(sql: SqlStorage, effect: string): EffectAdapter<{ text: str
       return { noted: text };
     },
   };
+}
+
+/** For "toolgate-…" instances: every tool call waits, before it runs, on the instance's `__scribeToolGates` entry, if any. */
+function toolGate(name: string): Extension {
+  return { name: "toolgate", hooks: [hook(ToolTask, { beforeTool: async () => void (await shared.__scribeToolGates?.[name]?.()) })] };
 }
 
 const Echo = Type.Object({ v: Type.Number() });

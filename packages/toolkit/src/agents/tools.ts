@@ -25,6 +25,8 @@ export interface ToolSession {
   waiting(key: string, effect: string, expiresAt: number): number;
   /** When request `key` answered "waiting" before (a rerun after a restart answers the same), its expiry. */
   waited(key: string): number | undefined;
+  /** Why the session may request nothing more (stopped, replaced, or its job no longer running), read fresh; null while it may. */
+  ended(): string | null;
 }
 
 /** A Pi tool's name for an effect: its name with "." → "_". */
@@ -81,6 +83,10 @@ function effectTool(runtime: ActorRuntime, actor: string, name: string, effect: 
         }
         input = validated.value;
       }
+      // A call that was on its way when its session was stopped or replaced: a request now would park or run for a
+      // session that no longer exists, after the stop withdrew what it had parked.
+      const ended = s.ended();
+      if (ended !== null) return { isError: true, output: text(`${name} was not requested: this session was stopped (${ended}). End your turn.`) };
       let state: Awaited<ReturnType<ActorRuntime["requestEffect"]>>;
       try {
         state = await runtime.requestEffect(name, input, { key, causationId: s.causationId, correlationId: s.correlationId });

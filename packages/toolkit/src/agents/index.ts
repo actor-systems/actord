@@ -379,6 +379,12 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
         return waitByKey(key)!.expires_at;
       },
       waited: (key) => waitByKey(key)?.expires_at,
+      ended() {
+        const why = halted(row.key);
+        if (why) return why;
+        const job = jobStatus(row.key);
+        return LIVE.has(job ?? "") ? null : job === "cancelling" ? "its job is being cancelled" : "its job has ended";
+      },
     };
   };
 

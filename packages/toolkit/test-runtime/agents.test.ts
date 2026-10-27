@@ -16,7 +16,7 @@ import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
-const shared = globalThis as { __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
+const shared = globalThis as { __scribeToolGates?: Record<string, () => Promise<void>>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
 
 /** Answer each model request of instance `name` with `script` (Scribe reads it at every request). */
 function script(name: string, fn: Script): void {
@@ -819,6 +819,38 @@ it("[agent-steer-while-awaiting-approval] a steer to a session idle on a tool th
   // The model that finished saw the steer too.
   expect(users(requests.at(-1)!).some((u) => u.includes("use the revised checklist"))).toBe(true);
   expect(await s.failures()).toEqual([]);
+}, 20_000);
+
+it("[agent-tool-after-stop] a tool call in flight when its session is stopped requests nothing: no approval is parked, and the model hears the session was stopped", async () => {
+  const name = "toolgate-stop-1";
+  const requests: ScriptedRequest[] = [];
+  script(name, (r) => (requests.push(r), r.turn === 0 ? call("note_approved", { text: "late" }) : { text: "ok" }));
+  // The model's call waits before it runs; the stop's abort of pi waits too, so the call runs after the stop committed.
+  const inFlight = gate();
+  gates.push(inFlight.open);
+  shared.__scribeToolGates = { ...shared.__scribeToolGates, [name]: () => inFlight.wait() };
+  const abort = gate();
+  gates.push(abort.open);
+  await holdHarness(name, "abort", abort);
+  try {
+    await task(name, "the late tool", "task-tg1");
+    await reached(inFlight);
+    expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: name, id: "halt-tg1" })).toMatchObject({ status: "handled" });
+    expect(await jobRow(name, "fx:agent.session:task-tg1")).toMatchObject({ status: "cancelling" });
+    inFlight.open();
+    await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
+    expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
+    const [result] = toolResults(requests[1]!);
+    expect(result).toMatchObject({ toolName: "note_approved", isError: true });
+    expect(text(result!)).toMatch(/stopped/);
+    abort.open();
+    await settle(env, system);
+    expect(await jobRow(name, "fx:agent.session:task-tg1")).toMatchObject({ status: "failed", lastError: "cancelled" });
+    expect((await scribe(name).outbox()).filter((r) => r.id.startsWith("fx:note.approved:"))).toEqual([]);
+    expect(await scribe(name).noted()).toEqual([]);
+  } finally {
+    delete shared.__scribeToolGates?.[name];
+  }
 }, 20_000);
 
 it("[agent-tool-undeclared] only the effects in `tools` are offered, and requestEffect refuses an effect the actor doesn't list", async () => {
