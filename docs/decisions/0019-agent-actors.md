@@ -120,7 +120,8 @@ transaction started from outside runs inside the handler's once the handler yiel
 The hazard is older than agent actors. The owner's ruling, now in place (#80, decision 0007's amendment): race each
 handler against a macrotask sentinel, and fail the delivery loudly ("handlers may not await I/O; use ctx.effect").
 In the delivery that fails, a transaction already requested beside the handler still runs nested first, and rolls
-back with it (`[sentinel-ordering]`). The agent runtime's own handlers (the `on` verbs, tool results, the session's
+back with it (`[sentinel-ordering]`). A few awaits let such a writer in without the delivery failing (#82). The
+agent runtime's own handlers (the `on` verbs, tool results, the session's
 settlement) await no I/O.
 
 ## Rejected alternatives

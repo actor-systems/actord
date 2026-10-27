@@ -51,10 +51,17 @@ once per actor; commits a handler's writes, outgoing messages, and effect intent
 once with retries, then dead-letters; and never reports an unacknowledged external effect as delivered. It
 does **not** guarantee exactly-once external effects, global ordering, or transactions across actors.
 
-Handlers may await storage, but not I/O. A handler that awaits a `fetch`, a timer or a model fails its delivery
-with "handlers may not await I/O; use ctx.effect". Its transaction would otherwise stay open across an event-loop
-turn, and other writers' rows could join it. Request that work with `ctx.effect`: it runs after commit, and its
+Handlers may await some storage calls, but not I/O. Request I/O with `ctx.effect`: it runs after commit, and its
 outcome comes back as a message.
+
+- **What fails.** A handler that awaits a `fetch`, a timer or a model fails its delivery with "handlers may not
+  await I/O; use ctx.effect". Its transaction would otherwise stay open across an event-loop turn, and other
+  writers' rows could join it. Any await still pending at the next event-loop turn fails the delivery, even
+  `setTimeout(0)` and libraries that use timers internally.
+- **What a handler may await.** `get`, `put`, `list` and `delete`, the alarm calls, `ctx.sql`, `kv`,
+  `transactionSync` and Lifecycle's `jobs.push`.
+- **What a handler must not await.** A nested `transaction()`, `sync()`, `getCurrentBookmark()` or a body read.
+  These let a waiting writer in without the delivery failing (#82).
 
 ## With a coding agent
 

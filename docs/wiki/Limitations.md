@@ -57,21 +57,34 @@
   by then. The session's `wallClock` keeps running while it waits: the session's job ends at `wallClock` plus 10
   minutes, though the approval stays open for its expiry (3 days by default), so a later approval's result is only a
   note. An app whose approvals take long needs a longer `wallClock`. Tracked: none.
-- **A handler that awaits I/O fails, but can still cost another writer's rows once.** A handler that awaits I/O
-  or a timer fails its delivery ("handlers may not await I/O; use ctx.effect", #80), so the pattern can't ship
-  unnoticed. These writers start transactions beside a handler: pi's session store, Computer's vfs sync-back,
-  Lifecycle's job rows and actord's drain settlements.
-  - **Already requested.** A writer's transaction requested before the handler's first event-loop turn runs nested
-    in the handler's transaction, before the sentinel fires. The failed delivery's rollback takes its rows, though
-    its own `transaction()` resolved. `[sentinel-ordering]` pins this.
-  - **Started later.** A writer whose transaction starts from I/O that arrives after the handler started runs after
-    the rollback, and commits.
-  - **The abandoned handler.** It keeps running until its await returns. Its `ctx` refuses every call, but writes
-    it makes directly through `this.ctx.storage` aren't covered.
-  - **Storage APIs.** Awaiting `sync()` and `getCurrentBookmark()` was measured only in local workerd. If either
-    does I/O in production, a handler that awaits it fails there.
+- **A handler that awaits I/O fails on every attempt, and each attempt can cost another writer's rows.** A handler
+  that awaits I/O or a timer fails its delivery ("handlers may not await I/O; use ctx.effect", #80), so the pattern
+  can't ship unnoticed. It fails on every attempt: up to 6 for a message before it dead-letters, or until
+  `retry.exhausted` for a timer. These writers start transactions beside a handler: pi's session store, Computer's
+  vfs sync-back, Lifecycle's job rows and actord's drain settlements.
+  - **Each attempt.** A writer's transaction that is already waiting when the handler yields runs nested in the
+    handler's, before the sentinel fires.
+    - The failed delivery's rollback takes its rows, though its own `transaction()` resolved
+      (`[sentinel-ordering]`).
+    - Each attempt also reruns the abandoned handler's post-await code, and its I/O.
+    - A writer whose transaction starts from I/O that arrives after the handler started runs after the rollback,
+      and commits.
+  - **Upgrading makes it certain.** Before #80, a writer nested in a handler that awaited I/O and then committed
+    kept its rows. Now every such delivery fails. So an app that upgrades with such a handler goes from occasional
+    loss to loss on every attempt, until the handler is fixed.
+  - **The abandoned handler.** It keeps running until its await returns. Its `ctx` refuses every call, but its
+    direct `this.ctx.storage` writes and its `this.actor.requestEffect` calls are accepted.
+  - **Awaits that beat the sentinel.** These let a waiting writer in, but finish before the sentinel fires
+    (`[storage-await-no-macrotask]`):
+    - a nested `transaction()`;
+    - `sync()` and `getCurrentBookmark()`;
+    - `Request` and `Response` body reads (`text()`, `json()`).
 
-  This applies to every actor. Tracked: none.
+    If the handler then throws, the rollback takes that writer's rows, and the delivery fails with the handler's
+    own error, not #80's (`[beside-transaction-nested]`). Handlers must not await them. This was measured in local
+    workerd: in production, `sync()` and the bookmark call may do real I/O, and then fail the delivery instead.
+
+  This applies to every actor. Tracked in #82.
 - **The `corsProxy` residual.** Computer 0.8.0's push ignores the `corsProxy` it is passed, and reads `http.corsProxy`
   from the workspace's `.git/config`, which the agent can write with `exec`. The toolkit refuses a push when one is
   set, checking just before the push, and only storage, never the network, runs between that check and Computer's
