@@ -19,7 +19,11 @@ visible to `actord check` and the graph, and handled by code the toolkit owns.
    one route from a webhook source for each message it maps, so that message must be declared too, and refuses a
    source named after a sender the runtime uses itself (`clock`, `ingress`, `timer`, `rpc`: `SOURCE_NAME_RESERVED`).
    The secret is only advised: when neither wrangler `vars` nor `.dev.vars.example` names it, the check warns
-   (`SOURCE_SECRET_UNDECLARED`) and still passes.
+   (`SOURCE_SECRET_UNDECLARED`) and still passes. *Added 2026-10-27 (#49):* an email source's other names are
+   advised the same way, because each one missing breaks the handler quietly. `owner`, `from` and `authserv` are
+   checked like the secret (`SOURCE_ENV_UNDECLARED`), and `send` must be among wrangler's `send_email` bindings
+   (`SOURCE_SEND_UNDECLARED`). These are warnings, because a value set as a secret or per wrangler environment is
+   invisible to the check.
 3. **The handler is generated, not hand-written.** `handleWebhook(request, env, system)` returns a `Response`, or
    `null` when the path isn't a source's, so the app's own routes run. `handleEmail(message, env, system)` serves the
    `email()` handler. Both read the declaration and deliver with `deliverExternal`, the same path `ingress` uses, so

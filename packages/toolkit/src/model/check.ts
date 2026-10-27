@@ -154,9 +154,23 @@ function checkSources(project: Project, m: Manifest, add: Add) {
     if (names.length > 1) add("error", "SOURCE_PATH_DUPLICATE", path, `Sources ${names.join(" and ")} both listen on ${path}`, "Give each webhook source its own path.");
 
   const declared = declaredEnvNames(project);
-  for (const [name, spec] of Object.entries(project.system?.sources ?? {}))
+  const sendBindings = new Set((project.config?.send_email ?? []).map((b) => b.name));
+  for (const [name, spec] of Object.entries(project.system?.sources ?? {})) {
     if (!declared.has(spec.secret))
       add("warning", "SOURCE_SECRET_UNDECLARED", `@${name}`, `@${name} verifies with ${spec.secret}, which is in neither wrangler vars nor .dev.vars.example`, `List ${spec.secret} in .dev.vars.example (and set it with \`wrangler secret put ${spec.secret}\`).`);
+    if (spec.kind !== "email") continue;
+    // handleEmail reads these too: each says what the runtime does when its entry is missing.
+    const reads: Array<[string | undefined, string, string]> = [
+      [spec.owner, `reads the owner's address from ${spec.owner}`, "every reply would be refused (owner_missing)"],
+      [spec.from, `sends its replies from the address in ${spec.from}`, "no reply could be sent"],
+      [spec.authserv, `trusts the authserv-id in ${spec.authserv}`, "every reply would be refused (authserv_missing)"],
+    ];
+    for (const [entry, what, then] of reads)
+      if (entry !== undefined && !declared.has(entry))
+        add("warning", "SOURCE_ENV_UNDECLARED", `@${name}`, `@${name} ${what}, which is in neither wrangler vars nor .dev.vars.example, so ${then}`, `Add ${entry} to wrangler vars, or list it in .dev.vars.example.`);
+    if (!sendBindings.has(spec.send))
+      add("warning", "SOURCE_SEND_UNDECLARED", `@${name}`, `@${name} replies through the send_email binding ${spec.send}, which wrangler's send_email bindings don't declare, so the owner would never hear back`, `Add { "name": "${spec.send}" } to send_email in the wrangler config.`);
+  }
 
   const notify = m.approvals?.notify;
   const gatedActors = m.actors.filter((a) => a.effects.some((e) => m.effects.find((x) => x.name === e)?.approval === "human"));

@@ -34,8 +34,9 @@ a route sender (`@github`), and routes deliver its messages like any other. Acto
   `events` maps `<X-GitHub-Event>.<action>` to `{ message, key, map }`: `key` chooses the receiving actor's
   instance, `map` builds the payload, which is validated against the message's schema. Call
   `handleWebhook(request, env, system)` first in `fetch()`; it returns `null` for other paths.
-- **`inboundEmail({ secret, owner, from, send, authserv?, message })`** names `env` entries. Call
-  `handleEmail(message, env, system)` from `email()`. It accepts only the owner's reply to an approval request.
+- **`inboundEmail({ secret, owner, from, send, authserv?, message })`** names `env` entries. `actord check` warns
+  when wrangler `vars` and `.dev.vars.example` don't name one of them, or `send_email` doesn't declare `send`.
+  Call `handleEmail(message, env, system)` from `email()`. It accepts only the owner's reply to an approval request.
   `authserv` is optional: the name of the entry holding the trusted authserv-id. Cloudflare Email Routing's is
   `mx.cloudflare.net` (spike 6 and issue #68; see Limitations). With it, mail from the owner's address that doesn't
   authenticate as `"pass"` is refused without a reply (`source.rejected`, `unauthenticated`), and a missing or empty
