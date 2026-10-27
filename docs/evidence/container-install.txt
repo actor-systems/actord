@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 4c57b8b Rebuild both plugin distributions for Task 11
+== repository at b413bbb Rebuild both plugin distributions for R34
 == install Claude Code 2.1.312 from npm
 2.1.312 (Claude Code)
 == marketplace add + install

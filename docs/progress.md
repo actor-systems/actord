@@ -30,10 +30,10 @@ it, the effects it lists are its tools, `finish` returns the typed `returns` mes
 `turns` and `wallClock` (decision 0019). Its workspace is Computer's, in the object's SQLite, with commands in a
 Cloudflare Container, registry-read egress through the toolkit's gateway, and clone and push from the object
 (decision 0022). Spikes 2, 4 and 5 ran on a real container and pushed to GitHub (`docs/evidence/spike-2-computer.md`,
-`spike-4-long-run.md`, `spike-5-push.md`). Verified from a plain clone at `4c57b8b`: 60 pass, 0 fail, 1 blocked
-(`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312). After that run, `351b0f0`
-put the setup skills' Node version back to 22.18: skill prose only, which plan 5 owns, and no gate reads it. The
-plugin skills still teach the old style (plan 5). Plan 4 is next: Clef and Clairic effects.
+`spike-4-long-run.md`, `spike-5-push.md`). Verified from a plain clone at `b413bbb`, after the final review's fixes:
+60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312).
+The setup skills still name Node 22.18, as `actord doctor` accepts, and the plugin skills still teach the old style:
+both are plan 5's. Plan 4 is next: Clef and Clairic effects.
 
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
