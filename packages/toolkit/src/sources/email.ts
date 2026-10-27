@@ -4,9 +4,12 @@
 // A reply counts only if all of these hold. Plain code checks them, never a model, in this order, and the
 // first that fails ends it:
 // 1. Sender. The envelope sender and the one From address are both the owner's (env[owner]), compared
-//    case-insensitively, and no Authentication-Results header says dmarc=fail. Mail that fails this gets no
-//    reply at all, so nobody but the owner can make the Worker send mail or learn whether a token is good.
-//    That is why the sender is checked before the token. Mail an auto-responder sent is then ignored without a
+//    case-insensitively, and no Authentication-Results header says dmarc=fail. With an authserv configured, the
+//    reply must also authenticate as "pass" (below). Mail that fails this gets no reply at all, so nobody else
+//    can make the Worker send mail or learn whether a token is good; that is why the sender is checked before
+//    the token. Without an authserv, someone who forges the owner's address on both envelope and From can still
+//    get a reply, which goes to the owner: Cloudflare marks such mail dmarc=none, not dmarc=fail, when the
+//    owner's domain publishes p=none (issue #68). Mail an auto-responder sent is then ignored without a
 //    reply, so an out-of-office answer and a reply to it can't loop: Auto-Submitted other than "no" (RFC 3834),
 //    Precedence bulk, junk, list or auto_reply, or an X-Autoreply or X-Autorespond header.
 // 2. Headers. There is exactly one Subject and at most one Message-ID. A repeated header is ambiguous: this
@@ -16,8 +19,8 @@
 //    edited or expired token gets a reply saying so.
 // 4. Decision. The first non-empty line the owner wrote, above any quoted text, is "approve", or "deny" and
 //    an optional reason. Anything else gets a reply asking again.
-// 5. Publishes guard. Without dmarc=pass, an effect declared publishes: true can't be approved by email, and
-//    the reply says to approve it in GitHub. A deny still goes through.
+// 5. Publishes guard. An "unknown" reply, which only a source with no authserv lets this far, can't approve an
+//    effect declared publishes: true, and the reply says to approve it in GitHub. A deny still goes through.
 // Then the source's message (approval.decided) goes to the actor and instance the token names, under the
 // sender "@<source>", with an envelope id derived from the reply's Message-ID, so the same email handled twice
 // is delivered once. A second, different reply is delivered too; the actor's ctx.approve or ctx.deny then
@@ -33,8 +36,10 @@
 // Authentication: a sender can write Authentication-Results headers of their own, below the one the receiving
 // server adds on top. So a reply is "pass" only when the topmost header comes from the trusted authserv-id
 // (env[authserv], compared case-insensitively), it has at least one dmarc result, and every dmarc result, read
-// outside comments, is pass with a header.from of the owner's domain. Anything else is "unknown", including a
-// source with no authserv configured. A dmarc=fail anywhere refuses the reply.
+// outside comments, is pass with a header.from of the owner's domain. With an authserv configured, the sender
+// check refuses anything else (source.rejected "unauthenticated"), and a missing or empty env[authserv] refuses
+// all mail ("authserv_missing"). With no authserv configured, every reply is "unknown". A dmarc=fail anywhere
+// refuses the reply.
 import PostalMime, { addressParser, type Email } from "postal-mime";
 import { type ActorEvent, type EventKind, type Receipt, deliverExternal, deriveId, emit } from "../runtime/index.ts";
 import type { EmailSourceSpec, System } from "../system.ts";
@@ -90,6 +95,8 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
   const owner = vars[source.owner];
   if (typeof secret !== "string" || secret === "") return record("source.rejected", "secret_missing", {}, { secret: source.secret });
   if (typeof owner !== "string" || owner === "") return record("source.rejected", "owner_missing", {}, { owner: source.owner });
+  const authserv = source.authserv === undefined ? undefined : vars[source.authserv];
+  if (source.authserv !== undefined && (typeof authserv !== "string" || authserv.trim() === "")) return record("source.rejected", "authserv_missing", {}, { authserv: source.authserv });
 
   let email: Email;
   try {
@@ -105,7 +112,10 @@ export async function handleEmail(message: ForwardableEmailLike, env: unknown, s
   if (!sameAddress(message.from, owner) || !sameAddress(author, owner)) return record("source.rejected", "not_owner", {}, { ...seen, from: untrusted(message.from), author: untrusted(author) });
   const results = email.headers.filter((h) => h.key === "authentication-results").map((h) => h.value);
   if (results.some((r) => DMARC_FAIL.test(r))) return record("source.rejected", "dmarc_fail", {}, seen);
-  const authenticated = authenticationOf(results, source.authserv === undefined ? undefined : vars[source.authserv], owner);
+  const authenticated = authenticationOf(results, authserv, owner);
+  // Cloudflare marks mail forging the address of a p=none domain such as gmail.com as dmarc=none, not fail (issue
+  // #68), so the check above lets it through. With a trusted server configured, mail it didn't pass is a stranger's.
+  if (source.authserv !== undefined && authenticated !== "pass") return record("source.rejected", "unauthenticated", {}, seen);
   const valuesOf = (key: string) => email.headers.filter((h) => h.key === key).map((h) => fields(h.value)[0]!.trim().toLowerCase());
   const auto = valuesOf("auto-submitted");
   const precedence = valuesOf("precedence");

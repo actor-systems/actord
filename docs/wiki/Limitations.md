@@ -20,7 +20,8 @@
     authserv-id `mx.cloudflare.net`. A Gmail reply carried `dmarc=pass` there.
   - **Setting it:** an app may set `authserv` to an env entry holding `mx.cloudflare.net`. Then a reply is `"pass"`
     only when that topmost header has at least one `dmarc` result, every one `pass` with `header.from` the owner's
-    domain, and such a reply can approve an effect declared `publishes: true`.
+    domain, and such a reply can approve an effect declared `publishes: true`. Any other reply is refused without
+    an answer.
   - **Leaving it unset:** every reply is `"unknown"`. An email can then approve mid-run tool calls but never a
     `publishes: true` effect; approve those in GitHub.
   - **Forged headers (issue #68):** Cloudflare doesn't strip an inbound header that claims `mx.cloudflare.net`. It
@@ -28,10 +29,14 @@
     unsigned, Cloudflare's header was always topmost. That isn't proof that it always will be.
   - **The hardening has landed:** every `dmarc` result must be `pass`, `header.from` must be the owner's domain, and
     the authserv-id compares case-insensitively. The factory sets `authserv` to `mx.cloudflare.net`.
-  - **Forging the owner's address gets the owner a reply.** For an unaligned message from a `p=none` domain such as
-    `gmail.com`, Cloudflare writes `dmarc=none`, not `dmarc=fail`. So mail forging the owner's address on both
-    envelope and `From` passes the sender check and gets the handler's reply, which goes to the owner. It can't
-    approve anything without a valid token (#69).
+  - **Without `authserv`, forging the owner's address gets the owner a reply.** For an unaligned message from a
+    `p=none` domain such as `gmail.com`, Cloudflare writes `dmarc=none`, not `dmarc=fail`. So mail forging the
+    owner's address on both envelope and `From` passes the sender check and gets the handler's reply, which goes to
+    the owner. It can't approve anything without a valid token. With `authserv`, such mail is refused without a
+    reply (#69).
+  - **With `authserv`, an owner's reply that isn't `"pass"` is dropped silently.** The owner hears nothing back;
+    only a `source.rejected` (`unauthenticated`) event records it. A missing or empty `authserv` value refuses all
+    mail and records `authserv_missing`.
   - **The owner's acknowledgement says what arrived, not what it did.** After a delivered answer the reply reads
     `Received: approve for <effect> (<key>). If it had already been decided or had expired, this changed nothing.`
     Whether `ctx.approve` or `ctx.deny` changed anything isn't reported back by email.
