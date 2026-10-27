@@ -41,18 +41,27 @@ started quickly, remembered durably, and settled later, by whichever of several 
    review: the plan's narrower rule lost real outcomes). It returns `true` in every other case:
    - **waiting** (`awaiting_job`) **or being cancelled** (`cancelling`): the job settles now, with the reported
      outcome, and a cancel's later answer is dropped;
-   - **not started yet** (`pending`, `running`, `awaiting_approval`; for example a keyed start whose
-     acknowledgment was lost, waiting out its backoff): the outcome is kept on the row (`body.earlyOutcome`, in
-     the handler's transaction). When the start attempt finishes, the job settles with it at once, with
-     `settledBy: "message"` and no probe. That holds whatever the attempt's own result: if `start` fails, ends in
-     doubt, or is cut off by a restart, the kept outcome still wins;
+   - **a start already tried and waiting to be tried again** (`pending` with `attempts > 0`, for example a keyed
+     start whose acknowledgment was lost, waiting out its backoff): the job settles now, with `settledBy:
+     "message"`, and the start isn't run again. *Amended 2026-10-27 (#33);* it used to wait for the retried start;
+   - **not started yet** (`pending` before its first attempt, `running`, `awaiting_approval`): the outcome is kept
+     on the row (`body.earlyOutcome`, in the handler's transaction). When the start attempt finishes, the job
+     settles with it at once, with `settledBy: "message"` and no probe. That holds whatever the attempt's own
+     result: if `start` fails, even in a way a retry would cover, ends in doubt, or is cut off by a restart (keyed
+     or not), the kept outcome wins, and the start isn't run again (#33);
    - **a second completion** while one is already kept returns `false`: the first one kept wins.
+
+   A probe that finds the job done settles it the same way while a cancel is pending, and the cancel's later answer
+   is dropped (#37).
 
    A completion that arrives after the job settled (after its deadline, say) is visible to the handler as
    `false` and never produces a second result. `cancelJob` acts only on a waiting job.
 6. **A waiting job has nothing in flight, so it isn't an orphan.** A restart neither starts it again nor loses
    it. A probe in flight when the instance stops is simply tried again at the next booked look, since its
-   next look is booked before it runs. A `cancelling` row found at startup asks for the cancel again.
+   next look is booked before it runs. A `cancelling` row found at startup asks for the cancel again. *Amended
+   2026-10-27 (#32):* each time counts as an interruption, from when the cancel began, and at the fifth
+   (`parkAfterInterruptions`) the job is parked instead: `in_doubt`, `parked: cancel interrupted N times without
+   settling`, with `effect.parked` and the result message.
 7. **One wake.** A waiting job's `next_at` is the nearer of its next probe and its deadline, and
    `earliestWake()` includes it, so the one `"actord"` Lifecycle job (decision 0016) wakes for it.
 8. **Checks.** `JOB_DEADLINE_MISSING` (error: no deadline, or one that isn't a duration), `JOB_UNOBSERVABLE`
