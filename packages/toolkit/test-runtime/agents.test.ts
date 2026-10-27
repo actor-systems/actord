@@ -1446,6 +1446,8 @@ it("[agent-ended-start-refused] a start refused after pi opened its session reco
 // ---- Git from the Durable Object (Task 10) ----
 
 const TOKEN = "ghs_sekrit-installation-token-0123456789";
+/** The header GitHub's git endpoint takes for an installation token, as GitHub Actions sends it. */
+const BASIC = `Basic ${btoa(`x-access-token:${TOKEN}`)}`;
 const REPO = "https://github.com/acme/repo.git";
 type PushCall = { dir?: string; url?: string; corsProxy?: string; remote?: string; ref?: string; remoteRef?: string; headers?: Record<string, string> };
 
@@ -1484,31 +1486,36 @@ it("[git-push-header-only] the token reaches the git client as a header, and now
     const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
     const out = await adapter.run({ branch: "factory/one" }, { key: "k1", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
     expect(clones).toHaveLength(1);
-    expect(clones[0]).toMatchObject({ url: "https://github.com/acme/repo", dir: "/repo", singleBranch: true, corsProxy: "", headers: { Authorization: `Bearer ${TOKEN}` } });
+    expect(clones[0]).toMatchObject({ url: "https://github.com/acme/repo", dir: "/repo", singleBranch: true, corsProxy: "", headers: { Authorization: BASIC } });
     expect(clones[0]!.depth).toBeUndefined();
     expect(pushes).toHaveLength(1);
-    expect(pushes[0]).toMatchObject({ dir: "/repo", url: REPO, corsProxy: "", ref: "factory/one", remoteRef: "refs/heads/factory/one", headers: { Authorization: `Bearer ${TOKEN}` } });
+    expect(pushes[0]).toMatchObject({ dir: "/repo", url: REPO, corsProxy: "", ref: "factory/one", remoteRef: "refs/heads/factory/one", headers: { Authorization: BASIC } });
     expect(JSON.stringify(out)).not.toContain(TOKEN);
     expect(everything(state)).not.toContain(TOKEN);
     expect(everything(state)).not.toContain(btoa(`x-access-token:${TOKEN}`));
   });
 });
 
-it("[git-push-header-only] falls back to Basic when Bearer is refused, and scrubs the token from a final error", async () => {
+it("[git-push-header-only] a push is one attempt, with Basic x-access-token: GitHub's git endpoint answers Bearer with 401 (spike 5)", async () => {
   await runInDurableObject(scribe("git-basic"), async (_i, state) => {
-    const basic = `Basic ${btoa(`x-access-token:${TOKEN}`)}`;
-    const refused = spyWorkspace(state, (call) => (call.headers?.Authorization?.startsWith("Bearer") ? { ok: false, error: "401 Unauthorized", refs: {} } : { ok: true, error: null, refs: {} }));
-    const run = (w: Workspace) => gitPushEffect({ workspace: () => w, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
-    await run(refused.workspace);
-    expect(refused.pushes.map((p) => p.headers?.Authorization)).toEqual([`Bearer ${TOKEN}`, basic]);
+    const { workspace, pushes } = spyWorkspace(state);
+    await gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
+    expect(pushes.map((p) => p.headers?.Authorization)).toEqual([BASIC]);
+  });
+});
 
+it("[git-push-header-only] an authentication failure surfaces as itself, with the token scrubbed, and isn't tried again", async () => {
+  await runInDurableObject(scribe("git-auth-failed"), async (_i, state) => {
+    const run = (w: Workspace) => gitPushEffect({ workspace: () => w, dir: "/repo", url: REPO, token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
+    const refused = spyWorkspace(state, () => ({ ok: false, error: "HTTP Error: 401 Unauthorized", refs: {} }));
+    await expect(run(refused.workspace)).rejects.toThrow(/^git push failed: HTTP Error: 401 Unauthorized$/);
+    expect(refused.pushes).toHaveLength(1);
     const failing = spyWorkspace(state, (call) => {
-      throw Object.assign(new Error(`403 denied for ${call.headers?.Authorization} (${TOKEN}, ${btoa(`x-access-token:${TOKEN}`)})`), { status: 403 });
+      throw Object.assign(new Error(`HTTP Error: 401 Unauthorized for ${call.headers?.Authorization} (${TOKEN}, ${btoa(`x-access-token:${TOKEN}`)})`), { status: 401 });
     });
     const err = await run(failing.workspace).then(() => null, (e: Error) => e);
-    expect(err).toBeInstanceOf(Error);
-    expect(err!.message).not.toContain(TOKEN);
-    expect(err!.message).not.toContain(btoa(`x-access-token:${TOKEN}`));
+    expect(err!.message).toMatch(/^git push failed: HTTP Error: 401 Unauthorized for \[token\] \(\[token\], \[token\]\)$/);
+    expect(failing.pushes).toHaveLength(1);
   });
 });
 
@@ -1540,7 +1547,7 @@ it("[git-push-only-factory-branches] the default guard refuses anything that isn
   });
 });
 
-it("[git-push-header-only] only an authentication failure falls back to Basic; others surface as themselves", async () => {
+it("[git-push-header-only] any other failure surfaces as itself, after one attempt", async () => {
   await runInDurableObject(scribe("git-nonauth"), async (_i, state) => {
     const ctx = { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} };
     const nff = spyWorkspace(state, () => ({ ok: false, error: "non-fast-forward", refs: {} }));
@@ -1646,8 +1653,7 @@ it("[git-push-url-pinned] the real git client pushes to the app's URL, never to 
     const { requests, result } = await outbound(() => push.run({ branch: "factory/one" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} }));
     expect(result).toBeInstanceOf(Error);
     expect(requests.filter((r) => r.url.includes("evil.example"))).toEqual([]);
-    expect(requests.map((r) => r.url)).toEqual(["https://github.com/acme/repo.git/info/refs?service=git-receive-pack", "https://github.com/acme/repo.git/info/refs?service=git-receive-pack"]);
-    expect(requests.map((r) => r.authorization)).toEqual([`Bearer ${TOKEN}`, `Basic ${btoa(`x-access-token:${TOKEN}`)}`]);
+    expect(requests).toEqual([{ url: "https://github.com/acme/repo.git/info/refs?service=git-receive-pack", authorization: BASIC }]);
   });
 });
 
@@ -1672,20 +1678,6 @@ it("[git-push-url-pinned] a corsProxy written while the token is minted refuses 
     expect(requests).toEqual([]);
     expect(result).toBeInstanceOf(EffectRejected);
     expect((result as Error).message).toMatch(/http\.corsProxy/);
-  });
-});
-
-it("[git-push-url-pinned] a corsProxy written while Bearer is refused refuses the Basic attempt", async () => {
-  await runInDurableObject(scribe("git-proxied-basic"), async (_i, state) => {
-    const workspace = await plantedRepo(state, false);
-    const push = gitPushEffect({ workspace: () => workspace, dir: "/repo", url: REPO, token: async () => TOKEN });
-    // The Bearer push's round trip is another wait the container's writes can land in.
-    const { requests, result } = await outbound(
-      () => push.run({ branch: "factory/one" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} }),
-      async (n) => void (n === 1 && (await workspace.git.configSet({ dir: "/repo", path: "http.corsProxy", value: "https://evil.example" }))),
-    );
-    expect(requests).toEqual([{ url: `${REPO}/info/refs?service=git-receive-pack`, authorization: `Bearer ${TOKEN}` }]);
-    expect(result).toBeInstanceOf(EffectRejected);
   });
 });
 
@@ -1718,7 +1710,7 @@ it("[git-clone-url-pinned] the real git client clones from the app's URL with no
     const { requests, result } = await outbound(() => gitClone(workspace, { url: "https://github.com/acme/repo.git", dir: "/repo", token: async () => TOKEN }));
     expect(result).toBeInstanceOf(Error);
     expect(requests.filter((r) => r.url.includes("evil.example"))).toEqual([]);
-    expect(requests).toEqual([{ url: "https://github.com/acme/repo.git/info/refs?service=git-upload-pack", authorization: `Bearer ${TOKEN}` }]);
+    expect(requests).toEqual([{ url: "https://github.com/acme/repo.git/info/refs?service=git-upload-pack", authorization: BASIC }]);
   });
 });
 

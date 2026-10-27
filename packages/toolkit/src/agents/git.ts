@@ -24,6 +24,9 @@ async function scrubbed<T>(token: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** The Authorization header for a token: Basic `x-access-token`, as GitHub Actions sends it. GitHub's git endpoint answers Bearer with 401 (spike 5). */
+const basic = (token: string) => `Basic ${btoa(`x-access-token:${token}`)}`;
+
 /** `url` if it is an https URL with no credentials in it; otherwise a throw, since a header sent there could leave in clear. */
 function httpsUrl(url: string, what: string): string {
   let parsed: URL | undefined;
@@ -42,7 +45,7 @@ export async function gitClone(workspace: Workspace, options: { url: string; dir
   const url = httpsUrl(options.url, "the clone URL");
   const token = options.token ? await options.token() : undefined;
   await scrubbed(token ?? "", () =>
-    workspace.git.clone({ url, dir: options.dir, ref: options.ref, singleBranch: true, corsProxy: "", headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+    workspace.git.clone({ url, dir: options.dir, ref: options.ref, singleBranch: true, corsProxy: "", headers: token ? { Authorization: basic(token) } : undefined }),
   );
 }
 
@@ -57,26 +60,18 @@ export function factoryBranch(branch: string): boolean {
   return branch.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
 }
 
-/** An authentication failure: a 401/403 status or message, or words that say so. */
-function isAuthFailure(failure: unknown): boolean {
-  const status = (failure as { status?: unknown; statusCode?: unknown; code?: unknown } | null) ?? {};
-  if ([status.status, status.statusCode, status.code].some((c) => c === 401 || c === 403 || c === "401" || c === "403")) return true;
-  const text = failure instanceof Error ? `${failure.name} ${failure.message}` : String(failure);
-  return /\b(401|403)\b|unauthori[sz]ed|forbidden|authentication|permission denied|bad credentials/i.test(text);
-}
-
 /**
  * An effect adapter that pushes `input.branch` from `dir` to `url`, the repository's https URL, which the app supplies
  * and the workspace never does; declare it `idempotency: "key"` (pushing the same commit again is harmless).
- * It tries Bearer first and Basic (`x-access-token`, as GitHub Actions does) only if that push fails to authenticate,
- * since GitHub's acceptance of Bearer on the git endpoint is unconfirmed until spike 5 runs. Any other failure
- * (non-fast-forward, network) surfaces as itself.
+ * It makes one push, authenticated with Basic `x-access-token:<token>`, as GitHub Actions does: GitHub's git endpoint
+ * answers Bearer with 401 (spike 5). A failure (authentication, non-fast-forward, network) surfaces as itself, with the
+ * token scrubbed from it.
  *
  * Computer 0.8.0's push drops `corsProxy`, so isomorphic-git falls back to the repo's `http.corsProxy`: a push from a
- * repo whose config names one is refused, before the token is minted and again just before each attempt. Minting and
- * a refused attempt wait on the network, when the container's writes can land; between the last check and the
- * push's own read of the config there is only storage, so they can't. (pi's own file tools, which run here, refuse
- * .git paths.) `corsProxy: ""` is passed as well, for a client that forwards it.
+ * repo whose config names one is refused, before the token is minted and again just before the push. Minting waits on
+ * the network, when the container's writes can land; between the last check and the push's own read of the config
+ * there is only storage, so they can't. (pi's own file tools, which run here, refuse .git paths.) `corsProxy: ""` is
+ * passed as well, for a client that forwards it.
  */
 export function gitPushEffect(options: { workspace: () => Workspace; dir: string; url: string; token: () => Promise<string>; allow?: (branch: string) => boolean }): EffectAdapter<{ branch: string }, { branch: string; refs: unknown }> {
   const url = httpsUrl(options.url, "gitPushEffect's url");
@@ -91,23 +86,18 @@ export function gitPushEffect(options: { workspace: () => Workspace; dir: string
       await unproxied();
       const token = await options.token();
       const scrub = scrubber(token);
-      let failure = "push was refused";
-      for (const authorization of [`Bearer ${token}`, `Basic ${btoa(`x-access-token:${token}`)}`]) {
-        signal.throwIfAborted();
-        await unproxied();
-        let cause: unknown;
-        try {
-          const push: GitPushOptions & { corsProxy: string } = { dir: options.dir, url, ref: branch, remoteRef: `refs/heads/${branch}`, corsProxy: "", headers: { Authorization: authorization } };
-          const result = await git.push(push);
-          if (result.ok) return { branch, refs: JSON.parse(scrub(JSON.stringify(result.refs ?? {}))) };
-          cause = result.error ?? failure;
-        } catch (e) {
-          cause = e;
-        }
-        failure = cause instanceof Error ? cause.message : String(cause);
-        if (!isAuthFailure(cause)) break;
+      signal.throwIfAborted();
+      await unproxied();
+      let failure: unknown;
+      try {
+        const push: GitPushOptions & { corsProxy: string } = { dir: options.dir, url, ref: branch, remoteRef: `refs/heads/${branch}`, corsProxy: "", headers: { Authorization: basic(token) } };
+        const result = await git.push(push);
+        if (result.ok) return { branch, refs: JSON.parse(scrub(JSON.stringify(result.refs ?? {}))) };
+        failure = result.error ?? "push was refused";
+      } catch (e) {
+        failure = e;
       }
-      throw new Error(`git push failed: ${scrub(failure)}`);
+      throw new Error(`git push failed: ${scrub(failure instanceof Error ? failure.message : String(failure))}`);
     },
   };
 }
