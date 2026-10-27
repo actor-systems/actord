@@ -35,6 +35,12 @@ Cloudflare Container, registry-read egress through the toolkit's gateway, and cl
 The setup skills still name Node 22.18, as `actord doctor` accepts, and the plugin skills still teach the old style:
 both are plan 5's. Plan 4 is next: Clef and Clairic effects.
 
+**#80 (handler I/O) is fixed on `fix/80-handler-io-sentinel`, not yet released.** **Breaking:** a handler that awaits
+I/O now fails its delivery with "handlers may not await I/O; use ctx.effect". Each handler races a `setTimeout(0)`
+sentinel queued before it runs. Once a delivery ends, its `ctx` refuses every call. Awaiting storage or microtasks
+still passes (`[storage-await-no-macrotask]`). In the delivery that fails, a transaction another writer already
+requested still runs nested first and rolls back (`[sentinel-ordering]`); Limitations has it.
+
 ## Done
 - Guardrails: `.claude/settings.json` deny/ask rules, probed in-session (decision 0001).
 - **G0 passed** (verify run 2026-10-24): versions, guardrail rules test, DO messaging spike
@@ -85,8 +91,6 @@ both are plan 5's. Plan 4 is next: Clef and Clairic effects.
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 
 ## Open issues
-- #80: a handler that awaits I/O lets other writers' rows join its transaction, and they roll back if it throws.
-  Until the fix (a macrotask sentinel that fails the delivery) lands after plan 3, handlers must not await I/O.
 - #79: Computer 0.8.0's push drops `corsProxy`, so `gitPushEffect` refuses a push when `.git/config` sets one; the
   fix belongs upstream.
 - Eval runs deny the loopback port workerd needs (decision 0004), so agents in evals can't run their own

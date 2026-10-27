@@ -117,9 +117,11 @@ then throws, their rows roll back with it. The runtime test `[beside-transaction
 transaction started from outside runs inside the handler's once the handler yields to the event loop. A tool's
 `requestEffect` in that window is refused (`REQUESTED_IN_HANDLER`).
 
-The hazard is older than agent actors. The owner's ruling: race each handler against a macrotask sentinel, and fail
-the delivery loudly ("handlers may not await I/O; use ctx.effect"). It is tracked in #80 and lands after plan 3.
-Until then, a handler must not await I/O.
+The hazard is older than agent actors. The owner's ruling, now in place (#80, decision 0007's amendment): race each
+handler against a macrotask sentinel, and fail the delivery loudly ("handlers may not await I/O; use ctx.effect").
+In the delivery that fails, a transaction already requested beside the handler still runs nested first, and rolls
+back with it (`[sentinel-ordering]`). The agent runtime's own handlers (the `on` verbs, tool results, the session's
+settlement) await no I/O.
 
 ## Rejected alternatives
 - **The harness's completion settles the job** (spec §7.2). `PiHarness` has no completion callback.

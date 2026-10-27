@@ -51,6 +51,11 @@ once per actor; commits a handler's writes, outgoing messages, and effect intent
 once with retries, then dead-letters; and never reports an unacknowledged external effect as delivered. It
 does **not** guarantee exactly-once external effects, global ordering, or transactions across actors.
 
+Handlers may await storage, but not I/O. A handler that awaits a `fetch`, a timer or a model fails its delivery
+with "handlers may not await I/O; use ctx.effect". Its transaction would otherwise stay open across an event-loop
+turn, and other writers' rows could join it. Request that work with `ctx.effect`: it runs after commit, and its
+outcome comes back as a message.
+
 ## With a coding agent
 
 The repository ships plugins for Claude Code and Codex that design, implement, test, inspect, and evolve

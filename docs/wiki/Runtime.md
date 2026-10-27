@@ -8,6 +8,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | Refuses malformed, unauthorized-route, wrong-version, and invalid-payload messages | Envelope checks against `system.ts`; Standard Schema validation |
 | Handles a message id at most once per actor | SQLite inbox, retained 7 days |
 | A handler's writes, its outgoing messages, and its effect intents commit together or not at all | `ctx.storage.transaction()` around each handler |
+| A handler that awaits I/O fails its delivery, and nothing it wrote commits | A `setTimeout(0)` sentinel is queued before the handler runs. If it fires before the handler settles, the handler awaited I/O or a timer, so the transaction throws `<Actor>.<type>: handlers may not await I/O; use ctx.effect` and rolls back. The delivery then fails like any other. Awaits on storage and microtasks finish before it. Once the delivery ends, every `ctx` method throws, `ctx.sql.exec` included; `self`, `key` and `now` stay readable. #80 |
 | Delivers at least once, then dead-letters | SQLite outbox; alarm retries with backoff, up to 6 attempts |
 | Never reports an unacknowledged external effect as delivered | Retries only with an idempotency key; otherwise `in_doubt` |
 | A timer set by a handler is delivered after its delay, even across restarts, and handled at most once; it is set only if the handler commits, and cancelling it or setting its key again before it fires wins. A handler that keeps failing is retried with backoff, and after 6 attempts the timer is dropped (`retry.exhausted`), not delivered | `_actors_timers` row, written in the handler's transaction and removed in the transaction that handles it; id derived from the key, the due time and the message that set it |
@@ -25,6 +26,10 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A running session keeps the instructions it started with | The text is stored on the session row when it starts. Decision 0019 |
 | A workspace's edits outlive its container and restarts, and local-only paths never reach the object | Computer's `Workspace` in the object's SQLite; `localOnly` is Computer's `ignore`. A command cut off by a lost container is reported as one that "may have partly run", and never run again by itself. Decision 0022 |
 | A push authenticates from the Durable Object, and the token never enters the container | `gitPushEffect`: the app's pinned `https` URL, Basic `x-access-token`, a token minted for each attempt and scrubbed from errors, and `factory/` branches only by default. Decision 0022 |
+
+**Handlers may not await I/O.** A handler may await storage (`ctx.sql`, `this.ctx.storage`) and microtasks. Anything
+that crosses an event-loop turn fails the delivery with `handlers may not await I/O; use ctx.effect`: a `fetch`, a
+timer, a container call, a model. Request that work with `ctx.effect`, and handle its result message.
 
 **Effect keys.** An effect key identifies one effect for the actor's lifetime. Requesting it again records `effect.duplicate` and runs nothing. A new attempt at the same logical work needs a new key, for example one that includes an attempt or generation number.
 
@@ -108,6 +113,6 @@ Computer.
 
 Not guaranteed: `budget.usd` for a model pi-ai doesn't price (its cost is 0), or a pause in `wallClock` while a tool
 waits for a person. A session's `usd` counts the model cost pi-ai reports, not container seconds, so the factory
-counts container time itself. For every actor, a handler that yields to the event loop (awaits I/O or a timer) puts
-the rows other writers add meanwhile at risk: they join its transaction, and roll back if it throws (#80). Until #80
-lands, handlers must not await I/O. [Limitations](Limitations) has the rest.
+counts container time itself. A handler that awaits I/O fails its delivery (#80). In that delivery, a pi or Computer
+write that was already waiting to start still joins the handler's transaction, and rolls back with it.
+[Limitations](Limitations) has the rest.

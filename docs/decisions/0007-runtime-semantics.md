@@ -62,3 +62,26 @@ with the binding can call `receive`).
   forcing deliveries.
 - Approval decisions can arrive as messages: `ctx.approve(effect, key)` and `ctx.deny(effect, key, reason)`
   change the parked effect inside the handler's transaction; the approved effect runs after commit.
+
+## Amendment (#80): a handler that awaits I/O fails its delivery
+- **Problem:** decision 2 keeps handlers storage-only, but nothing enforced it. A handler whose transaction spans an
+  event-loop turn lets transactions started elsewhere in the object run nested in it
+  (`[beside-transaction-nested]`). Its rollback then takes their rows: pi's session store, Computer's vfs sync-back,
+  Lifecycle's job rows, actord's own drain settlements.
+- **Change:**
+  - **The sentinel.** The runtime queues a `setTimeout(0)` sentinel before calling the handler, and races the
+    handler against it.
+  - **When the sentinel fires first.** The transaction closure throws `<Actor>.<type>: handlers may not await I/O;
+    use ctx.effect`. The transaction rolls back, and the delivery fails like any other.
+  - **When the handler settles first.** The sentinel is cleared.
+  - **The closed ctx.** Once the delivery ends, the handler's `ctx` refuses every call, `sql.exec` included, with
+    `<Actor>: this handler's delivery has ended; its ctx can't be used`. `self`, `key` and `now` stay readable.
+- **Verified in workerd.**
+  - **Storage.** Awaiting each storage API a handler can reach finishes before the sentinel:
+    `[storage-await-no-macrotask]`. That covers the KV and SQL APIs, alarms, a nested transaction, `sync`,
+    `getCurrentBookmark` and Lifecycle's `jobs.push`.
+  - **A transaction already requested.** One requested beside the handler runs nested before the sentinel, so the
+    failed delivery still rolls it back.
+  - **A transaction begun later.** One begun by I/O that arrives after the handler started runs after the rollback,
+    and commits. `[sentinel-ordering]` pins both.
+- **Breaking:** a handler that awaited I/O used to commit. It now fails its delivery every time.
