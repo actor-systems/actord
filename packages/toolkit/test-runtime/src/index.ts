@@ -2,8 +2,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents/lifecycle";
 import { z } from "zod";
+import { agentExhausted, agentFailed } from "../../src/agents/index.ts";
 import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
-import { defineSystem, inboundEmail, message, webhook } from "../../src/system.ts";
+import { defineSystem, inboundEmail, message, pi, webhook } from "../../src/system.ts";
 import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
 
 export { Scribe } from "./agent.ts";
@@ -28,6 +29,15 @@ export const system = defineSystem({
     "probe.approve": message({ version: 1, description: "A person approves a parked effect", payload: z.object({ key: z.string(), by: z.string() }) }),
     "probe.deny": message({ version: 1, description: "A person denies a parked effect", payload: z.object({ key: z.string(), by: z.string(), effect: z.enum(["gateway.approval", "gateway.job-approval"]).optional() }) }),
     "approval.decided": message({ version: 1, description: "A person answered an approval request", payload: approvalDecided }),
+    // Scribe, the agent actor (agent.ts). From @ingress, scribe.tick with delayMs sets a timer that delivers it again from @timer, without.
+    "scribe.tick": message({ version: 1, description: "Set a timer, or a timer fired", payload: z.object({ key: z.string(), delayMs: z.number().optional() }) }),
+    "scribe.task": message({ version: 1, description: "Start a session on a task", payload: z.object({ topic: z.string() }) }),
+    "scribe.hint": message({ version: 1, description: "Steer the running session", payload: z.object({ text: z.string() }) }),
+    "scribe.halt": message({ version: 1, description: "Stop the running session", payload: z.object({}) }),
+    // The refinement is beyond JSON Schema, so pi lets a blank summary through to finish, which the schema refuses.
+    "scribe.done": message({ version: 1, description: "The session's result", payload: z.object({ summary: z.string().refine((s) => s.trim() !== "", "summary must not be blank") }) }),
+    "agent.failed": message({ version: 1, description: "A session ended without a result", payload: agentFailed }),
+    "agent.exhausted": message({ version: 1, description: "A session ran out of budget", payload: agentExhausted }),
   },
   sources: {
     hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
@@ -45,6 +55,17 @@ export const system = defineSystem({
         { every: "1h", message: "probe.tick.hourly" },
         { cron: "0 9 * * *", message: "probe.tick.daily" },
       ],
+    },
+    Scribe: {
+      binding: "SCRIBE",
+      kind: "agent",
+      purpose: "Writes up a task as a Pi agent, beside actord in one Durable Object",
+      justification: ["state", "lifecycle"],
+      harness: pi(),
+      model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", reasoning: "high" },
+      on: { "scribe.task": "start", "scribe.hint": "steer", "scribe.halt": "stop" },
+      returns: "scribe.done",
+      budget: { usd: 1, turns: 10, wallClock: "10m" },
     },
   },
   effects: {
@@ -76,6 +97,14 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.approve", to: "Probe" },
     { from: "@ingress", message: "probe.deny", to: "Probe" },
     { from: "@mail", message: "approval.decided", to: "Probe" },
+    { from: "@ingress", message: "scribe.tick", to: "Scribe" },
+    { from: "@timer", message: "scribe.tick", to: "Scribe" },
+    { from: "@ingress", message: "scribe.task", to: "Scribe" },
+    { from: "@ingress", message: "scribe.hint", to: "Scribe" },
+    { from: "@ingress", message: "scribe.halt", to: "Scribe" },
+    { from: "Scribe", message: "scribe.done", to: "Scribe" },
+    { from: "Scribe", message: "agent.failed", to: "Scribe" },
+    { from: "Scribe", message: "agent.exhausted", to: "Scribe" },
   ],
 });
 

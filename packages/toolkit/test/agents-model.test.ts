@@ -140,9 +140,11 @@ describe("agent check rules", () => {
     expect(codes(project(sys, {}, { containers: [{ class_name: "Other", scheduling_policy: "durable_object" }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
     expect(codes(project(sys, {}, { containers: [{ class_name: "Coder" }] }))).toEqual(["error:AGENT_CONTAINER_CONFIG_MISSING"]);
   });
-  it("AGENT_NAME_RESERVED: agent.session and agent.session.settled", () => {
+  it("AGENT_NAME_RESERVED: agent.session and every agent.session.* name", () => {
     expect(codes(project(build({ extraEffects: { "agent.session": tool } })))).toEqual(["error:AGENT_NAME_RESERVED"]);
     expect(codes(project(build({ extraMessages: { "agent.session.settled": Msg("x") } })))).toEqual(["error:AGENT_NAME_RESERVED"]);
+    expect(codes(project(build({ extraEffects: { "agent.session.steer": tool } })))).toEqual(["error:AGENT_NAME_RESERVED"]);
+    expect(codes(project(build({ extraEffects: { "agent.sessions": tool } })))).toEqual([]);
   });
   it("AGENT_INSTRUCTIONS_MISSING: the file must exist next to system.ts", () => {
     expect(codes(project(build({ instructions: "missing.md" })))).toEqual(["error:AGENT_INSTRUCTIONS_MISSING"]);

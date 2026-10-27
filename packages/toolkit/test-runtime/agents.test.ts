@@ -1,11 +1,45 @@
 // Agents in workerd: a Pi session and actord in one Durable Object, against the Scribe probe (test-runtime/src/agent.ts).
 import { env } from "cloudflare:workers";
-import { expect, it } from "vitest";
-import { ingress } from "../src/runtime/index.ts";
-import { eventually } from "../src/testing.ts";
-import { scribeSystem } from "./src/agent.ts";
+import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
+import { afterEach, expect, it } from "vitest";
+import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
+import { type ActorEvent, ingress } from "../src/runtime/index.ts";
+import { captureEvents, eventually, resetSeams, settle } from "../src/testing.ts";
+import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
+type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
+const shared = globalThis as { __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string> };
+
+/** Answer each model request of instance `name` with `script` (Scribe reads it at every request). */
+function script(name: string, fn: Script): void {
+  shared.__scribeScripts = { ...shared.__scribeScripts, [name]: fn };
+}
+/**
+ * A gate a scripted turn waits on, and `open` lets go. `reached` says a turn is waiting: a flag the test polls, not a
+ * promise, since a promise the Durable Object resolves would carry the test's continuation into the object's I/O.
+ */
+function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((r) => (open = r));
+  const g = { open, reached: false, wait: () => ((g.reached = true), opened) };
+  return g;
+}
+const reached = (g: { reached: boolean }) => eventually(async () => expect(g.reached).toBe(true));
+const gates: Array<() => void> = [];
+afterEach(() => {
+  for (const open of gates.splice(0)) open();
+  resetSeams();
+});
+
+const finish = (args: unknown): ScriptedTurn => ({ calls: [{ name: "finish", args }] });
+const text = (m: { content: unknown }) => (typeof m.content === "string" ? m.content : (m.content as Array<{ type: string; text?: string }>).map((c) => c.text ?? "").join(""));
+/** The texts of a request's user messages, in order. */
+const users = (r: ScriptedRequest) => r.messages.filter((m) => m.role === "user").map(text);
+/** Everything a request's system messages say, sections included. */
+const systemOf = (r: ScriptedRequest) => JSON.stringify(r.messages.filter((m) => m.role === "system"));
+const task = (key: string, topic: string, id: string) => ingress(env, system, "Scribe", "scribe.task", { topic }, { key, id });
+const notes = (events: ActorEvent[], actor: string, reason: string) => events.filter((e) => e.kind === "note" && e.actor === actor && e.reason === reason);
 
 it("[pi-and-actord-share-alarm] a Pi session and actord's timers run in one Durable Object, on its one alarm", async () => {
   const gate = globalThis as { __scribeGate?: Promise<void> };
@@ -15,7 +49,7 @@ it("[pi-and-actord-share-alarm] a Pi session and actord's timers run in one Dura
   try {
     // The model holds its answer until the gate opens, so Pi's run, and its wake job, are still going.
     expect(await s.submit("Say hello", "op-1")).toMatchObject({ operationId: "op-1", accepted: true });
-    await ingress(env, scribeSystem, "Scribe", "scribe.tick", { key: "t1", delayMs: 20 }, { key: "share" });
+    await ingress(env, system, "Scribe", "scribe.tick", { key: "t1", delayMs: 20 }, { key: "share" });
     // Fired by the alarm, which Pi's wake job, waiting on its run, doesn't hold.
     await eventually(async () => expect(await s.fired()).toEqual(["t1"]));
     expect(await s.pending()).toMatchObject([{ operationId: "op-1", status: "running" }]);
@@ -50,4 +84,218 @@ it("[json-schema-tool] pi takes a tool whose parameters are plain JSON Schema (z
   expect((await s.echoCalls()).map((c) => c.args)).toEqual([{ v: 2 }]);
   const results = (await s.messages()).flatMap((e) => e.model ?? []).filter((m) => m.role === "toolResult");
   expect(results.map((r) => r.isError)).toEqual([true, false]);
+});
+
+it("[agent-start-returns] a start runs a session whose finish returns the result to the actor, settled by probe within a period", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("returns-1", (r) => (requests.push(r), { text: "Here is the write-up.", ...finish({ summary: "ok" }) }));
+  const s = scribe("returns-1");
+  const started = Date.now();
+  expect(await task("returns-1", "the release", "task-r1")).toMatchObject({ status: "handled" });
+  await eventually(async () => expect(await s.done()).toEqual([{ id: expect.any(String), sender: "Scribe:returns-1", summary: "ok" }]), 5000);
+  // Settled by probeNow, well inside the 30s probe period.
+  expect(Date.now() - started).toBeLessThan(30_000);
+  // The prompt is the start message, rendered: its type, then its payload as indented JSON.
+  expect(users(requests[0]!)).toEqual(['scribe.task\n\n{\n  "topic": "the release"\n}']);
+  // The model's declared reasoning, "high", is the session's thinking level.
+  expect(requests[0]!.reasoning).toBe("high");
+  const [row] = await s.sessions();
+  expect(await s.job("task-r1")).toMatchObject({ settledBy: "probe", outcome: { summary: "ok" }, handle: { session: row!.session, operation: "task-r1", generation: 1 } });
+  expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-r1")).toMatchObject({ status: "confirmed", attempts: 1 });
+  expect(events.filter((e) => e.kind === "effect.confirmed" && e.effect === "agent.session")).toMatchObject([{ effectKey: "task-r1", detail: { settledBy: "probe" } }]);
+  expect(row).toEqual({ key: "task-r1", session: expect.stringMatching(/^\d+$/), operation: "task-r1", generation: 1, instructions: expect.stringContaining("You are Scribe"), started_at: expect.any(Number), result: '{"summary":"ok"}', exhausted: null });
+  expect((await s.piSessions()).map((p) => p.id)).toContain(row!.session);
+});
+
+it("[agent-finish-invalid] a finish whose payload fails the returns schema is an error the model sees; the next valid one returns", async () => {
+  const requests: ScriptedRequest[] = [];
+  // A blank summary passes the JSON Schema pi checks (pi would coerce a number to a string), and fails scribe.done's refinement.
+  script("invalid-1", (r) => (requests.push(r), r.turn === 0 ? finish({ summary: " " }) : finish({ summary: "fixed" })));
+  const s = scribe("invalid-1");
+  await task("invalid-1", "the bug", "task-i1");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["fixed"]), 5000);
+  const [result] = requests[1]!.lastToolResults as Array<{ toolName: string; isError: boolean; content: Array<{ text: string }> }>;
+  expect(result).toMatchObject({ toolName: "finish", isError: true });
+  expect(result!.content.map((c) => c.text).join("")).toBe("The result doesn't match scribe.done:\n- summary: summary must not be blank");
+  await settle(env, system);
+  expect((await s.done()).map((d) => d.summary)).toEqual(["fixed"]);
+});
+
+it("[agent-duplicate-start] one start envelope delivered twice runs one session, and a redelivery after its result does nothing", async () => {
+  script("dup-1", () => finish({ summary: "once" }));
+  const s = scribe("dup-1");
+  const receipts = await Promise.all([task("dup-1", "the duplicate", "task-d1"), task("dup-1", "the duplicate", "task-d1")]);
+  expect(receipts.map((r) => r.status).sort()).toEqual(["duplicate", "handled"]);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["once"]), 5000);
+  expect(await task("dup-1", "the duplicate", "task-d1")).toMatchObject({ status: "duplicate" });
+  // Past the inbox's dedupe (its row expired): the handler runs again, and finds the session already started.
+  await runInDurableObject(s, (_i, state) => state.storage.sql.exec("DELETE FROM _actors_inbox WHERE id = 'task-d1'"));
+  expect(await task("dup-1", "the duplicate", "task-d1")).toMatchObject({ status: "handled" });
+  await settle(env, system);
+  expect((await s.done()).map((d) => d.summary)).toEqual(["once"]);
+  expect((await s.sessions()).map((r) => r.key)).toEqual(["task-d1"]);
+  // One session besides pi's root, and one prompt submitted to it.
+  const [row] = await s.sessions();
+  expect((await s.piSessions()).map((p) => p.id)).toEqual(["1", row!.session]);
+  expect((await s.messages(row!.session as string)).filter((e) => e.kind === "pi.user")).toHaveLength(1);
+});
+
+it("[agent-steer] a steer message joins the running turn with the hint's id; with no session it is only a note", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  const requests: ScriptedRequest[] = [];
+  script("steer-1", async (r) => {
+    requests.push(r);
+    if (r.turn === 0) {
+      await held.wait();
+      return { text: "Thinking it over." };
+    }
+    return finish({ summary: "with bullets" });
+  });
+  const s = scribe("steer-1");
+  await task("steer-1", "the notes", "task-s1");
+  await reached(held);
+  expect(await ingress(env, system, "Scribe", "scribe.hint", { text: "use bullet points" }, { key: "steer-1", id: "hint-1" })).toMatchObject({ status: "handled" });
+  // The steer is with pi before the turn it joins ends.
+  await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session.steer:hint-1")).toMatchObject({ status: "confirmed" }));
+  held.open();
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["with bullets"]), 5000);
+  expect(users(requests[1]!).at(-1)).toBe('scribe.hint\n\n{\n  "text": "use bullet points"\n}');
+  const [row] = await s.sessions();
+  expect(await s.wait("hint-1", row!.session as string)).toMatchObject({ operationId: "hint-1", session: row!.session, status: "done" });
+
+  expect(await ingress(env, system, "Scribe", "scribe.hint", { text: "anyone?" }, { key: "steer-none", id: "hint-2" })).toMatchObject({ status: "handled" });
+  expect(notes(events, "Scribe:steer-none", "no active session; not steered")).toHaveLength(1);
+  expect((await scribe("steer-none").outbox()).filter((r) => r.kind === "effect")).toEqual([]);
+});
+
+it("[agent-stop-during-model-call] a stop during a model call aborts the session, fails the job as cancelled and tells the actor", async () => {
+  const held = gate();
+  gates.push(held.open);
+  script("stop-1", async () => {
+    await held.wait();
+    return finish({ summary: "too late" });
+  });
+  const s = scribe("stop-1");
+  await task("stop-1", "the long one", "task-x1");
+  await reached(held);
+  await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-x1")).toMatchObject({ status: "awaiting_job" }));
+  expect(await ingress(env, system, "Scribe", "scribe.halt", {}, { key: "stop-1", id: "halt-1" })).toMatchObject({ status: "handled" });
+  const [row] = await s.sessions();
+  await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-x1", reason: "stopped" } }]), 5000);
+  expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-x1")).toMatchObject({ status: "failed", lastError: "cancelled" });
+  expect(await s.job("task-x1")).toMatchObject({ settledBy: "cancel" });
+  expect(await s.wait("task-x1", row!.session as string)).toMatchObject({ status: "unanswered" });
+  expect(await s.done()).toEqual([]);
+});
+
+it("[agent-start-replaces-session] a second start aborts the running session; the first session's late finish is only a note", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  script("replace-1", async (r) => {
+    const prompt = users(r).at(-1) ?? "";
+    if (prompt.includes("late")) return finish({ summary: "late" });
+    if (prompt.includes('"first"')) {
+      await held.wait();
+      return finish({ summary: "first" });
+    }
+    return finish({ summary: "second" });
+  });
+  const s = scribe("replace-1");
+  await task("replace-1", "first", "task-a");
+  await reached(held);
+  await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-a")).toMatchObject({ status: "awaiting_job" }));
+  await task("replace-1", "second", "task-b");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 5000);
+  await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-a")).toMatchObject({ status: "failed", lastError: "cancelled" }));
+  const [first, second] = await s.sessions();
+  expect([first, second].map((r) => [r!.key, r!.generation])).toEqual([["task-a", 1], ["task-b", 2]]);
+  expect(first!.session).not.toBe(second!.session);
+  // The first session's cancel settled a replaced generation: a note, not agent.failed.
+  await settle(env, system);
+  expect(await s.failures()).toEqual([]);
+  expect(notes(events, "Scribe:replace-1", "stale session result")).toMatchObject([{ detail: { key: "task-a", status: "failed" } }]);
+  // The first session answers late (pi already discarded its aborted model call, so it gets new input): its finish is a note.
+  await s.submit("A late answer", "late-1", first!.session as string);
+  await eventually(async () => expect(notes(events, "Scribe:replace-1", "stale session result")).toHaveLength(2));
+  expect(notes(events, "Scribe:replace-1", "stale session result")[1]).toMatchObject({ detail: { key: "task-a", session: first!.session, generation: 1, via: "finish" } });
+  await settle(env, system);
+  expect((await s.done()).map((d) => d.summary)).toEqual(["second"]);
+  expect((await s.sessions()).find((r) => r.key === "task-a")).toMatchObject({ result: null });
+});
+
+it("[agent-ended-without-result] a run that answers without calling finish fails the session", async () => {
+  script("ended-1", () => ({ text: "All done, nothing to return." }));
+  const s = scribe("ended-1");
+  await task("ended-1", "the quick one", "task-e1");
+  await eventually(async () => expect(await s.failures()).toMatchObject([{ type: "agent.failed", payload: { key: "task-e1", reason: "ended without returning a result" } }]), 5000);
+  expect((await s.failures())[0]!.payload.session).toBe((await s.sessions())[0]!.session);
+  expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-e1")).toMatchObject({ status: "failed", lastError: "ended without returning a result" });
+  expect(await s.done()).toEqual([]);
+});
+
+it("[agent-restart-awaiting] a restart while the session runs: pi resumes it, the job isn't started again, and the result arrives once", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  let calls = 0;
+  script("restart-1", async () => {
+    // The first request is cut off by the restart; pi asks again once it resumes the run.
+    if (calls++ === 0) await held.wait();
+    return finish({ summary: "resumed" });
+  });
+  const s = scribe("restart-1");
+  await task("restart-1", "the resumable one", "task-z1");
+  await reached(held);
+  await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-z1")).toMatchObject({ status: "awaiting_job" }));
+  await abortAllDurableObjects();
+  await settle(env, system);
+  await eventually(async () => expect((await scribe("restart-1").done()).map((d) => d.summary)).toEqual(["resumed"]), 5000);
+  await settle(env, system);
+  expect((await scribe("restart-1").done()).map((d) => d.summary)).toEqual(["resumed"]);
+  expect(calls).toBe(2);
+  expect(events.filter((e) => e.kind === "job.started" && e.actor === "Scribe:restart-1")).toHaveLength(1);
+  expect((await scribe("restart-1").outbox()).find((r) => r.id === "fx:agent.session:task-z1")).toMatchObject({ status: "confirmed", attempts: 1 });
+});
+
+it("[agent-instructions-pinned] a session keeps the instructions it started with across a restart; a new session gets the new ones", async () => {
+  const held = gate();
+  gates.push(held.open);
+  const requests: Array<{ topic: string; request: ScriptedRequest }> = [];
+  let firstCalls = 0;
+  script("pin-1", async (r) => {
+    const topic = users(r)[0]?.includes('"one"') ? "one" : "two";
+    requests.push({ topic, request: r });
+    if (topic === "two") return finish({ summary: "two" });
+    firstCalls++;
+    if (firstCalls === 1) await held.wait(); // cut off by the restart
+    // The resumed request was prepared before the restart; a failed finish makes pi prepare another, rendering again.
+    if (firstCalls === 2) return finish({ summary: " " });
+    return finish({ summary: "one" });
+  });
+  shared.__scribeInstructions = { "pin-1": "Instructions v1" };
+  try {
+    const s = scribe("pin-1");
+    await task("pin-1", "one", "task-p1");
+    await reached(held);
+    await eventually(async () => expect((await s.outbox()).find((r) => r.id === "fx:agent.session:task-p1")).toMatchObject({ status: "awaiting_job" }));
+    shared.__scribeInstructions = { "pin-1": "Instructions v2" };
+    await abortAllDurableObjects();
+    await settle(env, system);
+    await eventually(async () => expect((await scribe("pin-1").done()).map((d) => d.summary)).toEqual(["one"]), 5000);
+    const rendered = requests.filter((r) => r.topic === "one").at(-1)!.request;
+    expect(systemOf(rendered)).toContain("Instructions v1");
+    expect(systemOf(rendered)).not.toContain("Instructions v2");
+    await task("pin-1", "two", "task-p2");
+    await eventually(async () => expect((await scribe("pin-1").done()).map((d) => d.summary)).toEqual(["one", "two"]), 5000);
+    const fresh = requests.find((r) => r.topic === "two")!.request;
+    expect(systemOf(fresh)).toContain("Instructions v2");
+    expect(systemOf(fresh)).not.toContain("Instructions v1");
+    expect((await scribe("pin-1").sessions()).map((r) => r.instructions)).toEqual(["Instructions v1", "Instructions v2"]);
+  } finally {
+    delete shared.__scribeInstructions;
+  }
 });

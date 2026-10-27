@@ -32,8 +32,8 @@ const FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
 /** Senders the runtime writes itself: the fixed route senders, and "@rpc" for a decision made through decide(). */
 const RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
 
-/** The internal job effect and the internal message of an agent session. */
-const RESERVED_AGENT_NAMES = ["agent.session", "agent.session.settled"];
+/** agent.session and every agent.session.* name: the agent runtime's internal effects and messages (src/agents), which win over declared ones. */
+const reservedAgentName = (name: string) => name === "agent.session" || name.startsWith("agent.session.");
 
 type AddFn = (severity: Severity, code: string, subject: string | null, message: string, fix?: string | null) => void;
 
@@ -130,9 +130,9 @@ export function checkProject(project: Project): Diagnostic[] {
       add("warning", "ACTOR_UNREACHABLE", a.name, `No route delivers anything to ${a.name}, so nothing can ever activate it`);
   }
   for (const msg of m.messages)
-    if (RESERVED_AGENT_NAMES.includes(msg.name)) add("error", "AGENT_NAME_RESERVED", msg.name, `${msg.name} is reserved for the agent runtime and can't be declared as a message`, "Rename it.");
+    if (reservedAgentName(msg.name)) add("error", "AGENT_NAME_RESERVED", msg.name, `${msg.name} is reserved for the agent runtime and can't be declared as a message`, "Rename it.");
   for (const e of m.effects)
-    if (RESERVED_AGENT_NAMES.includes(e.name)) add("error", "AGENT_NAME_RESERVED", e.name, `${e.name} is reserved for the agent runtime and can't be declared as an effect`, "Rename it.");
+    if (reservedAgentName(e.name)) add("error", "AGENT_NAME_RESERVED", e.name, `${e.name} is reserved for the agent runtime and can't be declared as an effect`, "Rename it.");
   const bindings = new Map<string, string[]>();
   for (const a of m.actors) bindings.set(a.binding, [...(bindings.get(a.binding) ?? []), a.name]);
   for (const [b, names] of bindings) if (names.length > 1) add("error", "BINDING_DUPLICATE", b, `Binding ${b} is used by ${names.join(" and ")}`);

@@ -1198,7 +1198,7 @@ var ACTOR_NAME = /^[A-Z][A-Za-z0-9]*$/;
 var MESSAGE_NAME = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 var FIXED_SENDERS = ["@clock", "@ingress", "@timer"];
 var RESERVED_SENDERS = [...FIXED_SENDERS, "@rpc"];
-var RESERVED_AGENT_NAMES = ["agent.session", "agent.session.settled"];
+var reservedAgentName = (name) => name === "agent.session" || name.startsWith("agent.session.");
 function localOnlyInvalid(pattern) {
   return !(pattern.startsWith("/") || pattern.startsWith("**/")) || /[{}[\]?\\,]/.test(pattern) || /\*{3,}/.test(pattern);
 }
@@ -1283,9 +1283,9 @@ function checkProject(project) {
       add("warning", "ACTOR_UNREACHABLE", a.name, `No route delivers anything to ${a.name}, so nothing can ever activate it`);
   }
   for (const msg of m.messages)
-    if (RESERVED_AGENT_NAMES.includes(msg.name)) add("error", "AGENT_NAME_RESERVED", msg.name, `${msg.name} is reserved for the agent runtime and can't be declared as a message`, "Rename it.");
+    if (reservedAgentName(msg.name)) add("error", "AGENT_NAME_RESERVED", msg.name, `${msg.name} is reserved for the agent runtime and can't be declared as a message`, "Rename it.");
   for (const e of m.effects)
-    if (RESERVED_AGENT_NAMES.includes(e.name)) add("error", "AGENT_NAME_RESERVED", e.name, `${e.name} is reserved for the agent runtime and can't be declared as an effect`, "Rename it.");
+    if (reservedAgentName(e.name)) add("error", "AGENT_NAME_RESERVED", e.name, `${e.name} is reserved for the agent runtime and can't be declared as an effect`, "Rename it.");
   const bindings = /* @__PURE__ */ new Map();
   for (const a of m.actors) bindings.set(a.binding, [...bindings.get(a.binding) ?? [], a.name]);
   for (const [b, names] of bindings) if (names.length > 1) add("error", "BINDING_DUPLICATE", b, `Binding ${b} is used by ${names.join(" and ")}`);

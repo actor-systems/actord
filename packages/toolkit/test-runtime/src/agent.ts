@@ -1,33 +1,27 @@
-// A Durable Object that hosts a Pi session beside actord, the way an agent actor will (spike 3).
+// Scribe: the probe system's agent actor (declared in index.ts). Its Pi sessions run beside actord in one Durable
+// Object, as agent.session jobs (src/agents), on a scripted model.
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability } from "agents/lifecycle";
-import { PiHarness } from "agents/harness/pi";
 import { Type } from "@earendil-works/pi-ai";
-import { createRegistry, Harness, type ToolRegistration } from "@earendil-works/pi-durable";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { z } from "zod";
-import { type ScriptedTurn, scriptedModel } from "../../src/agents/index.ts";
-import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
-import { defineSystem, message } from "../../src/system.ts";
+import { agentRuntime, type ScriptedRequest, type ScriptedTurn, scriptedModel } from "../../src/agents/index.ts";
+import type { Envelope } from "../../src/runtime/index.ts";
+// index.ts re-exports Scribe from here, so this import is circular: `system` is read only when an instance is built.
+import { system } from "./index.ts";
 
-export const scribeSystem = defineSystem({
-  name: "scribe-probe",
-  messages: {
-    // From @ingress, with delayMs, it sets a timer that delivers it again from @timer, without.
-    "scribe.tick": message({ version: 1, description: "Set a timer, or a timer fired", payload: z.object({ key: z.string(), delayMs: z.number().optional() }) }),
-  },
-  actors: {
-    Scribe: { binding: "SCRIBE", kind: "deterministic", purpose: "Hosts a Pi session beside actord", justification: ["state"] },
-  },
-  routes: [
-    { from: "@ingress", message: "scribe.tick", to: "Scribe" },
-    { from: "@timer", message: "scribe.tick", to: "Scribe" },
-  ],
-});
+/** A test's script for one instance, by its name: answers each model request (agents.test.ts installs them). */
+type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
+const shared = globalThis as { __scribeGate?: Promise<void>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string> };
+
+/** The instructions an instance is built with, unless a test set others for its name. */
+const INSTRUCTIONS = "You are Scribe. Write up the task you're given, then call finish with a summary.";
 
 /**
- * Each instance's script, by its name: "echo-…" calls the echo tool, "json-…" calls its JSON Schema twin, and others
- * say hello once a test opens `__scribeGate`, if it set one, holding Pi's run in flight until then.
+ * Each instance's script, by its name: a script a test installed for it, read at each request; else "echo-…" calls
+ * the echo tool, "json-…" calls its JSON Schema twin, and others say hello once a test opens `__scribeGate`, if it
+ * set one, holding Pi's run in flight until then.
  */
 function scriptFor(name: string): Parameters<typeof scriptedModel>[0] {
   if (name.startsWith("echo-")) {
@@ -37,8 +31,10 @@ function scriptFor(name: string): Parameters<typeof scriptedModel>[0] {
     ];
   }
   if (name.startsWith("json-")) return [{ calls: [{ name: "echo", args: { v: "one" } }, { name: "echo", args: { v: 2 } }] }, { text: "done" }];
-  return async (): Promise<ScriptedTurn> => {
-    await (globalThis as { __scribeGate?: Promise<void> }).__scribeGate;
+  return async (request): Promise<ScriptedTurn> => {
+    const script = shared.__scribeScripts?.[name];
+    if (script) return script(request);
+    await shared.__scribeGate;
     return { text: "hello" };
   };
 }
@@ -62,49 +58,82 @@ class JobLog extends LifecycleCapability {
 export class Scribe extends DurableObject<Env> {
   readonly lifecycle = Lifecycle.install(this);
   // Tests reach Scribe by name; an id without one (idFromString, newUniqueId) gets the hello script and no tools.
-  readonly script = scriptedModel(scriptFor(this.ctx.id.name ?? ""));
-  // One per object, never at module scope: pi keeps each Harness subscribed to its registry until it closes.
-  readonly registry = createRegistry();
-  readonly harness = new PiHarness({
-    harness: ({ storage, context, onWake }) => Harness.open(storage, { models: this.script.models, registry: this.registry, onWake }, context),
-    defaults: { model: this.script.model },
-  });
+  readonly #name = this.ctx.id.name ?? "";
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.lifecycle.use(new JobLog());
-    this.lifecycle.use(this.harness);
-    const name = ctx.id.name ?? "";
-    if (name.startsWith("echo-")) this.registry.install({ name: "echo", tools: [echoTool(ctx.storage.sql)] });
-    if (name.startsWith("json-")) this.registry.install({ name: "echo", tools: [jsonEchoTool(ctx.storage.sql)] });
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS fired (key TEXT NOT NULL)");
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)");
+    for (const table of ["fired (key TEXT NOT NULL)", "echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)", "done (id TEXT NOT NULL, sender TEXT NOT NULL, summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)"]) {
+      ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${table}`);
+    }
   }
 
-  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, scribeSystem, "Scribe", {
-    "scribe.tick": ({ payload }, ctx) => {
-      if (payload.delayMs !== undefined) ctx.after(payload.delayMs, "scribe.tick", { key: payload.key }, { key: payload.key });
-      else ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
+  readonly actor = agentRuntime(
+    { lifecycle: this.lifecycle, ctx: this.ctx, env: this.env },
+    system,
+    "Scribe",
+    {
+      "scribe.tick": ({ payload }, ctx) => {
+        if (payload.delayMs !== undefined) ctx.after(payload.delayMs, "scribe.tick", { key: payload.key }, { key: payload.key });
+        else ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", payload.key);
+      },
+      "scribe.done": ({ id, from, payload }, ctx) => {
+        ctx.sql.exec("INSERT INTO done (id, sender, summary) VALUES (?, ?, ?)", id, from, payload.summary);
+      },
+      "agent.failed": ({ type, payload }, ctx) => {
+        ctx.sql.exec("INSERT INTO failures (type, payload) VALUES (?, ?)", type, JSON.stringify(payload));
+      },
+      "agent.exhausted": ({ type, payload }, ctx) => {
+        ctx.sql.exec("INSERT INTO failures (type, payload) VALUES (?, ?)", type, JSON.stringify(payload));
+      },
     },
-  });
+    {
+      instructions: shared.__scribeInstructions?.[this.#name] ?? INSTRUCTIONS,
+      model: scriptedModel(scriptFor(this.#name)),
+      extensions: this.#name.startsWith("echo-") ? [{ name: "echo", tools: [echoTool(this.ctx.storage.sql)] }] : this.#name.startsWith("json-") ? [{ name: "echo", tools: [jsonEchoTool(this.ctx.storage.sql)] }] : [],
+    },
+  );
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
   }
-  submit(prompt: string, operationId: string) {
-    return this.harness.submit(prompt, { operationId });
+  submit(prompt: string, operationId: string, session?: string) {
+    return this.actor.harness.submit(prompt, { operationId, ...(session ? { session } : {}) });
   }
-  wait(operationId: string) {
-    return this.harness.wait(operationId);
+  wait(operationId: string, session?: string) {
+    return this.actor.harness.wait(operationId, session ? { session } : {});
   }
   pending() {
-    return this.harness.pending();
+    return this.actor.harness.pending();
   }
-  messages() {
-    return this.harness.messages();
+  messages(session?: string) {
+    return this.actor.harness.messages(session ? { session } : {});
   }
   async usage() {
-    return (await this.harness.pi()).usage(BACKGROUND_CONTEXT);
+    return (await this.actor.harness.pi()).usage(BACKGROUND_CONTEXT);
+  }
+  async piSessions() {
+    return this.actor.harness.sessions.list();
+  }
+  probeNow(key: string) {
+    return this.actor.probeNow("agent.session", key);
+  }
+  outbox() {
+    return this.actor.outbox();
+  }
+  /** The agent.session job's row body for a start message's id: its handle, settledBy and outcome. */
+  job(key: string): Record<string, unknown> | null {
+    const row = this.ctx.storage.sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ?", `fx:agent.session:${key}`).toArray()[0];
+    return row ? (JSON.parse(row.body) as Record<string, unknown>) : null;
+  }
+  sessions(): Array<Record<string, unknown>> {
+    return this.ctx.storage.sql.exec("SELECT * FROM _actors_agent_sessions ORDER BY generation").toArray();
+  }
+  done(): Array<{ id: string; sender: string; summary: string }> {
+    return this.ctx.storage.sql.exec<{ id: string; sender: string; summary: string }>("SELECT id, sender, summary FROM done ORDER BY rowid").toArray();
+  }
+  failures(): Array<{ type: string; payload: Record<string, unknown> }> {
+    return this.ctx.storage.sql.exec<{ type: string; payload: string }>("SELECT type, payload FROM failures ORDER BY rowid").toArray().map((r) => ({ type: r.type, payload: JSON.parse(r.payload) as Record<string, unknown> }));
   }
   fired(): string[] {
     return this.ctx.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key);
