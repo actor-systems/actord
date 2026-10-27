@@ -574,7 +574,8 @@ it("[agent-restart-mid-tool-keyed] a restart while a keyed tool's effect runs: p
   const key = `${row!.session}:${results[0]!.toolCallId}`;
   expect((await scribe("tool-keyed-1").outbox()).filter((r) => r.target === "note.keyed")).toMatchObject([{ id: `fx:note.keyed:${key}`, status: "confirmed", attempts: 2 }]);
   // The rerun asked for the same key: actord's recovery had queued the cut-off attempt again, and the rerun waited for it.
-  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "note.keyed")).toMatchObject([{ effectKey: key, detail: { existingStatus: "pending" } }]);
+  // Whether that retry had started by then depends on a drive racing pi's rerun: queued or running, never a second row.
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "note.keyed")).toMatchObject([{ effectKey: key, detail: { existingStatus: expect.stringMatching(/^(pending|running)$/) } }]);
   // Twice, the most a keyed effect runs here: the attempt the restart cut off, then its retry.
   expect(runs).toBe(2);
 });
