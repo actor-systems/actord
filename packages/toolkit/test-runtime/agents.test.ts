@@ -756,6 +756,34 @@ for (const [how, reason] of [["stopped", "the session was stopped"], ["replaced"
   });
 }
 
+it("[agent-steer-while-awaiting-approval] a steer to a session idle on a tool that waits for a person reaches the model, and the session still finishes once the effect is approved", async () => {
+  const requests: ScriptedRequest[] = [];
+  script("steer-approve-1", (r) => {
+    requests.push(r);
+    if ((users(r).at(-1) ?? "").startsWith("Result of note.approved")) return finish({ summary: "approved" });
+    return r.lastToolResults.length === 0 && r.turn === 0 ? call("note_approved", { text: "s" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe("steer-approve-1");
+  await task("steer-approve-1", "the approved note", "task-sa1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const key = `${session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("steer-approve-1", session, "task-sa1");
+  expect(await jobRow("steer-approve-1", "fx:agent.session:task-sa1")).toMatchObject({ status: "awaiting_job" });
+  const before = requests.length;
+  expect(await ingress(env, system, "Scribe", "scribe.hint", { text: "use the revised checklist" }, { key: "steer-approve-1", id: "hint-sa1" })).toMatchObject({ status: "handled" });
+  await eventually(async () => expect(await jobRow("steer-approve-1", "fx:agent.session.steer:hint-sa1")).toMatchObject({ status: "confirmed" }), 4000);
+  await eventually(async () => expect(requests.slice(before).some((r) => users(r).some((u) => u.includes("use the revised checklist")))).toBe(true), 4000);
+  await runEnded("steer-approve-1", session, "task-sa1");
+  expect(await jobRow("steer-approve-1", "fx:agent.session:task-sa1")).toMatchObject({ status: "awaiting_job" });
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key, value: { noted: "s" } });
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["approved"]), 4000);
+  // The model that finished saw the steer too.
+  expect(users(requests.at(-1)!).some((u) => u.includes("use the revised checklist"))).toBe(true);
+  expect(await s.failures()).toEqual([]);
+});
+
 it("[agent-tool-undeclared] only the effects in `tools` are offered, and requestEffect refuses an effect the actor doesn't list", async () => {
   const events = captureEvents();
   const held = gate();

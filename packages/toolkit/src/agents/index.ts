@@ -633,9 +633,10 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   };
 
   /**
-   * Steer only a session whose job still runs, and whose run is going: pi takes a steer to an idle session as new
-   * input, which would start a run no job tracks, whose result would go nowhere. A tool's owed result (`result`, its
-   * request's key) is the exception: the job waits on it, so the run it starts in an idle session is tracked.
+   * Steer only a session whose job still runs, and that wasn't stopped or replaced. pi takes a steer to an idle session
+   * (one whose turn ended on a tool that waits for a person, say) as new input, which starts a run: the job tracks it,
+   * since its probe counts pi's pending work as the session's. A tool's owed result (`result`, its request's key) goes
+   * in as input of its own kind.
    */
   const steerCall: EffectAdapter<{ key: string; prompt: string; result?: string }, PiReceipt> = {
     async run(input, { key: operationId }) {
@@ -652,7 +653,6 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       // Sent before the start returns, a steer could reach pi ahead of the prompt it is meant to follow.
       if (row.session === null || status !== "awaiting_job") throw new EffectNotDelivered("the session's start hasn't returned yet");
       const session = row.session;
-      if (input.result === undefined && (await harness.pending({ session })).length === 0) throw notSteered({ job: status, run: "ended" });
       const receipt =
         input.result === undefined
           ? await harness.session(session).steer(input.prompt, { operationId })
