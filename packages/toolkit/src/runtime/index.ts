@@ -187,6 +187,8 @@ export type EffectOutcome<T = unknown> =
   | { status: "in_doubt"; key: string; error: string }
   | { status: "awaiting_approval"; key: string }
   | { status: "denied"; key: string; error: string };
+/** An effect's outcome once it has settled, as requestEffect reports it: a denial is `failed`. */
+export type SettledOutcome<T = unknown> = Extract<EffectOutcome<T>, { status: "confirmed" | "failed" | "in_doubt" }>;
 
 /** Throw from an adapter when the request provably never reached the destination (safe to retry). */
 export class EffectNotDelivered extends Error {
@@ -361,6 +363,14 @@ export interface ActorRuntime {
    * already running looks again when it ends, and a job whose start hasn't returned is looked at as soon as it does.
    */
   probeNow(effect: string, key: string): Promise<void>;
+  /**
+   * Request an effect from outside a handler (an agent's tool), in its own transaction, as ctx.effect would: refused
+   * unless the actor lists the effect; a key already used returns that row instead of a second one.
+   * It answers once the request has been tried: parked for a person (`awaiting_approval`, until `expiresAt`), still
+   * running (`outcome` resolves when it settles, in this instance only), or settled. A denial, including an expired
+   * approval, is `failed` with the denial's reason, as the result message says.
+   */
+  requestEffect(name: string, input: unknown, opts: { key: string; correlationId?: string; causationId?: string }): Promise<{ status: "awaiting_approval"; expiresAt: number } | { status: "running"; outcome: Promise<SettledOutcome> } | SettledOutcome>;
 }
 
 // ---- Test seams (used only by @actord/toolkit/testing, inert otherwise) ----
@@ -474,6 +484,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   let draining: Promise<void> | null = null;
   // Effects in flight in this instance. A row marked running that isn't here was orphaned by a restart.
   const inflight = new Map<string, Promise<void>>();
+  // Who waits on an effect to settle (requestEffect's `outcome`), by row id. In memory only: a restart drops them, and
+  // whoever waited asks again (a tool rerun finds the row by its key).
+  const settleListeners = new Map<string, { key: string; resolvers: Array<(outcome: SettledOutcome) => void> }>();
   // Jobs probeNow asked to look at while a probe of theirs ran or their start hadn't returned: looked at once it does.
   // In memory only: after a restart, the job's probe period is the backstop.
   const lookAgain = new Set<string>();
@@ -566,18 +579,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         await handler({ ...envelope, payload: validated.value }, handlerContext(envelope, pending, notes, cancels));
         maybeFault(actorName, envelope.type, "after-handler");
         sql.exec("INSERT INTO _actors_inbox (id, type, sender, handled_at) VALUES (?, ?, ?, ?)", envelope.id, envelope.type, envelope.from, now());
-        for (const p of pending) {
-          sql.exec(
-            "INSERT INTO _actors_outbox (id, kind, target, body, status, attempts, next_at, last_error, created_at, seq) VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, ?, ?) ON CONFLICT (id) DO NOTHING",
-            p.id,
-            p.kind,
-            p.target,
-            p.body,
-            now(),
-            now(),
-            nextSeq(),
-          );
-        }
+        insertPending(pending);
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -596,6 +598,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     emit({ kind: "handled", at: now(), actor: self, ...ids(envelope) });
     for (const n of notes) emit(n);
     for (const p of pending) emit(p.event);
+    // A handler may have settled a job (settleJob) or denied an effect: anyone waiting on one hears it now it's committed.
+    for (const id of [...settleListeners.keys()]) notifySettled(id);
     for (const id of cancels) startCancel(id);
     // A drain already running (this may be a self-delivery from inside it) picks up the new rows.
     if (!draining) await drain();
@@ -643,22 +647,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         pending.push({ kind: "message", id, target: envelope.to, body: JSON.stringify(envelope), event: { kind: "sent", at: now(), actor: self, ...ids(envelope) } });
       },
       effect(name, input, opts) {
-        const effectName = name as string;
-        if (!effectsDeclared.has(effectName)) {
-          emit({ kind: "effect.denied", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId, reason: "undeclared capability" });
-          throw new Error(`${actorName} may not request effect ${effectName}: it isn't in its declared effects`);
-        }
-        const id = `fx:${effectName}:${opts.key}`;
-        // An effect key names one effect for the actor's lifetime: asking again runs nothing, and says so.
-        const inHandler = pending.find((p) => p.id === id);
-        const stored = inHandler ? undefined : sql.exec<{ status: string; body: string }>("SELECT status, body FROM _actors_outbox WHERE id = ?", id).toArray()[0];
-        if (inHandler || stored) {
-          const firstCausationId = inHandler ? current.id : ((JSON.parse(stored!.body) as { causationId?: string }).causationId ?? null);
-          notes.push({ kind: "effect.duplicate", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId, detail: { existingStatus: inHandler ? "pending" : stored!.status, firstCausationId } });
-          return;
-        }
-        const body = JSON.stringify({ name: effectName, key: opts.key, input, causationId: current.id, correlationId: current.correlationId });
-        pending.push({ kind: "effect", id, target: effectName, body, event: { kind: "effect.requested", at: now(), actor: self, effect: effectName, effectKey: opts.key, causationId: current.id, correlationId: current.correlationId } });
+        queueEffect(name as string, input, opts.key, { causationId: current.id, correlationId: current.correlationId }, pending, notes);
       },
       approve(name, effectKey, identity) {
         const id = `fx:${name as string}:${effectKey}`;
@@ -722,6 +711,77 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     };
   }
 
+  /**
+   * Queue an effect request, deduplicated by key: the one path of ctx.effect and requestEffect. Refused (and said so)
+   * unless the actor declares the effect. A key already queued or stored runs nothing and is noted as a duplicate.
+   * The caller inserts `pending` in its transaction and emits the events once it commits.
+   */
+  function queueEffect(effectName: string, input: unknown, effectKey: string, cause: { causationId: string | null; correlationId: string }, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>): void {
+    if (!effectsDeclared.has(effectName)) {
+      emit({ kind: "effect.denied", at: now(), actor: self, effect: effectName, effectKey, ...cause, reason: "undeclared capability" });
+      throw new Error(`${actorName} may not request effect ${effectName}: it isn't in its declared effects`);
+    }
+    const id = `fx:${effectName}:${effectKey}`;
+    // An effect key names one effect for the actor's lifetime: asking again runs nothing, and says so.
+    const inHandler = pending.find((p) => p.id === id);
+    const stored = inHandler ? undefined : sql.exec<{ status: string; body: string }>("SELECT status, body FROM _actors_outbox WHERE id = ?", id).toArray()[0];
+    if (inHandler || stored) {
+      const firstCausationId = inHandler ? cause.causationId : ((JSON.parse(stored!.body) as { causationId?: string }).causationId ?? null);
+      notes.push({ kind: "effect.duplicate", at: now(), actor: self, effect: effectName, effectKey, ...cause, detail: { existingStatus: inHandler ? "pending" : stored!.status, firstCausationId } });
+      return;
+    }
+    const body = JSON.stringify({ name: effectName, key: effectKey, input, ...cause });
+    pending.push({ kind: "effect", id, target: effectName, body, event: { kind: "effect.requested", at: now(), actor: self, effect: effectName, effectKey, ...cause } });
+  }
+
+  /** Write a request's queued messages and effects to the outbox, inside its transaction. */
+  function insertPending(pending: Pending[]): void {
+    for (const p of pending) {
+      sql.exec(
+        "INSERT INTO _actors_outbox (id, kind, target, body, status, attempts, next_at, last_error, created_at, seq) VALUES (?, ?, ?, ?, 'pending', 0, ?, NULL, ?, ?) ON CONFLICT (id) DO NOTHING",
+        p.id,
+        p.kind,
+        p.target,
+        p.body,
+        now(),
+        now(),
+        nextSeq(),
+      );
+    }
+  }
+
+  /** An effect row as requestEffect reports it: parked for a person, still to settle, or settled. Null when there is no row. */
+  function effectState(id: string, effectKey: string): { status: "awaiting_approval"; expiresAt: number } | { status: "running" } | SettledOutcome | null {
+    const row = sql.exec<{ status: string; body: string; next_at: number; last_error: string | null }>("SELECT status, body, next_at, last_error FROM _actors_outbox WHERE id = ?", id).toArray()[0];
+    if (!row) return null;
+    switch (row.status) {
+      case "awaiting_approval":
+        return { status: "awaiting_approval", expiresAt: row.next_at };
+      case "confirmed":
+        return { status: "confirmed", key: effectKey, value: (JSON.parse(row.body) as { outcome?: unknown }).outcome };
+      case "in_doubt":
+        return { status: "in_doubt", key: effectKey, error: row.last_error ?? "unknown" };
+      case "pending":
+      case "running":
+      case "awaiting_job":
+      case "cancelling":
+        return { status: "running" };
+      default:
+        // failed, denied (by a person, or because its approval expired)
+        return { status: "failed", key: effectKey, error: row.last_error ?? row.status };
+    }
+  }
+
+  /** Resolve whoever waits on an effect (requestEffect's `outcome`) once its row has settled. */
+  function notifySettled(id: string): void {
+    const waiting = settleListeners.get(id);
+    if (!waiting) return;
+    const state = effectState(id, waiting.key);
+    if (!state || state.status === "running" || state.status === "awaiting_approval") return;
+    settleListeners.delete(id);
+    for (const resolve of waiting.resolvers) resolve(state);
+  }
+
   /** One drain at a time per instance; a caller arriving mid-drain shares it (new rows are picked up). */
   function drain(): Promise<void> {
     draining ??= drainThenArm();
@@ -772,6 +832,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           // A body that can't be read back can't name a result message: mark the row, as before.
           sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', last_error = ? WHERE id = ? AND status = 'running'", error, row.id);
           emit({ kind: "effect.in_doubt", at: now(), actor: self, effect: row.target, reason: error });
+          notifySettled(row.id);
         }
       })
       .finally(() => {
@@ -905,6 +966,8 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     out({ kind: `effect.${status}`, at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, attempt: row.attempts, ...(error ? { reason: error } : {}), ...(Object.keys(detail).length > 0 ? { detail } : {}) });
     const result = effectSpecOf(req.name)?.result;
     if (result) enqueueResult(result, row.id, req, { key: req.key, status, ...(status === "confirmed" ? { value } : { error: error ?? "" }), ...usage }, out);
+    // Inside a handler's transaction (out defers), the handler's commit tells them instead.
+    if (out === emit) notifySettled(row.id);
   }
 
   /** Settle a job with the outcome its completion message reported. */
@@ -1297,6 +1360,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, reason: APPROVAL_EXPIRED });
       const result = effectSpecOf(req.name)?.result;
       if (result) enqueueResult(result, row.id, req, { key: req.key, status: "failed", error: APPROVAL_EXPIRED });
+      notifySettled(row.id);
     }
   }
 
@@ -1361,6 +1425,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       if (decision === "deny") {
         sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason ?? "denied by a person", row.id);
         emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason: reason ?? "denied by a person", detail: { by: null, via: "@rpc" } });
+        notifySettled(row.id);
         return { status: "denied", key: effectKey, error: reason ?? "denied by a person" };
       }
       sql.exec("UPDATE _actors_outbox SET status = 'pending', body = ?, next_at = ? WHERE id = ?", JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: { messageId: null, from: "@rpc", by: null } }), now(), row.id);
@@ -1385,6 +1450,31 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       else if (row.status === "awaiting_job" || NOT_STARTED.has(row.status)) lookAgain.add(id);
       else return; // settled, or being cancelled
       await drive();
+    },
+    async requestEffect(name, input, opts) {
+      await cap.ready();
+      await recoverOrphans();
+      const pending: Pending[] = [];
+      const notes: Array<Omit<ActorEvent, "$actord">> = [];
+      await ctx.storage.transaction(async () => {
+        queueEffect(name, input, opts.key, { causationId: opts.causationId ?? null, correlationId: opts.correlationId ?? opts.key }, pending, notes);
+        insertPending(pending);
+      });
+      for (const n of notes) emit(n);
+      for (const p of pending) emit(p.event);
+      // Tried before answering (a new row, or one a restart queued again): an effect that needs a person parks as its
+      // attempt starts, and a fast one may settle. A drain already running picks the row up before it ends, so share it.
+      await drain();
+      const id = `fx:${name}:${opts.key}`;
+      const state = effectState(id, opts.key);
+      if (!state) throw new Error(`${actorName}: effect ${name} ${opts.key} has no row after it was requested`);
+      if (state.status !== "running") return state;
+      const outcome = new Promise<SettledOutcome>((resolve) => {
+        const waiting = settleListeners.get(id) ?? { key: opts.key, resolvers: [] };
+        waiting.resolvers.push(resolve);
+        settleListeners.set(id, waiting);
+      });
+      return { status: "running", outcome };
     },
     outbox() {
       return sql

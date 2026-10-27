@@ -7,7 +7,7 @@ import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { z } from "zod";
 import { agentRuntime, type ScriptedRequest, type ScriptedTurn, scriptedModel } from "../../src/agents/index.ts";
-import type { Envelope } from "../../src/runtime/index.ts";
+import type { EffectAdapter, Envelope } from "../../src/runtime/index.ts";
 // index.ts re-exports Scribe from here, so this import is circular: `system` is read only when an instance is built.
 import { system } from "./index.ts";
 
@@ -63,7 +63,7 @@ export class Scribe extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.lifecycle.use(new JobLog());
-    for (const table of ["fired (key TEXT NOT NULL)", "echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)", "done (id TEXT NOT NULL, sender TEXT NOT NULL, summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)"]) {
+    for (const table of ["fired (key TEXT NOT NULL)", "echo_calls (call_id TEXT NOT NULL, args TEXT NOT NULL)", "done (id TEXT NOT NULL, sender TEXT NOT NULL, summary TEXT NOT NULL)", "failures (type TEXT NOT NULL, payload TEXT NOT NULL)", "noted (effect TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL)"]) {
       ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${table}`);
     }
   }
@@ -90,6 +90,7 @@ export class Scribe extends DurableObject<Env> {
     {
       instructions: shared.__scribeInstructions?.[this.#name] ?? INSTRUCTIONS,
       model: scriptedModel(scriptFor(this.#name)),
+      effects: { "note.keyed": noteAdapter(this.ctx.storage.sql, "note.keyed"), "note.plain": noteAdapter(this.ctx.storage.sql, "note.plain"), "note.approved": noteAdapter(this.ctx.storage.sql, "note.approved"), "note.hidden": noteAdapter(this.ctx.storage.sql, "note.hidden") },
       extensions: this.#name.startsWith("echo-") ? [{ name: "echo", tools: [echoTool(this.ctx.storage.sql)] }] : this.#name.startsWith("json-") ? [{ name: "echo", tools: [jsonEchoTool(this.ctx.storage.sql)] }] : [],
     },
   );
@@ -114,6 +115,18 @@ export class Scribe extends DurableObject<Env> {
   }
   async piSessions() {
     return this.actor.harness.sessions.list();
+  }
+  decide(key: string, decision: "approve" | "deny") {
+    return this.actor.decide(key, decision);
+  }
+  /** The tools pi offers the model in a session: the agent's own and its declared effects'. */
+  async offeredTools(session: string): Promise<string[]> {
+    const conversation = await (await this.actor.harness.pi()).conversation(Number(session) as never, BACKGROUND_CONTEXT);
+    return (await conversation!.agent(BACKGROUND_CONTEXT)).tools.map((t) => t.name);
+  }
+  /** The notes each note effect's adapter wrote, in order. */
+  noted(): Array<{ effect: string; key: string; text: string }> {
+    return this.ctx.storage.sql.exec<{ effect: string; key: string; text: string }>("SELECT effect, key, text FROM noted ORDER BY rowid").toArray();
   }
   probeNow(key: string) {
     return this.actor.probeNow("agent.session", key);
@@ -173,6 +186,16 @@ export class ContainerStub {
       },
     };
   }
+}
+
+/** A note effect's adapter: it records the note and answers with it. */
+function noteAdapter(sql: SqlStorage, effect: string): EffectAdapter<{ text: string }, { noted: string }> {
+  return {
+    async run({ text }, { key }) {
+      sql.exec("INSERT INTO noted (effect, key, text) VALUES (?, ?, ?)", effect, key, text);
+      return { noted: text };
+    },
+  };
 }
 
 const Echo = Type.Object({ v: Type.Number() });

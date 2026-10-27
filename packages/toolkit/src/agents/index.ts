@@ -16,6 +16,12 @@
 // - Each session keeps the instructions it started with, so a deploy that changes the instructions reaches new
 //   sessions only. They are the session's own pi instructions (its "instructions" prompt section, a key pi reserves
 //   for them), set from its row when it starts.
+// - The effects in the actor's `tools` are pi tools (tools.ts), each call one effect request keyed
+//   "<session>:<callId>". One that needs a person answers "waiting" at once, and the wait is recorded
+//   (_actors_agent_waits): the session's job isn't done while a result is owed to it. When the effect's result message
+//   arrives, it is steered into the session (agent.session.steer, with the operation id "result:<key>"), which starts
+//   a new run if the session's run had ended; for a session replaced or ended meanwhile it is a note only. A person's
+//   denial sends no result message, so the job's probe steers that in.
 import { PiHarness, type PiReceipt } from "agents/harness/pi";
 import { createAI } from "agents/models/pi-ai";
 import { type Api, createModels, type Model, type ModelThinkingLevel, type MutableModels } from "@earendil-works/pi-ai";
@@ -37,8 +43,10 @@ import {
   type Message,
   type RuntimeOptions,
 } from "../runtime/index.ts";
-import { type ActorName, type ActorSpec, type Duration, durationMs, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
+import { jsonSchemaOf } from "../model/manifest.ts";
+import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectName, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
 import type { scriptedModel } from "./scripted-model.ts";
+import { effectTools, shown, type ToolSession } from "./tools.ts";
 
 export { type ScriptedRequest, type ScriptedTurn, scriptedModel } from "./scripted-model.ts";
 
@@ -47,8 +55,10 @@ type AnySystem = System;
 /** The internal job effect an agent session runs as, and the message its outcome comes back as. */
 const SESSION = "agent.session";
 const SETTLED = "agent.session.settled";
-/** The internal call effect that hands a steering message to a running session. */
+/** The internal call effect that hands a steering message, or a tool's owed result, to a running session. */
 const STEER = "agent.session.steer";
+/** The kind of the transcript entry a tool's owed result enters a session as. */
+const RESULT_ENTRY = "actord.effect_result";
 /** How often a waiting session is looked at, and how long past the actor's wallClock budget its job may wait. */
 const PROBE_EVERY: Duration = "30s";
 const DEADLINE_GRACE_MS = 10 * 60_000;
@@ -142,7 +152,7 @@ export const agentExhausted: StandardSchemaV1<AgentExhausted> = {
   },
 };
 
-/** agent.session.settled: the job's outcome, as every job effect's result message carries it. */
+/** agent.session.settled: the job's outcome, as every effect's result message carries it (a tool's result too). */
 interface Settled {
   key: string;
   status: "confirmed" | "failed" | "in_doubt";
@@ -183,8 +193,15 @@ export interface AgentRuntime extends ActorRuntime {
 
 /** The messages an agent actor's `on` maps to a verb: agentRuntime handles them itself. */
 type OnMessages<S extends AnySystem, A extends ActorName<S>> = Extract<keyof NonNullable<S["actors"][A]["on"]>, string>;
-/** Handlers for every message the actor receives except its `on` messages. */
-export type AgentHandlers<S extends AnySystem, A extends ActorName<S>> = Omit<Handlers<S, A>, OnMessages<S, A>>;
+/** The result messages of the actor's tool effects. */
+type ToolResults<S extends AnySystem, A extends ActorName<S>> = S["actors"][A] extends { tools: readonly (infer T)[] }
+  ? { [E in Extract<T, EffectName<S>>]: NonNullable<S["effects"]>[E] extends { result: infer R extends string } ? R : never }[Extract<T, EffectName<S>>]
+  : never;
+/**
+ * Handlers for every message the actor receives except its `on` messages. A handler for a tool effect's result
+ * message is optional: agentRuntime steers the results owed to sessions, and passes it every other one.
+ */
+export type AgentHandlers<S extends AnySystem, A extends ActorName<S>> = Omit<Handlers<S, A>, OnMessages<S, A> | ToolResults<S, A>> & Partial<Pick<Handlers<S, A>, Extract<ToolResults<S, A>, keyof Handlers<S, A>>>>;
 
 /** What a session's job handle records: pi's session id, the operation its prompt was submitted as, its generation. */
 interface SessionHandle {
@@ -205,10 +222,24 @@ interface SessionRow {
   stopped_at: number | null;
 }
 
-/** One row per session the actor started: the job's key, pi's session id once open, the result `finish` recorded. */
+/** A tool request that answered "waiting": its result is owed to its session until `done_at` (steered in, or noted). */
+interface WaitRow {
+  key: string;
+  effect: string;
+  session: string;
+  expires_at: number;
+  done_at: number | null;
+}
+
+/**
+ * One row per session the actor started: the job's key, pi's session id once open, the result `finish` recorded.
+ * One row per tool request that answered "waiting", keyed "<session>:<callId>".
+ */
 const SESSIONS_SCHEMA = [
   "CREATE TABLE IF NOT EXISTS _actors_agent_sessions (key TEXT PRIMARY KEY, session TEXT, operation TEXT NOT NULL, generation INTEGER NOT NULL, instructions TEXT NOT NULL, started_at INTEGER NOT NULL, result TEXT, exhausted TEXT, stopped_at INTEGER)",
   "CREATE INDEX IF NOT EXISTS _actors_agent_sessions_session ON _actors_agent_sessions (session)",
+  "CREATE TABLE IF NOT EXISTS _actors_agent_waits (key TEXT PRIMARY KEY, effect TEXT NOT NULL, session TEXT NOT NULL, expires_at INTEGER NOT NULL, done_at INTEGER)",
+  "CREATE INDEX IF NOT EXISTS _actors_agent_waits_session ON _actors_agent_waits (session)",
 ];
 /** Job statuses of a session that is still running or about to: a steer joins it, a start replaces it. */
 const LIVE = new Set(["pending", "running", "awaiting_job"]);
@@ -217,15 +248,11 @@ const NOT_STEERED = "the session has ended; not steered";
 
 const defaultRender = (type: string, payload: unknown) => `${type}\n\n${JSON.stringify(payload, null, 2)}`;
 const text = (t: string): ToolExecutionResult["output"] => [{ type: "text", text: t }];
-
-/** The Standard JSON Schema of a payload, or null when the schema library offers none. */
-function jsonSchemaOf(schema: StandardSchemaV1): Record<string, unknown> | null {
-  try {
-    return schema["~standard"].jsonSchema?.input({ target: "draft-2020-12" }) ?? null;
-  } catch {
-    return null;
-  }
-}
+/** A tool's owed result, as the session gets it. */
+const resultPrompt = (effect: string, key: string, outcome: Pick<Settled, "status" | "value" | "error">) => {
+  const detail = shown(outcome.status === "confirmed" ? outcome.value : outcome.error);
+  return `Result of ${effect} (request ${key}): ${outcome.status}${detail ? ` ${detail}` : ""}`;
+};
 
 /**
  * An agent actor's runtime: actord, with its Pi sessions as agent.session jobs. Installs PiHarness on
@@ -270,14 +297,33 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   /** Whether a tool effect of this session (keyed "<session>:<callId>") waits for a person. */
   const awaitingApproval = (session: string) =>
     sql.exec("SELECT 1 FROM _actors_outbox WHERE kind = 'effect' AND status = 'awaiting_approval' AND substr(json_extract(body, '$.key'), 1, ?) = ? LIMIT 1", session.length + 1, `${session}:`).toArray().length > 0;
+  const waitByKey = (key: string) => sql.exec<WaitRow>("SELECT * FROM _actors_agent_waits WHERE key = ?", key).toArray()[0];
+  /** The tool results a session is still owed. */
+  const openWaits = (session: string) => sql.exec<WaitRow>("SELECT * FROM _actors_agent_waits WHERE session = ? AND done_at IS NULL ORDER BY key", session).toArray();
+  const closeWait = (key: string) => sql.exec("UPDATE _actors_agent_waits SET done_at = ? WHERE key = ? AND done_at IS NULL", now(), key);
+  /** What a tool needs of the session a pi conversation is: the session's start message caused its effects. */
+  const toolSession = (conversationId: string): ToolSession | undefined => {
+    const row = rowBySession(conversationId);
+    if (!row) return undefined;
+    const job = sql.exec<{ c: string | null }>("SELECT json_extract(body, '$.correlationId') AS c FROM _actors_outbox WHERE id = ?", `fx:${SESSION}:${row.key}`).toArray()[0];
+    return {
+      session: conversationId,
+      causationId: row.key,
+      correlationId: job?.c ?? row.key,
+      waiting(key, effect, expiresAt) {
+        sql.exec("INSERT INTO _actors_agent_waits (key, effect, session, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO NOTHING", key, effect, conversationId, expiresAt);
+        return waitByKey(key)!.expires_at;
+      },
+      waited: (key) => waitByKey(key)?.expires_at,
+    };
+  };
 
   // ---- Pi ----
   const { models, model } = scripted ?? workersAI(actor, spec, host.env.AI);
   const reasoning = spec.model?.reasoning;
   // One per object, never at module scope: pi keeps each Harness subscribed to its registry until it closes.
+  // Filled once the runtime exists, below: the effect tools request through it. pi reads it only once it opens.
   const registry = createRegistry();
-  registry.install({ name: "actord.agent", tools: [finishTool()] });
-  for (const extension of extensions) registry.install(extension);
   const harness = new PiHarness({
     harness: ({ storage, context, onWake }) => Harness.open(storage, { models, registry, onWake }, context),
     defaults: { model, ...(reasoning ? { thinkingLevel: THINKING[reasoning] } : {}) },
@@ -317,7 +363,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       return { session, operation: row.operation, generation: row.generation };
     },
     async probe(handle, { key }) {
-      // pi's work first, then the row: finish records a result before its run ends, so a run found ended had recorded it.
+      // Owed results first, then pi's work, then the row. A steer closes its wait once pi has the result, so a wait
+      // found closed shows as pi's work; and finish records a result before its run ends, so a run found ended had it.
+      const owed = openWaits(handle.session);
       const pending = await harness.pending({ session: handle.session });
       const row = rowByKey(key);
       if (row?.result != null) return { done: true, status: "confirmed", value: JSON.parse(row.result) as unknown };
@@ -327,8 +375,9 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
         return { done: true, status: "failed", error: `exhausted:${row.exhausted}` };
       }
       if (row?.stopped_at != null) return { done: true, status: "failed", error: STOPPED };
+      if (row && owed.length > 0) await steerDenials(row, owed);
       // A session being stopped has no work left by design: its cancel, not this look, settles it.
-      if (pending.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") return { done: false };
+      if (pending.length > 0 || owed.length > 0 || awaitingApproval(handle.session) || jobStatus(key) === "cancelling") return { done: false };
       return { done: true, status: "failed", error: "ended without returning a result" };
     },
     async cancel(handle) {
@@ -338,13 +387,16 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   /**
    * Steer only a session whose job still runs, and whose run is going: pi takes a steer to an idle session as new
-   * input, which would start a run no job tracks, whose result would go nowhere.
+   * input, which would start a run no job tracks, whose result would go nowhere. A tool's owed result (`result`, its
+   * request's key) is the exception: the job waits on it, so the run it starts in an idle session is tracked.
    */
-  const steerCall: EffectAdapter<{ key: string; prompt: string }, PiReceipt> = {
+  const steerCall: EffectAdapter<{ key: string; prompt: string; result?: string }, PiReceipt> = {
     async run(input, { key: operationId }) {
       const row = rowByKey(input.key);
       if (!row) throw new EffectRejected(`no agent session was recorded for ${input.key}`);
       const notSteered = (why: Record<string, unknown>) => {
+        // A result that can't reach its session is owed to it no longer.
+        if (input.result !== undefined) closeWait(input.result);
         emit({ kind: "note", at: now(), actor: self, effect: STEER, effectKey: operationId, reason: NOT_STEERED, detail: { key: input.key, ...why } });
         return new EffectRejected(NOT_STEERED);
       };
@@ -353,8 +405,13 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       // Sent before the start returns, a steer could reach pi ahead of the prompt it is meant to follow.
       if (row.session === null || status !== "awaiting_job") throw new EffectNotDelivered("the session's start hasn't returned yet");
       const session = row.session;
-      if ((await harness.pending({ session })).length === 0) throw notSteered({ job: status, run: "ended" });
-      const receipt = await harness.session(session).steer(input.prompt, { operationId });
+      if (input.result === undefined && (await harness.pending({ session })).length === 0) throw notSteered({ job: status, run: "ended" });
+      const receipt =
+        input.result === undefined
+          ? await harness.session(session).steer(input.prompt, { operationId })
+          : await harness.session(session).submit(input.prompt, { operationId, whenBusy: "steer", entry: { kind: RESULT_ENTRY, data: { request: input.result } } });
+      // pi has the result now, so the job's probe sees it as the session's work.
+      if (input.result !== undefined) closeWait(input.result);
       // The job settled while the steer was on its way: withdraw it, rather than leave it to run untracked.
       if (jobStatus(input.key) !== "awaiting_job") {
         await harness.abort({ session, operationId });
@@ -401,7 +458,21 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     };
   }
 
-  // ---- Handlers: the actor's `on` messages and its sessions' outcomes ----
+  /**
+   * A person's denial sends no result message (an expiry does), so a look at the session steers it in: keyed as the
+   * result message's own steer would be, so the two never both reach the session.
+   */
+  async function steerDenials(row: SessionRow, owed: WaitRow[]): Promise<void> {
+    for (const wait of owed) {
+      const fx = sql.exec<{ status: string; last_error: string | null }>("SELECT status, last_error FROM _actors_outbox WHERE id = ?", `fx:${wait.effect}:${wait.key}`).toArray()[0];
+      const steerKey = `result:${wait.key}`;
+      if (fx?.status !== "denied" || sql.exec("SELECT 1 FROM _actors_outbox WHERE id = ?", `fx:${STEER}:${steerKey}`).toArray().length > 0) continue;
+      const prompt = resultPrompt(wait.effect, wait.key, { status: "failed", error: fx.last_error ?? "denied" });
+      await runtime.requestEffect(STEER, { key: row.key, prompt, result: wait.key }, { key: steerKey, causationId: row.key, correlationId: toolSession(wait.session)?.correlationId ?? row.key });
+    }
+  }
+
+  // ---- Handlers: the actor's `on` messages, its sessions' outcomes, and its tools' results ----
   type Ctx = HandlerContext<System, string>;
   const cancel = (c: Ctx, key: string) => c.cancelJob(SESSION as never, key);
   const verbs: Record<string, (message: Message<System, string>, c: Ctx) => void> = {
@@ -445,6 +516,29 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (!Object.hasOwn(verbs, verb)) throw new Error(`actord: agent actor ${actor} maps ${type} to ${JSON.stringify(verb)}; use "start", "steer" or "stop"`);
     internalHandlers[type] = verbs[verb]!;
   }
+  // A tool effect's result message: steered into the session that waits for it, else the actor's own handler's.
+  const ownHandlers = handlers as unknown as InternalHandlers;
+  const toolResult: InternalHandlers[string] = async (message, c) => {
+    const { key, status, value, error } = message.payload as Settled;
+    const wait = waitByKey(key);
+    if (!wait) return Object.hasOwn(ownHandlers, message.type) ? ownHandlers[message.type]!(message, c) : undefined;
+    if (wait.done_at != null) {
+      c.note("tool result already given to its session", { key, status });
+      return;
+    }
+    const row = rowBySession(wait.session);
+    const job = row ? jobStatus(row.key) : undefined;
+    if (!row || !LIVE.has(job ?? "") || halted(row.key)) {
+      c.sql.exec("UPDATE _actors_agent_waits SET done_at = ? WHERE key = ?", c.now(), key);
+      c.note("stale tool result", { key, session: wait.session, generation: row?.generation ?? null, job: job ?? null, status });
+      return;
+    }
+    c.effect(STEER as never, { key: row.key, prompt: resultPrompt(wait.effect, key, { status, value, error }), result: key }, { key: `result:${key}` });
+  };
+  for (const tool of spec.tools ?? []) {
+    const result = system.effects?.[tool]?.result;
+    if (result !== undefined && !Object.hasOwn(internalHandlers, result)) internalHandlers[result] = toolResult;
+  }
   internalHandlers[SETTLED] = async (message, c) => {
     const { key, status, value, error, usage } = message.payload as Settled;
     const row = rowByKey(key);
@@ -487,6 +581,8 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       handlers: internalHandlers,
     },
   });
+  registry.install({ name: "actord.agent", tools: [finishTool(), ...effectTools(runtime, system, actor, toolSession)] });
+  for (const extension of extensions) registry.install(extension);
   host.lifecycle.use(harness);
   return { ...runtime, harness };
 }

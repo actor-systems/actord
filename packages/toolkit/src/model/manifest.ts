@@ -194,7 +194,8 @@ export function normalize(system: System): Manifest {
   };
 }
 
-function jsonSchemaOf(schema: unknown): Record<string, unknown> | null {
+/** JSON Schema (draft 2020-12) of a Standard Schema's input, keys sorted; null when the library can't export one. Agent tools' parameters use it too. */
+export function jsonSchemaOf(schema: unknown): Record<string, unknown> | null {
   const std = (schema as { "~standard"?: { jsonSchema?: { input: (o: { target: string }) => Record<string, unknown> } } })?.["~standard"];
   if (!std?.jsonSchema) return null;
   try {

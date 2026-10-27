@@ -59,6 +59,53 @@ it("[approval-required] decide() releases or refuses a parked effect", async () 
   expect(runs).toBe(1);
 });
 
+it("[request-effect] requestEffect queues an effect from outside a handler as ctx.effect does, and answers with its state", async () => {
+  const events = captureEvents();
+  let runs = 0;
+  overrideEffect("gateway.keyed", {
+    run: async (_input, { key }) => {
+      if (key === "re-new") await new Promise((r) => setTimeout(r, 30)); // still running when requestEffect answers
+      return ++runs;
+    },
+  });
+  // A key a handler's ctx.effect already used: no second row, and nothing runs again.
+  await send("re-shared", "gateway.keyed");
+  await settle(env, system);
+  const p = probe("re-shared");
+  const ask = (name: string, key: string) =>
+    runInDurableObject(p, async (instance: { actor: { requestEffect(n: string, i: unknown, o: { key: string; causationId?: string; correlationId?: string }): Promise<Record<string, unknown> & { outcome?: Promise<unknown> }> } }) => {
+      try {
+        const state = await instance.actor.requestEffect(name, { key }, { key, causationId: "cause-1", correlationId: "corr-1" });
+        // The outcome promise is this instance's: wait for it here.
+        return state.outcome ? { status: state.status, outcome: await state.outcome } : state;
+      } catch (err) {
+        return { refused: (err as Error).message };
+      }
+    });
+  expect(await ask("gateway.keyed", "re-shared")).toEqual({ status: "confirmed", key: "re-shared", value: 1 });
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effectKey === "re-shared")).toMatchObject([{ causationId: "cause-1", detail: { existingStatus: "confirmed" } }]);
+  // A new key: queued in its own transaction and tried; its outcome resolves once it settles. A fast one may answer settled.
+  expect(await ask("gateway.keyed", "re-new")).toEqual({ status: "running", outcome: { status: "confirmed", key: "re-new", value: 2 } });
+  expect(events.find((e) => e.kind === "effect.requested" && e.effectKey === "re-new")).toMatchObject({ causationId: "cause-1", correlationId: "corr-1" });
+  expect(await ask("gateway.keyed", "re-new")).toEqual({ status: "confirmed", key: "re-new", value: 2 });
+  expect(runs).toBe(2);
+  // An effect that needs a person parks at once; a denial then reads as failed, with its reason.
+  const before = Date.now();
+  const parked = (await ask("gateway.approval", "re-ap")) as { status: string; expiresAt: number };
+  expect(parked.status).toBe("awaiting_approval");
+  expect(parked.expiresAt).toBeGreaterThanOrEqual(before + 3 * 86_400_000);
+  expect(await p.decide("re-ap", "deny")).toMatchObject({ status: "denied" });
+  expect(await ask("gateway.approval", "re-ap")).toEqual({ status: "failed", key: "re-ap", error: "denied by a person" });
+  // An effect the actor doesn't list is refused, and nothing is queued. (The parked one asked for its approval as ctx.effect's would.)
+  expect(await ask("gateway.undeclared", "re-no")).toEqual({ refused: "Probe may not request effect gateway.undeclared: it isn't in its declared effects" });
+  expect((await runInDurableObject(p, (_i, st) => st.storage.sql.exec("SELECT id FROM _actors_outbox WHERE kind = 'effect' ORDER BY seq").toArray())).map((r) => r.id)).toEqual([
+    "fx:gateway.keyed:re-shared",
+    "fx:gateway.keyed:re-new",
+    "fx:gateway.approval:re-ap",
+    "fx:notify.approval:approval:gateway.approval:re-ap",
+  ]);
+});
+
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
   for (const [key, effect] of [["orph-plain", "gateway.plain"], ["orph-keyed", "gateway.keyed"]] as const) {
     overrideEffect(effect, { run: () => new Promise(() => {}) }); // hangs until the crash below

@@ -4,7 +4,7 @@ import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
 import { type ActorEvent, ingress } from "../src/runtime/index.ts";
-import { captureEvents, eventually, expireJobs, resetSeams, settle } from "../src/testing.ts";
+import { captureEvents, eventually, expireJobs, overrideEffect, resetSeams, settle } from "../src/testing.ts";
 import type { Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
@@ -501,4 +501,219 @@ it("[agent-approval-pending] a session with a tool effect awaiting approval isn'
   await runInDurableObject(s, (_i, state) => state.storage.sql.exec("UPDATE _actors_outbox SET status = 'denied' WHERE id = ?", effectId));
   await s.probeNow("task-ap1");
   await eventually(async () => expect(await s.failures()).toEqual([{ type: "agent.failed", payload: { session: row!.session, key: "task-ap1", reason: "ended without returning a result" } }]));
+});
+
+// ---- Declared effects as tools ----
+
+type ToolResult = { toolCallId: string; toolName: string; isError: boolean; content: Array<{ type: string; text?: string }> };
+const toolResults = (r: ScriptedRequest) => r.lastToolResults as ToolResult[];
+const call = (name: string, args: unknown): ScriptedTurn => ({ calls: [{ name, args }] });
+/** Every tool result in a session's transcript, as the model saw it. */
+const transcriptResults = async (name: string, session: string) => (await scribe(name).messages(session)).flatMap((e) => e.model ?? []).filter((m) => m.role === "toolResult") as unknown as ToolResult[];
+/** The outbox row of a tool effect, by the effect and its "<session>:<callId>" key, with its next_at. */
+const effectRow = (name: string, effect: string, key: string) =>
+  runInDurableObject(scribe(name), (_i, state) => state.storage.sql.exec<{ status: string; attempts: number; next_at: number; last_error: string | null }>("SELECT status, attempts, next_at, last_error FROM _actors_outbox WHERE id = ?", `fx:${effect}:${key}`).toArray()[0]);
+const waitingText = (effect: string, key: string, expiresAt: number) =>
+  `Waiting for a person to approve ${effect} (request ${key}, expires ${new Date(expiresAt).toISOString()}). The result will arrive as a message; continue with other work or end your turn.`;
+/** Waits until pi has no work left in a session, then asks for a look at its job: the look a finished run gets. */
+async function runEnded(name: string, session: string, jobKey: string): Promise<void> {
+  await eventually(async () => expect((await scribe(name).pending()).filter((p) => p.session === session)).toEqual([]), 5000);
+  await scribe(name).probeNow(jobKey);
+}
+
+it("[agent-tool-runs-effect] a declared effect is a tool: the model's call runs it once, keyed by session and call, and the model sees its value", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("tool-1", (r) => (requests.push(r), r.turn === 0 ? call("note_keyed", { text: "a" }) : finish({ summary: "noted" })));
+  const s = scribe("tool-1");
+  await task("tool-1", "the note", "task-t1");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["noted"]), 5000);
+  const [row] = await s.sessions();
+  const [result] = toolResults(requests[1]!);
+  const key = `${row!.session}:${result!.toolCallId}`;
+  expect(result).toMatchObject({ toolName: "note_keyed", isError: false });
+  expect(text(result!)).toBe('{"noted":"a"}');
+  expect(await s.noted()).toEqual([{ effect: "note.keyed", key, text: "a" }]);
+  const fx = events.filter((e) => e.effect === "note.keyed" && e.kind.startsWith("effect."));
+  expect(fx.map((e) => [e.kind, e.effectKey])).toEqual([["effect.requested", key], ["effect.confirmed", key]]);
+  // Caused by the message that started the session.
+  expect(fx[0]).toMatchObject({ causationId: "task-t1", correlationId: "task-t1" });
+  // Its result message reached the actor, and isn't steered in: the tool already gave the model its value.
+  await settle(env, system);
+  expect(events.filter((e) => e.kind === "handled" && e.actor === "Scribe:tool-1" && e.type === "scribe.noted")).toHaveLength(1);
+  expect((await s.outbox()).filter((r) => r.id.startsWith("fx:agent.session.steer:"))).toEqual([]);
+});
+
+it("[agent-restart-mid-tool-keyed] a restart while a keyed tool's effect runs: pi reruns the tool with the same call id, which finds the effect's row", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  let runs = 0;
+  overrideEffect("note.keyed", {
+    async run(input) {
+      if (++runs === 1) await held.wait(); // cut off by the restart
+      return { noted: (input as { text: string }).text };
+    },
+  });
+  const requests: ScriptedRequest[] = [];
+  script("tool-keyed-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_keyed", { text: "k" }) : finish({ summary: "kept" })));
+  await task("tool-keyed-1", "the keyed note", "task-tk1");
+  await reached(held);
+  await abortAllDurableObjects();
+  await settle(env, system);
+  await eventually(async () => expect((await scribe("tool-keyed-1").done()).map((d) => d.summary)).toEqual(["kept"]), 5000);
+  await settle(env, system);
+  // The model was asked once to call the tool; the rerun found the effect's row instead of making a second.
+  expect(requests.filter((r) => r.lastToolResults.length === 0)).toHaveLength(1);
+  const [row] = await scribe("tool-keyed-1").sessions();
+  const results = (await transcriptResults("tool-keyed-1", row!.session as string)).filter((r) => r.toolName !== "finish");
+  expect(results).toMatchObject([{ toolName: "note_keyed", isError: false }]);
+  expect(text(results[0]!)).toBe('{"noted":"k"}');
+  const key = `${row!.session}:${results[0]!.toolCallId}`;
+  expect((await scribe("tool-keyed-1").outbox()).filter((r) => r.target === "note.keyed")).toMatchObject([{ id: `fx:note.keyed:${key}`, status: "confirmed", attempts: 2 }]);
+  // The rerun asked for the same key: actord's recovery had queued the cut-off attempt again, and the rerun waited for it.
+  expect(events.filter((e) => e.kind === "effect.duplicate" && e.effect === "note.keyed")).toMatchObject([{ effectKey: key, detail: { existingStatus: "pending" } }]);
+  // Twice, the most a keyed effect runs here: the attempt the restart cut off, then its retry.
+  expect(runs).toBe(2);
+});
+
+it("[agent-restart-mid-tool-unkeyed] a restart while an unkeyed tool's effect runs: the model hears it was interrupted, and actord records it in doubt and never reruns it", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  let runs = 0;
+  overrideEffect("note.plain", {
+    async run(input) {
+      if (++runs === 1) await held.wait(); // cut off by the restart
+      return { noted: (input as { text: string }).text };
+    },
+  });
+  const requests: ScriptedRequest[] = [];
+  script("tool-plain-1", (r) => (requests.push(r), r.lastToolResults.length === 0 ? call("note_plain", { text: "p" }) : finish({ summary: "interrupted" })));
+  await task("tool-plain-1", "the plain note", "task-tp1");
+  await reached(held);
+  await abortAllDurableObjects();
+  await settle(env, system);
+  await eventually(async () => expect((await scribe("tool-plain-1").done()).map((d) => d.summary)).toEqual(["interrupted"]), 5000);
+  await settle(env, system);
+  const [result] = toolResults(requests.at(-1)!);
+  expect(result).toMatchObject({ toolName: "note_plain", isError: true });
+  expect(text(result!)).toContain("Tool note_plain was interrupted");
+  const [row] = await scribe("tool-plain-1").sessions();
+  const key = `${row!.session}:${result!.toolCallId}`;
+  expect((await scribe("tool-plain-1").outbox()).filter((r) => r.target === "note.plain")).toMatchObject([{ id: `fx:note.plain:${key}`, status: "in_doubt" }]);
+  expect(events.filter((e) => e.kind === "effect.in_doubt" && e.effect === "note.plain")).toMatchObject([{ effectKey: key }]);
+  expect(events.filter((e) => e.kind === "retry.scheduled" && e.effect === "note.plain")).toEqual([]);
+  expect(runs).toBe(1);
+});
+
+it("[agent-tool-approval] a tool that needs approval answers waiting at once; once approved, its result is steered in and the session finishes", async () => {
+  const requests: ScriptedRequest[] = [];
+  script("tool-approve-1", (r) => {
+    requests.push(r);
+    if ((users(r).at(-1) ?? "").startsWith("Result of note.approved")) return finish({ summary: "approved" });
+    return r.lastToolResults.length === 0 ? call("note_approved", { text: "b" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe("tool-approve-1");
+  await task("tool-approve-1", "the approved note", "task-ta1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [row] = await s.sessions();
+  const session = row!.session as string;
+  const [result] = toolResults(requests[1]!);
+  const key = `${session}:${result!.toolCallId}`;
+  const parked = await effectRow("tool-approve-1", "note.approved", key);
+  expect(parked).toMatchObject({ status: "awaiting_approval" });
+  expect(result).toMatchObject({ toolName: "note_approved", isError: false });
+  expect(text(result!)).toBe(waitingText("note.approved", key, parked!.next_at));
+  // The run ended its turn, and the job still waits: the result is owed to the session.
+  await runEnded("tool-approve-1", session, "task-ta1");
+  expect(await jobRow("tool-approve-1", "fx:agent.session:task-ta1")).toMatchObject({ status: "awaiting_job" });
+  expect(await s.noted()).toEqual([]);
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key, value: { noted: "b" } });
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["approved"]), 5000);
+  expect(await s.noted()).toEqual([{ effect: "note.approved", key, text: "b" }]);
+  // The result started a new run in the session, as input of its own kind, with the operation id "result:<key>".
+  expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.approved (request ${key}): confirmed {"noted":"b"}`);
+  expect((await s.messages(session)).filter((e) => e.kind === "actord.effect_result")).toHaveLength(1);
+  expect(await s.wait(`result:${key}`, session)).toMatchObject({ status: "done" });
+  expect(await jobRow("tool-approve-1", `fx:agent.session.steer:result:${key}`)).toMatchObject({ status: "confirmed" });
+  expect(await jobRow("tool-approve-1", "fx:agent.session:task-ta1")).toMatchObject({ status: "confirmed" });
+  expect(await s.failures()).toEqual([]);
+});
+
+it("[agent-tool-result-stale] an approval that resolves after its session was replaced is only a note: nothing is submitted to either session", async () => {
+  const events = captureEvents();
+  const requests: ScriptedRequest[] = [];
+  script("tool-stale-1", (r) => {
+    requests.push(r);
+    if ((users(r)[0] ?? "").includes('"second"')) return finish({ summary: "second" });
+    return r.lastToolResults.length === 0 ? call("note_approved", { text: "c" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe("tool-stale-1");
+  await task("tool-stale-1", "first", "task-ts1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [first] = await s.sessions();
+  const key = `${first!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("tool-stale-1", first!.session as string, "task-ts1");
+  await task("tool-stale-1", "second", "task-ts2");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["second"]), 5000);
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "confirmed", key });
+  await settle(env, system);
+  expect(notes(events, "Scribe:tool-stale-1", "stale tool result")).toMatchObject([{ detail: { key, session: first!.session, generation: 1 } }]);
+  expect((await s.outbox()).filter((r) => r.id.startsWith("fx:agent.session.steer:"))).toEqual([]);
+  const [, second] = await s.sessions();
+  for (const session of [first!.session, second!.session] as string[]) {
+    const entries = await s.messages(session);
+    expect(entries.filter((e) => e.kind === "actord.effect_result")).toEqual([]);
+    expect(entries.flatMap((e) => e.model ?? []).filter((m) => m.role === "user").map(text).filter((t) => t.startsWith("Result of"))).toEqual([]);
+  }
+  expect((await s.done()).map((d) => d.summary)).toEqual(["second"]);
+  expect(await s.failures()).toEqual([]);
+});
+
+it("[agent-tool-undeclared] only the effects in `tools` are offered, and requestEffect refuses an effect the actor doesn't list", async () => {
+  const events = captureEvents();
+  const held = gate();
+  gates.push(held.open);
+  script("tool-undeclared-1", async () => {
+    await held.wait();
+    return finish({ summary: "listed" });
+  });
+  const s = scribe("tool-undeclared-1");
+  await task("tool-undeclared-1", "the tools", "task-tu1");
+  await reached(held);
+  const [row] = await s.sessions();
+  // note.hidden is in Scribe's effects but not its tools; gateway.keyed is another actor's effect.
+  expect((await s.offeredTools(row!.session as string)).sort()).toEqual(["finish", "note_approved", "note_keyed", "note_plain"]);
+  const refused = await runInDurableObject(s, (instance: Scribe) =>
+    instance.actor.requestEffect("gateway.keyed", { key: "x" }, { key: "x" }).then(
+      () => "requested",
+      (err: Error) => err.message,
+    ),
+  );
+  expect(refused).toBe("Scribe may not request effect gateway.keyed: it isn't in its declared effects");
+  expect(events.filter((e) => e.kind === "effect.denied" && e.actor === "Scribe:tool-undeclared-1")).toMatchObject([{ effect: "gateway.keyed", effectKey: "x", reason: "undeclared capability" }]);
+  expect((await s.outbox()).filter((r) => r.kind === "effect" && r.target !== "agent.session")).toEqual([]);
+  held.open();
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["listed"]), 5000);
+});
+
+it("[agent-tool-denied] a person's denial sends no result message, so the session's probe steers it in, and the model hears it failed", async () => {
+  const requests: ScriptedRequest[] = [];
+  script("tool-deny-1", (r) => {
+    requests.push(r);
+    if ((users(r).at(-1) ?? "").startsWith("Result of note.approved")) return finish({ summary: "denied" });
+    return r.lastToolResults.length === 0 ? call("note_approved", { text: "d" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe("tool-deny-1");
+  await task("tool-deny-1", "the denied note", "task-td1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 5000);
+  const [row] = await s.sessions();
+  const key = `${row!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  await runEnded("tool-deny-1", row!.session as string, "task-td1");
+  expect(await s.decide(key, "deny")).toMatchObject({ status: "denied", key });
+  await s.probeNow("task-td1");
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["denied"]), 5000);
+  expect(users(requests.at(-1)!).at(-1)).toBe(`Result of note.approved (request ${key}): failed denied by a person`);
+  expect(await s.noted()).toEqual([]);
 });

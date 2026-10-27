@@ -38,6 +38,7 @@ export const system = defineSystem({
     "scribe.done": message({ version: 1, description: "The session's result", payload: z.object({ summary: z.string().refine((s) => s.trim() !== "", "summary must not be blank") }) }),
     "agent.failed": message({ version: 1, description: "A session ended without a result", payload: agentFailed }),
     "agent.exhausted": message({ version: 1, description: "A session ran out of budget", payload: agentExhausted }),
+    "scribe.noted": message({ version: 1, description: "A note effect's outcome", payload: Outcome }),
   },
   sources: {
     hooks: webhook({ path: "/hooks/probe", verify: "github", secret: "PROBE_HOOK_SECRET", events: { "probe.poke": { message: "probe.poked", key: (e: { key: string }) => e.key, map: (e: { key: string }) => ({ key: e.key }) } } }),
@@ -66,6 +67,9 @@ export const system = defineSystem({
       on: { "scribe.task": "start", "scribe.hint": "steer", "scribe.halt": "stop" },
       returns: "scribe.done",
       budget: { usd: 1, turns: 10, wallClock: "10m" },
+      // note.hidden is an effect Scribe may request but not a tool: the model is never offered it.
+      effects: ["note.keyed", "note.plain", "note.approved", "note.hidden"],
+      tools: ["note.keyed", "note.plain", "note.approved"],
     },
   },
   effects: {
@@ -78,6 +82,11 @@ export const system = defineSystem({
     "gateway.job": { description: "Long work, settled later", kind: "job", idempotency: "key", deadline: "1h", probe: { every: "1m" }, completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-plain": { description: "Long work whose start can't be retried", kind: "job", idempotency: "none", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-approval": { description: "Long work a person must approve first", kind: "job", idempotency: "key", approval: "human", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
+    // Scribe's tools (agent.ts registers recording adapters; tests override them to hang or fail).
+    "note.keyed": { description: "Write a note; a retry with the same key writes it once", idempotency: "key", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    "note.plain": { description: "Write a note; a retry may write it twice", idempotency: "none", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    "note.approved": { description: "Write a note a person must approve first", idempotency: "key", approval: "human", input: z.object({ text: z.string() }), result: "scribe.noted" },
+    "note.hidden": { description: "Write a note no tool offers", idempotency: "key", input: z.object({ text: z.string() }) },
     // Tests install approvalEmail with a fake send binding (overrideEffect); none is registered here.
     "notify.approval": { description: "Email the owner that an approval is waiting", idempotency: "none" },
   },
@@ -107,6 +116,7 @@ export const system = defineSystem({
     { from: "Scribe", message: "scribe.done", to: "Probe" },
     { from: "Scribe", message: "agent.failed", to: "Scribe" },
     { from: "Scribe", message: "agent.exhausted", to: "Scribe" },
+    { from: "Scribe", message: "scribe.noted", to: "Scribe" },
   ],
 });
 
