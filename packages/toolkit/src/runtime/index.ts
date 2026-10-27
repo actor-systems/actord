@@ -510,8 +510,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   // handler's own), and whether a handler's transaction closure is running. workerd runs a transaction started from
   // inside another's closure nested, at once. One started from elsewhere didn't start within 500 microtasks while the
   // open one awaited only microtasks ([beside-transaction-nested] shows no more than that), and runs nested in it once
-  // the open one awaits I/O (#80). So a requestEffect whose own transaction finds this set was called from inside a
-  // handler, or beside one awaiting I/O. Both refuse it.
+  // the open one yields to the event loop (awaits anything that isn't a microtask: I/O, a timer; #80). So a
+  // requestEffect whose own transaction finds this set was called from inside a handler, or beside one that yielded.
+  // Both refuse it.
   let inHandlerCall = false;
   let inHandlerTransaction = false;
   // Jobs probeNow asked to look at while a probe of theirs ran or their start hadn't returned: looked at once it does.

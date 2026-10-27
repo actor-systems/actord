@@ -1,8 +1,9 @@
 // An agent session's budget: its turns and what they cost. pi has no budgets, and a hook can't stop a run (its throw
 // is only reported), so actord watches the session's events and aborts it from outside the run once a limit is
-// reached. The overshoot is at most the request in flight when the abort lands. The watcher lives in memory: the
-// agent runtime watches each waiting session again when pi opens, before pi resumes its runs, and the session's job
-// probe reads both again from what pi recorded (spentBy).
+// reached. A request's cost is known only when it ends, so the overshoot is at most two requests: the one that crosses
+// the limit, and one already in flight when the abort lands. The watcher lives in memory: the agent runtime watches
+// each waiting session again when pi opens, before pi resumes its runs, and the session's job probe reads both again
+// from what pi recorded (spentBy).
 import { PiHarness } from "agents/harness/pi";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type AgentEventStream, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Harness, type SnapshotEvent, UsageDoc, type UsageState, watchEvents } from "@earendil-works/pi-durable";
