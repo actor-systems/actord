@@ -23,9 +23,9 @@ for (const [category, rules] of Object.entries(required)) {
   });
 }
 
-test("model-backed evals and plain pushes still ask", () => {
+// Plain pushes and PR/issue creation stopped asking on 2026-10-27, at the owner's request (decision 0001).
+test("model-backed evals still ask", () => {
   assert.ok(settings.permissions.ask.includes("Bash(claude plugin eval*)"));
-  assert.ok(settings.permissions.ask.includes("Bash(git push*)"));
 });
 
 test("no allow rules widen the agent's authority", () => {

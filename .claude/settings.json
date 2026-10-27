@@ -93,9 +93,6 @@
       "Bash(git*push* :*)"
     ],
     "ask": [
-      "Bash(git push*)",
-      "Bash(gh pr create*)",
-      "Bash(gh issue create*)",
       "Bash(claude plugin eval*)"
     ]
   }
