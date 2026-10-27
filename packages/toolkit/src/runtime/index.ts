@@ -49,7 +49,6 @@ import {
   awaitingJob,
   awaitJob,
   cancellingJob,
-  cancellingJobs,
   dueJobs,
   earliestJob,
   earlyOutcome,
@@ -668,8 +667,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         if (!row) return false;
         // Inside the transaction: the events wait for the commit, like the handler's own.
         const defer = (e: Omit<ActorEvent, "$actord">) => void notes.push(e);
-        // The completion is direct evidence the work ran, so it wins over a cancel still waiting for its answer.
-        if (row.status === "awaiting_job" || row.status === "cancelling") {
+        // The completion is direct evidence the work ran, so it wins over a cancel still waiting for its answer, and a
+        // start that was already tried and is only waiting to be tried again has nothing left to do.
+        if (row.status === "awaiting_job" || row.status === "cancelling" || (row.status === "pending" && row.attempts > 0)) {
           settleByMessage(row, row.body, outcome, defer);
           return true;
         }
@@ -731,9 +731,17 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     sql.exec("UPDATE _actors_outbox SET status = 'running', next_at = ? WHERE id = ?", now(), row.id);
     const run: Promise<void> = runEffect(row)
       .catch((err) => {
-        const error = err instanceof Error ? err.message : String(err);
-        sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', last_error = ? WHERE id = ? AND status = 'running'", error, row.id);
-        emit({ kind: "effect.in_doubt", at: now(), actor: self, effect: row.target, reason: `effect runner failed: ${error}` });
+        // Settled like any other outcome in doubt, so the actor hears it, unless the attempt settled before it threw.
+        const error = `effect runner failed: ${messageOf(err)}`;
+        const current = jobRowAt(sql, row.id);
+        if (current?.status !== "running") return;
+        try {
+          finishEffect({ id: row.id, attempts: row.attempts + 1 }, current.body, "in_doubt", null, error);
+        } catch {
+          // A body that can't be read back can't name a result message: mark the row, as before.
+          sql.exec("UPDATE _actors_outbox SET status = 'in_doubt', last_error = ? WHERE id = ? AND status = 'running'", error, row.id);
+          emit({ kind: "effect.in_doubt", at: now(), actor: self, effect: row.target, reason: error });
+        }
       })
       .finally(() => {
         inflight.delete(row.id);
@@ -754,11 +762,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       const fx = system.effects?.[req.name];
       const reason = "interrupted: the actor restarted while the attempt was in flight";
       const kept = fx?.kind === "job" ? earlyOutcome(sql, row.id) : undefined;
-      if (kept && fx?.idempotency !== "key") {
-        // The start's own outcome is unknown, but the job's completion already arrived: that settles it.
-        settleByMessage({ id: row.id, attempts: row.attempts + 1 }, JSON.parse(row.body) as JobBody, kept);
-      } else if (kept && row.interruptions + 1 >= parkAfterInterruptions) {
-        // About to be parked, but the job's completion is known: that outcome wins over a start in doubt.
+      if (kept) {
+        // The start's own outcome is unknown, but the job's completion already arrived: that settles it, keyed or not,
+        // rather than a start run again for work known to be done.
         settleByMessage({ id: row.id, attempts: row.attempts + 1 }, JSON.parse(row.body) as JobBody, kept);
       } else if (fx?.idempotency === "key" && row.interruptions + 1 >= parkAfterInterruptions) {
         // Interrupted again and again without ever settling: stop retrying, and say so honestly.
@@ -777,8 +783,23 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       }
     }
     // A waiting job has nothing in flight, so it isn't an orphan. A cancel that was in flight is asked
-    // again: the job is still marked cancelling, and only the adapter's answer settles it.
-    for (const id of cancellingJobs(sql)) startCancel(id);
+    // again: the job is still marked cancelling, and only the adapter's answer settles it. Each time is an
+    // interruption, so a cancel that takes the object down with it every time is parked, not issued forever.
+    for (const c of sql.exec<{ id: string; interruptions: number }>("SELECT id, interruptions FROM _actors_outbox WHERE status = 'cancelling' ORDER BY seq").toArray()) {
+      const interruptions = c.interruptions + 1;
+      const row = cancellingJob(sql, c.id);
+      if (!row) continue;
+      if (interruptions >= parkAfterInterruptions) {
+        const parked = `parked: cancel interrupted ${interruptions} times without settling`;
+        const req = row.body;
+        sql.exec("UPDATE _actors_outbox SET interruptions = ? WHERE id = ?", interruptions, c.id);
+        emit({ kind: "effect.parked", at: now(), actor: self, effect: req.name, effectKey: req.key, causationId: req.causationId, correlationId: req.correlationId, reason: parked });
+        finishEffect(row, req, "in_doubt", null, parked, { settledBy: "cancel" });
+      } else {
+        sql.exec("UPDATE _actors_outbox SET interruptions = ? WHERE id = ?", interruptions, c.id);
+        startCancel(c.id);
+      }
+    }
     if (orphans.length > 0) await cap.arm(earliestWake());
   }
 
@@ -924,6 +945,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           // Retries exhausted. Without proof the request never arrived, the outcome is unknown.
           if (e.notDelivered) finish("failed", null, error);
           else finish("in_doubt", null, error);
+        } else if (kept()) {
+          // The job's completion already arrived: the work ran, so settle by it rather than start it again.
+          finish("in_doubt", null, error);
         } else {
           attemptOpen = false;
           if (hasUsage(usage)) sql.exec("UPDATE _actors_outbox SET body = ? WHERE id = ?", JSON.stringify({ ...withUsage(req, usage), earlyOutcome: kept() }), row.id);
@@ -1006,7 +1030,9 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
 
   /** A probe's answer. Done settles the job; anything else books the next look. Moot if the job settled meanwhile. */
   function probed(id: string, result: JobProbe | null, error: string | null, reported: EffectUsage): void {
-    const row = awaitingJob(sql, id);
+    // A probe that finds the job done is direct evidence, like a completion message: it settles a job whose cancel
+    // is still waiting for its answer too, and that answer is then dropped.
+    const row = awaitingJob(sql, id) ?? (result?.done ? cancellingJob(sql, id) : null);
     if (!row) return;
     const usage: EffectUsage = { ...row.body.usage };
     addUsage(usage, reported);

@@ -103,18 +103,17 @@ export function rescheduleJob(sql: SqlStorageLike, id: string, nextAt: number, b
   return sql.exec("UPDATE _actors_outbox SET next_at = ?, body = ? WHERE id = ? AND status = 'awaiting_job' RETURNING id", nextAt, JSON.stringify(body), id).toArray().length > 0;
 }
 
-/** awaiting_job → cancelling, inside the handler's transaction. False if it wasn't waiting. */
+/**
+ * awaiting_job → cancelling, inside the handler's transaction. False if it wasn't waiting. The interruption count
+ * starts again: from here it counts restarts that cut the cancel off, not the start's.
+ */
 export function markCancelling(sql: SqlStorageLike, id: string, now: number): boolean {
-  return sql.exec("UPDATE _actors_outbox SET status = 'cancelling', next_at = ? WHERE id = ? AND status = 'awaiting_job' RETURNING id", now, id).toArray().length > 0;
+  return sql.exec("UPDATE _actors_outbox SET status = 'cancelling', next_at = ?, interruptions = 0 WHERE id = ? AND status = 'awaiting_job' RETURNING id", now, id).toArray().length > 0;
 }
 
 export function cancellingJob(sql: SqlStorageLike, id: string): JobRow | null {
   const r = sql.exec<{ id: string; attempts: number; body: string }>("SELECT id, attempts, body FROM _actors_outbox WHERE id = ? AND status = 'cancelling'", id).toArray()[0];
   return r ? parse(r) : null;
-}
-
-export function cancellingJobs(sql: SqlStorageLike): string[] {
-  return sql.exec<{ id: string }>("SELECT id FROM _actors_outbox WHERE status = 'cancelling' ORDER BY seq").toArray().map((r) => r.id);
 }
 
 /** The earliest look any waiting job needs, or null when none is waiting. */
