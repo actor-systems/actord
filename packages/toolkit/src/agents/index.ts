@@ -633,10 +633,10 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   };
 
   /**
-   * Steer only a session whose job still runs, and that wasn't stopped or replaced. pi takes a steer to an idle session
-   * (one whose turn ended on a tool that waits for a person, say) as new input, which starts a run: the job tracks it,
-   * since its probe counts pi's pending work as the session's. A tool's owed result (`result`, its request's key) goes
-   * in as input of its own kind.
+   * Steer only a session whose job still runs, that wasn't stopped or replaced, and that hasn't returned its result or
+   * run out of budget. pi takes a steer to an idle session (one whose turn ended on a tool that waits for a person, say)
+   * as new input, which starts a run: the job tracks it, since its probe counts pi's pending work as the session's. A
+   * tool's owed result (`result`, its request's key) goes in as input of its own kind.
    */
   const steerCall: EffectAdapter<{ key: string; prompt: string; result?: string }, PiReceipt> = {
     async run(input, { key: operationId }) {
@@ -650,6 +650,10 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       };
       const status = jobStatus(input.key);
       if (!LIVE.has(status ?? "") || halted(input.key)) throw notSteered({ job: status ?? null, halted: halted(input.key) });
+      // Its result is in, or its budget ran out: the job settles without another run, and a run started now would go
+      // on unwatched after it.
+      if (row.result != null) throw notSteered({ job: status, result: true });
+      if (row.exhausted != null) throw notSteered({ job: status, exhausted: row.exhausted });
       // Sent before the start returns, a steer could reach pi ahead of the prompt it is meant to follow.
       if (row.session === null || status !== "awaiting_job") throw new EffectNotDelivered("the session's start hasn't returned yet");
       const session = row.session;

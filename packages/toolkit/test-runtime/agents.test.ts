@@ -417,6 +417,39 @@ it("[agent-stop-mark-aborts] a stop mark the probe finds on a running session st
   expect(await s.done()).toEqual([]);
 });
 
+for (const ended of ["result", "exhausted"] as const) {
+  it(`[agent-steer-after-${ended}] a steer that lands once the session ${ended === "result" ? "returned its result" : "is exhausted"}, before its job settles, is refused with a note and starts no run`, async () => {
+    const events = captureEvents();
+    const name = `steer-${ended}-1`;
+    const requests: ScriptedRequest[] = [];
+    script(name, (r) => {
+      requests.push(r);
+      if (users(r).some((u) => u.includes("too late"))) return { text: "steered" };
+      if (ended === "result") return finish({ summary: "done" });
+      return r.turn === 0 ? call("note_keyed", { text: "x" }) : { text: "more" };
+    });
+    if (ended === "exhausted") overrideBudget("Scribe", { turns: 1 });
+    // Hold every look at the job, so it is still running when the steer arrives.
+    const looks = gate();
+    gates.push(looks.open);
+    await runInDurableObject(scribe(name), (instance: Scribe) => {
+      const harness = instance.actor.harness;
+      const pending = harness.pending.bind(harness);
+      harness.pending = async (...args: Parameters<typeof pending>) => (await looks.wait(), pending(...args));
+    });
+    await task(name, "the quick one", `task-${ended}1`);
+    await eventually(async () => expect((await scribe(name).sessions())[0]?.[ended]).not.toBeNull(), 4000);
+    expect(await jobRow(name, `fx:agent.session:task-${ended}1`)).toMatchObject({ status: "awaiting_job" });
+    expect(await ingress(env, system, "Scribe", "scribe.hint", { text: "too late" }, { key: name, id: `hint-${ended}1` })).toMatchObject({ status: "handled" });
+    await eventually(async () => expect(await jobRow(name, `fx:agent.session.steer:hint-${ended}1`)).toMatchObject({ status: "failed", lastError: "the session has ended; not steered" }), 4000);
+    expect(notes(events, `Scribe:${name}`, "the session has ended; not steered")).toMatchObject([{ effectKey: `hint-${ended}1`, detail: { key: `task-${ended}1`, [ended]: expect.anything() } }]);
+    looks.open();
+    await eventually(async () => expect(await jobRow(name, `fx:agent.session:task-${ended}1`)).toMatchObject({ status: ended === "result" ? "confirmed" : "failed" }), 4000);
+    await settle(env, system);
+    expect(requests.filter((r) => users(r).some((u) => u.includes("too late")))).toEqual([]);
+  }, 20_000);
+}
+
 it("[agent-steer-after-end] a steer that runs after its session ended is refused with a note, and starts no run", async () => {
   const events = captureEvents();
   const held = gate();
