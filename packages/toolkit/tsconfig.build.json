@@ -12,6 +12,7 @@
     "src/system.ts",
     "src/runtime/index.ts",
     "src/sources/index.ts",
+    "src/agents/index.ts",
     "src/testing.ts",
     "src/vitest.ts",
     "src/cloudflare-test.d.ts"

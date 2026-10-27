@@ -29,6 +29,10 @@
       "types": "./dist/types/sources/index.d.ts",
       "default": "./dist/sources.mjs"
     },
+    "./agents": {
+      "types": "./dist/types/agents/index.d.ts",
+      "default": "./dist/agents.mjs"
+    },
     "./testing": {
       "types": "./dist/types/testing.d.ts",
       "default": "./dist/testing.mjs"
@@ -43,7 +47,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=22.18"
+    "node": ">=22.19"
   },
   "scripts": {
     "build": "node build.mjs",
@@ -51,6 +55,10 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@cloudflare/computer": "0.8.0",
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
     "@types/node": "24.19.2",
     "agents": "0.30.1",
     "cron-schedule": "6.0.0",
@@ -61,10 +69,26 @@
     "zod": "4.6.5"
   },
   "peerDependencies": {
+    "@cloudflare/computer": "0.8.0",
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
     "agents": "~0.30.1",
     "zod": "^4.0.0"
   },
   "peerDependenciesMeta": {
+    "@cloudflare/computer": {
+      "optional": true
+    },
+    "@earendil-works/chord": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-durable": {
+      "optional": true
+    },
     "agents": {
       "optional": false
     },

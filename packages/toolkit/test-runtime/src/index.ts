@@ -6,6 +6,8 @@ import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
 import { defineSystem, inboundEmail, message, webhook } from "../../src/system.ts";
 import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
 
+export { Scribe } from "./agent.ts";
+
 const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed", "in_doubt"]), value: z.unknown().optional(), error: z.string().optional(), usage: z.object({ inputTokens: z.number().optional(), outputTokens: z.number().optional(), costUsd: z.number().optional(), containerSeconds: z.number().optional() }).optional() });
 
 export const system = defineSystem({

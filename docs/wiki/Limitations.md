@@ -10,6 +10,10 @@
   `@cloudflare/computer`.
 - **Local evidence only.** Tests run in workerd through Cloudflare's Vitest integration; `actord events` and
   `actord trace` read logs from local runs and never see production. Nothing was deployed to Cloudflare.
+- **No container runs in tests.** Under `@cloudflare/vitest-plugin` 1.4.7 a Durable Object has no `ctx.container`:
+  the plugin turns containers off, so neither a `containers` entry nor Computer's `ContainerBackend` gets one
+  (spike 3). Container tests run against a stub of `ctx.container` (`start`, `getTcpPort`, `destroy`, `running`),
+  not a real container.
 - **Inside Claude Code's default sandbox, workerd tests can't run** (the sandbox denies the loopback port
   Miniflare needs), so `actord verify` reports `blocked` there rather than passing (decision 0004).
 - **Measured contribution is modest and uneven.** Two release eval runs on this version: mean `Δ` +0.09 and

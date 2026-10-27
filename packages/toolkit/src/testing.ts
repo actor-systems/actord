@@ -60,6 +60,19 @@ export function captureEvents(): ActorEvent[] {
   return events;
 }
 
+/** Retry `check` until it passes, or throw its last failure after `ms`: for what real time decides, such as an alarm firing. */
+export async function eventually(check: () => Promise<void>, ms = 2000): Promise<void> {
+  const until = Date.now() + ms;
+  for (;;) {
+    try {
+      return await check();
+    } catch (err) {
+      if (Date.now() > until) throw err;
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 export function resetSeams(): void {
   delete seams().events;
   seams().faults = [];

@@ -3,25 +3,13 @@ import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } fro
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { deliverExternal, deriveId, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { migrateLegacy, nextDue, scheduleKey } from "../src/runtime/schedules.ts";
-import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
+import { captureEvents, eventually, expireApprovals, expireJobs, fireTimers, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle, tick } from "../src/testing.ts";
 import { system } from "./src/index.ts";
 
 afterEach(() => resetSeams());
 const probe = (key: string) => env.PROBE.getByName(key);
 const send = (key: string, effect: "gateway.reconcilable" | "gateway.plain" | "gateway.approval" | "gateway.keyed" | "gateway.budgeted" | "gateway.job-plain" | "gateway.job-approval") =>
   ingress(env, system, "Probe", "probe.effect", { effect, key }, { key });
-/** Retry `check` until it passes, or throw its last failure after `ms`: for what real time decides, such as an alarm firing. */
-async function eventually(check: () => Promise<void>, ms = 2000): Promise<void> {
-  const until = Date.now() + ms;
-  for (;;) {
-    try {
-      return await check();
-    } catch (err) {
-      if (Date.now() > until) throw err;
-    }
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
 
 it("[denied-capability] an effect the actor didn't declare is refused and nothing is queued", async () => {
   const r = await ingress(env, system, "Probe", "probe.misbehave", {}, { key: "deny" });
