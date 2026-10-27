@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.fixture.json",
+  "include": ["system.ts", "src/messages/**/*.ts"]
+}

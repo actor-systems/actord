@@ -1,0 +1,13 @@
+{
+  "name": "fixture-agent-tool-input-missing",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "CODER", "class_name": "Coder" }
+    ]
+  },
+  "exports": {
+    "Coder": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

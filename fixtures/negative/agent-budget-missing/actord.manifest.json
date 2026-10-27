@@ -37,20 +37,57 @@
       "binding": "PONGER",
       "budget": null,
       "effects": [],
+      "harness": {
+        "kind": "pi"
+      },
+      "instructions": "PONGER.md",
       "justification": [
         "state"
       ],
       "kind": "agent",
+      "model": {
+        "id": "claude-opus-5-5"
+      },
       "name": "Ponger",
+      "on": {
+        "ping.sent": "start"
+      },
       "purpose": "Records each ping exactly once",
       "receives": [
+        "agent.exhausted",
+        "agent.failed",
         "ping.sent"
       ],
+      "returns": "ping.sent",
       "schedules": [],
-      "sends": []
+      "sends": [
+        "agent.exhausted",
+        "agent.failed",
+        "ping.sent"
+      ]
     }
   ],
   "messages": [
+    {
+      "description": "The agent ran out of budget",
+      "name": "agent.exhausted",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The agent failed",
+      "name": "agent.failed",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "version": 1
+    },
     {
       "description": "The schedule says it's time to ping",
       "name": "ping.due",
@@ -123,6 +160,21 @@
     },
     {
       "from": "Pinger",
+      "message": "ping.sent",
+      "to": "Ponger"
+    },
+    {
+      "from": "Ponger",
+      "message": "agent.exhausted",
+      "to": "Ponger"
+    },
+    {
+      "from": "Ponger",
+      "message": "agent.failed",
+      "to": "Ponger"
+    },
+    {
+      "from": "Ponger",
       "message": "ping.sent",
       "to": "Ponger"
     }

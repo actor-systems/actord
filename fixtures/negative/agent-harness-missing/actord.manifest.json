@@ -1,0 +1,146 @@
+{
+  "$comment": "Derived from system.ts by `actord graph --write`. Do not edit; `actord check` fails when it is stale.",
+  "schemaVersion": 1,
+  "system": {
+    "name": "agent-harness-missing",
+    "description": "An agent actor that declares no harness"
+  },
+  "actors": [
+    {
+      "binding": "CODER",
+      "budget": {
+        "maxAttempts": null,
+        "maxTokens": null,
+        "timeoutMs": null,
+        "turns": 40,
+        "usd": 5,
+        "wallClock": "30m"
+      },
+      "effects": [
+        "open-pr"
+      ],
+      "instructions": "CODER.md",
+      "justification": [
+        "lifecycle",
+        "state"
+      ],
+      "kind": "agent",
+      "model": {
+        "id": "claude-opus-5-5"
+      },
+      "name": "Coder",
+      "on": {
+        "task.requested": "start"
+      },
+      "purpose": "Works a task and returns the result",
+      "receives": [
+        "agent.exhausted",
+        "agent.failed",
+        "task.done",
+        "task.requested"
+      ],
+      "returns": "task.done",
+      "schedules": [],
+      "sends": [
+        "agent.exhausted",
+        "agent.failed",
+        "task.done"
+      ],
+      "tools": [
+        "open-pr"
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "description": "The agent ran out of budget",
+      "name": "agent.exhausted",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The agent failed",
+      "name": "agent.failed",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "The agent finished",
+      "name": "task.done",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "version": 1
+    },
+    {
+      "description": "Someone asked for a task",
+      "name": "task.requested",
+      "payload": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {},
+        "type": "object"
+      },
+      "version": 1
+    }
+  ],
+  "routes": [
+    {
+      "from": "@ingress",
+      "message": "task.requested",
+      "to": "Coder"
+    },
+    {
+      "from": "Coder",
+      "message": "agent.exhausted",
+      "to": "Coder"
+    },
+    {
+      "from": "Coder",
+      "message": "agent.failed",
+      "to": "Coder"
+    },
+    {
+      "from": "Coder",
+      "message": "task.done",
+      "to": "Coder"
+    }
+  ],
+  "effects": [
+    {
+      "approval": "none",
+      "completes": null,
+      "deadline": null,
+      "description": "Open a pull request",
+      "idempotency": "key",
+      "input": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "kind": "call",
+      "name": "open-pr",
+      "probe": null,
+      "reconcile": false,
+      "result": null
+    }
+  ],
+  "sources": [],
+  "approvals": null
+}

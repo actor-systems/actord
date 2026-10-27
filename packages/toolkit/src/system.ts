@@ -59,8 +59,68 @@ export interface ActorSpec {
   readonly schedules?: readonly ScheduleSpec[];
   /** Names of external effects (keys of the system's `effects`) this actor may request. */
   readonly effects?: readonly string[];
-  /** Required for model-assisted and agent actors: bounds on one unit of model work. */
-  readonly budget?: { readonly maxAttempts: number; readonly timeoutMs: number; readonly maxTokens?: number };
+  /**
+   * Required for model-assisted and agent actors: bounds on one unit of model work. A model-assisted actor
+   * sets maxAttempts and timeoutMs; an agent sets usd, turns and wallClock.
+   */
+  readonly budget?: {
+    readonly maxAttempts?: number;
+    readonly timeoutMs?: number;
+    readonly maxTokens?: number;
+    readonly usd?: number;
+    readonly turns?: number;
+    readonly wallClock?: Duration;
+  };
+  /** Agent actors: the harness that runs the agent loop. */
+  readonly harness?: HarnessSpec;
+  /** Agent actors: the model the agent runs on. */
+  readonly model?: { readonly id: string; readonly reasoning?: "low" | "medium" | "high" };
+  /** Agent actors: path from system.ts to the instructions file. */
+  readonly instructions?: string;
+  /** Agent actors: "workspace.*", "workspace.<name>", or names of effects in this actor's `effects`. */
+  readonly tools?: readonly string[];
+  /** Agent actors: which messages drive the agent, and what each does with the session. */
+  readonly on?: Readonly<Record<string, AgentVerb>>;
+  /** Agent actors: the message the agent's final answer is delivered as. */
+  readonly returns?: string;
+}
+
+/** What a message does to an agent's session. */
+export type AgentVerb = "start" | "steer" | "stop";
+
+export interface ContainerBackendSpec {
+  readonly kind: "container";
+  readonly image: string;
+  readonly instance?: string;
+}
+
+export interface WorkspaceSpec {
+  readonly kind: "computer";
+  /** Where commands run; without one the agent can read and edit files but not run commands. */
+  readonly backend?: ContainerBackendSpec;
+  /** Paths kept on the container's disk only (Computer's `ignore`): each starts with "/" or "**\/". */
+  readonly localOnly?: readonly string[];
+  readonly egress?: "none" | "registry-read";
+}
+
+export interface HarnessSpec {
+  readonly kind: "pi";
+  readonly workspace?: WorkspaceSpec;
+}
+
+/** Declare a Pi harness. */
+export function pi(spec: { workspace?: WorkspaceSpec } = {}): HarnessSpec {
+  return { ...spec, kind: "pi" };
+}
+
+/** Declare a Computer workspace. */
+export function computer(spec: Omit<WorkspaceSpec, "kind"> = {}): WorkspaceSpec {
+  return { ...spec, kind: "computer" };
+}
+
+/** Declare a container backend for a workspace's commands. */
+export function containerBackend(spec: { image: string; instance?: string }): ContainerBackendSpec {
+  return { ...spec, kind: "container" };
 }
 
 export interface EffectSpec {
@@ -98,6 +158,8 @@ export interface EffectSpec {
   readonly completes?: { readonly message: string };
   /** True when the effect makes something public (a post, a release). It requires approval: "human", and an emailed approval of it must be answered from a verified sender. */
   readonly publishes?: boolean;
+  /** The parameters of the tool an agent sees for this effect. */
+  readonly input?: StandardSchemaV1;
 }
 
 /** One webhook event, named `${X-GitHub-Event}.${action}` (the bare event name when the payload has no action). */

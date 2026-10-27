@@ -2,6 +2,7 @@
 // deploy plan. All actors in one Worker deploy atomically, so the compatibility question for messages is
 // whether the new code accepts what is already in flight (outboxes, alarms) when the deploy lands.
 import { scheduleLabel, type Manifest, type ManifestActor, type ManifestEffect, type ManifestMessage, type ManifestSource } from "./manifest.ts";
+import { durationMs } from "../system.ts";
 
 export type Compatibility = "compatible" | "breaking" | "risky";
 
@@ -126,9 +127,55 @@ function diffActor(b: ManifestActor, h: ManifestActor, add: Add) {
   }
   for (const e of h.effects.filter((e) => !b.effects.includes(e))) add("actor.effect.added", `${s} → ${e}`, "risky", `${s} may now request external effect ${e}`, { approval: true });
   for (const e of b.effects.filter((e) => !h.effects.includes(e))) add("actor.effect.removed", `${s} → ${e}`, "compatible", `${s} no longer requests ${e}`);
-  if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) add("actor.budget", s, "risky", `Model budget ${JSON.stringify(b.budget)} → ${JSON.stringify(h.budget)}`);
+  if (JSON.stringify(b.budget) !== JSON.stringify(h.budget)) {
+    // An agent's limits are classed by direction: only a decrease of every changed limit is safe.
+    const widened = budgetWidened(b.budget, h.budget);
+    add("actor.budget", s, widened ? "risky" : "compatible", `Model budget ${JSON.stringify(b.budget)} → ${JSON.stringify(h.budget)}`);
+  }
+  diffAgent(b, h, add);
   if (b.purpose !== h.purpose || JSON.stringify(b.justification) !== JSON.stringify(h.justification))
     add("actor.described", s, "compatible", "Purpose or justification changed");
+}
+
+const LIMITS = ["maxAttempts", "timeoutMs", "maxTokens", "usd", "turns"] as const;
+
+/** True unless every changed limit went down. Fields other than the agent's own are risky whichever way they move. */
+function budgetWidened(b: ManifestActor["budget"], h: ManifestActor["budget"]): boolean {
+  if (!b || !h) return true;
+  const value = (x: NonNullable<ManifestActor["budget"]>, f: (typeof LIMITS)[number]) => x[f] ?? null;
+  for (const f of LIMITS) {
+    const was = value(b, f);
+    const now = value(h, f);
+    if (was === now) continue;
+    if (f !== "usd" && f !== "turns") return true;
+    if (was === null || now === null || now > was) return true;
+  }
+  const wasMs = b.wallClock === undefined ? null : durationMs(b.wallClock);
+  const nowMs = h.wallClock === undefined ? null : durationMs(h.wallClock);
+  if (wasMs !== nowMs && (wasMs === null || nowMs === null || nowMs > wasMs)) return true;
+  return false;
+}
+
+/** The agent-only fields of an actor: model, tools, instructions, on, harness and returns. */
+function diffAgent(b: ManifestActor, h: ManifestActor, add: Add) {
+  const s = h.name;
+  if (show(b.model ?? null) !== show(h.model ?? null))
+    add("agent.model", s, "risky", `Model ${show(b.model ?? null)} → ${show(h.model ?? null)}; sessions already running keep the model they started with`, { approval: b.model?.id !== h.model?.id });
+  const bt = b.tools ?? [];
+  const ht = h.tools ?? [];
+  for (const t of ht.filter((t) => !bt.includes(t))) add("agent.tool.added", `${s} → ${t}`, "risky", `${s} may now call tool ${t}`, { approval: true });
+  for (const t of bt.filter((t) => !ht.includes(t))) add("agent.tool.removed", `${s} → ${t}`, "compatible", `${s} no longer has tool ${t}`);
+  if ((b.instructions ?? null) !== (h.instructions ?? null))
+    add("agent.instructions", s, "compatible", `Instructions ${b.instructions ?? "none"} → ${h.instructions ?? "none"}; sessions pin the text they started with`);
+  const bo = b.on ?? {};
+  const ho = h.on ?? {};
+  for (const [message, verb] of Object.entries(ho)) {
+    if (!(message in bo)) add("agent.on.added", `${s} ← ${message}`, "risky", `${s} now reacts to ${message} with ${verb}`);
+    else if (bo[message] !== verb) add("agent.on", `${s} ← ${message}`, "breaking", `${message} used to ${bo[message]} the session and now does ${verb}; messages already on their way get the new verb`);
+  }
+  for (const message of Object.keys(bo)) if (!(message in ho)) add("agent.on.removed", `${s} ← ${message}`, "risky", `${s} no longer reacts to ${message}`);
+  if (show(b.harness ?? null) !== show(h.harness ?? null)) add("agent.harness", s, "risky", `Harness ${show(b.harness ?? null)} → ${show(h.harness ?? null)}`);
+  if ((b.returns ?? null) !== (h.returns ?? null)) add("agent.returns", s, "risky", `Returns ${b.returns ?? "none"} → ${h.returns ?? "none"}`);
 }
 
 function diffMessage(b: ManifestMessage, h: ManifestMessage, add: Add) {
@@ -152,8 +199,8 @@ function diffMessage(b: ManifestMessage, h: ManifestMessage, add: Add) {
  * The fields the rules below classify. `receives` and `sends` follow from routes, which route.added and
  * route.removed report.
  */
-const ACTOR_FIELDS = new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends"]);
-const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes"]);
+const ACTOR_FIELDS = new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends", "harness", "model", "instructions", "tools", "on", "returns"]);
+const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes", "input"]);
 const SOURCE_FIELDS = new Set(["name", "kind", "path", "verify", "events", "message"]);
 
 /** Any other field that changed (one a later manifest adds, say) is reported as risky, never left silent. */
@@ -194,6 +241,7 @@ function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
     add("effect.budget", s, "risky", `Budget ${show(b.budget ?? null)} → ${show(h.budget ?? null)}; it applies from the next attempt, including retries of effects already in flight`);
   if ((b.expires ?? null) !== (h.expires ?? null))
     add("effect.expires", s, "risky", `Approval expiry ${b.expires ?? "default (3d)"} → ${h.expires ?? "default (3d)"}; requests already waiting keep the expiry time they were given`);
+  if (show(b.input ?? null) !== show(h.input ?? null)) add("effect.input", s, "risky", "The parameters of the tool an agent sees for this effect changed");
   if (b.description !== h.description) add("effect.described", s, "compatible", "Description changed");
   if (b.idempotency !== h.idempotency)
     add("effect.idempotency", s, "risky", `Idempotency ${b.idempotency} → ${h.idempotency}${h.idempotency === "none" ? ": unacknowledged attempts become in doubt" : ""}`);
