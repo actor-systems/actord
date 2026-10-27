@@ -1,11 +1,14 @@
 // Agents in workerd: a Pi session and actord in one Durable Object, against the Scribe probe (test-runtime/src/agent.ts).
 import { env } from "cloudflare:workers";
 import { abortAllDurableObjects, runInDurableObject } from "cloudflare:test";
+import { type DurableObjectStorageLike, Workspace } from "@cloudflare/computer";
+import type { GitClient } from "@cloudflare/computer/git";
 import { afterEach, expect, it } from "vitest";
+import { gitClone, gitPushEffect } from "../src/agents/git.ts";
 import type { ScriptedRequest, ScriptedTurn } from "../src/agents/index.ts";
-import { type ActorEvent, ingress } from "../src/runtime/index.ts";
+import { type ActorEvent, EffectRejected, ingress } from "../src/runtime/index.ts";
 import { captureEvents, eventually, expireJobs, overrideBudget, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
-import type { Scribe } from "./src/agent.ts";
+import { ContainerStub, type Scribe } from "./src/agent.ts";
 import { system } from "./src/index.ts";
 
 const scribe = (key: string) => env.SCRIBE.getByName(key);
@@ -1164,4 +1167,85 @@ it("[agent-events-in-doubt] a session job expired in doubt records one agent.end
   expect(ended).toHaveLength(1);
   expect(ended[0]).toMatchObject({ reason: "deadline passed", detail: { session: row!.session, outcome: "in_doubt", transcript: `transcripts/Scribe/task-ed1/${row!.session}.json` } });
   expect(await env.TRANSCRIPTS.get(`transcripts/Scribe/task-ed1/${row!.session}.json`)).not.toBeNull();
+});
+
+// ---- Git from the Durable Object (Task 10) ----
+
+const TOKEN = "ghs_sekrit-installation-token-0123456789";
+type PushCall = { dir?: string; remote?: string; ref?: string; remoteRef?: string; headers?: Record<string, string> };
+
+/** A workspace whose git client is a spy: pushes go to `onPush`, clones are recorded. */
+function spyWorkspace(state: DurableObjectState, onPush: (call: PushCall) => { ok: boolean; error: string | null; refs: Record<string, unknown> } = () => ({ ok: true, error: null, refs: {} })) {
+  const pushes: PushCall[] = [];
+  const clones: Array<Record<string, unknown>> = [];
+  const git = {
+    async clone(options: Record<string, unknown>) {
+      clones.push(options);
+    },
+    async push(options: PushCall) {
+      pushes.push(options);
+      return onPush(options);
+    },
+  } as unknown as GitClient;
+  const workspace = new Workspace({ storage: state.storage as unknown as DurableObjectStorageLike, git: () => git });
+  return { workspace, pushes, clones };
+}
+
+/** Every row of every table in the object's storage, as one string: what could carry a leaked token. */
+function everything(state: DurableObjectState): string {
+  const sql = state.storage.sql;
+  const tables = sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'sqlite_%'").toArray();
+  return tables.map((t) => JSON.stringify(sql.exec(`SELECT * FROM "${t.name}"`).toArray())).join("\n");
+}
+
+it("[git-push-header-only] the token reaches the git client as a header, and nowhere else", async () => {
+  await runInDurableObject(scribe("git-header"), async (_i, state) => {
+    const container = new ContainerStub();
+    container.start({ envVars: { SPIKE: "1" } });
+    const { workspace, pushes, clones } = spyWorkspace(state);
+    await gitClone(workspace, { url: "https://github.com/acme/repo", dir: "/repo", token: async () => TOKEN });
+    const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", token: async () => TOKEN });
+    const out = await adapter.run({ branch: "factory/one" }, { key: "k1", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
+    expect(clones).toHaveLength(1);
+    expect(clones[0]).toMatchObject({ url: "https://github.com/acme/repo", dir: "/repo", singleBranch: true, headers: { Authorization: `Bearer ${TOKEN}` } });
+    expect(clones[0]!.depth).toBeUndefined();
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toMatchObject({ dir: "/repo", remote: "origin", ref: "factory/one", remoteRef: "refs/heads/factory/one", headers: { Authorization: `Bearer ${TOKEN}` } });
+    expect(JSON.stringify(out)).not.toContain(TOKEN);
+    expect(JSON.stringify(container.calls)).not.toContain(TOKEN);
+    expect(everything(state)).not.toContain(TOKEN);
+    expect(everything(state)).not.toContain(btoa(`x-access-token:${TOKEN}`));
+  });
+});
+
+it("[git-push-header-only] falls back to Basic when Bearer is refused, and scrubs the token from a final error", async () => {
+  await runInDurableObject(scribe("git-basic"), async (_i, state) => {
+    const basic = `Basic ${btoa(`x-access-token:${TOKEN}`)}`;
+    const refused = spyWorkspace(state, (call) => (call.headers?.Authorization?.startsWith("Bearer") ? { ok: false, error: "401", refs: {} } : { ok: true, error: null, refs: {} }));
+    const run = (w: Workspace) => gitPushEffect({ workspace: () => w, dir: "/repo", token: async () => TOKEN }).run({ branch: "factory/x" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
+    await run(refused.workspace);
+    expect(refused.pushes.map((p) => p.headers?.Authorization)).toEqual([`Bearer ${TOKEN}`, basic]);
+
+    const failing = spyWorkspace(state, (call) => {
+      throw new Error(`denied for ${call.headers?.Authorization}`);
+    });
+    const err = await run(failing.workspace).then(() => null, (e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.message).not.toContain(TOKEN);
+    expect(err!.message).not.toContain(btoa(`x-access-token:${TOKEN}`));
+  });
+});
+
+it("[git-push-only-factory-branches] a branch outside factory/ is rejected before git is called", async () => {
+  await runInDurableObject(scribe("git-main"), async (_i, state) => {
+    const { workspace, pushes } = spyWorkspace(state);
+    const adapter = gitPushEffect({ workspace: () => workspace, dir: "/repo", token: async () => TOKEN });
+    const err = await adapter.run({ branch: "main" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(EffectRejected);
+    expect((err as Error).message).toBe("may push only factory/ branches");
+    expect(pushes).toHaveLength(0);
+    const open = gitPushEffect({ workspace: () => workspace, dir: "/repo", token: async () => TOKEN, allow: (b) => b === "main" });
+    await open.run({ branch: "main" }, { key: "k", attempt: 1, signal: new AbortController().signal, reportUsage() {} });
+    expect(pushes).toHaveLength(1);
+  });
 });

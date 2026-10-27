@@ -65,6 +65,7 @@ import type { scriptedModel } from "./scripted-model.ts";
 import { effectTools, shown, type ToolSession } from "./tools.ts";
 
 export { type ScriptedRequest, type ScriptedTurn, scriptedModel } from "./scripted-model.ts";
+export { gitClone, gitPushEffect } from "./git.ts";
 
 type AnySystem = System;
 
