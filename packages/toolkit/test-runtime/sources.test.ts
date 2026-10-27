@@ -313,6 +313,8 @@ const sourceEvents = (events: ActorEvent[]) => events.filter((e) => e.kind.start
 const received = (decision: "approve" | "deny", key: string, effect = "gateway.approval") => `Received: ${decision} for ${effect} (${key}). If it had already been decided or had expired, this changed nothing.`;
 const ASK_AGAIN = "reply with approve, or deny followed by a reason, on the first line";
 const fxStatus = (key: string, effect = "gateway.approval") => runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ status: string }>("SELECT status FROM _actors_outbox WHERE id = ?", `fx:${effect}:${key}`).one().status);
+/** The probe's system with no authserv on its email source: every reply is "unknown", and the owner's address alone is answered. */
+const withoutAuthserv = { ...system, sources: { ...system.sources, mail: { ...system.sources.mail, authserv: undefined } } } as never;
 
 it("[email-approves] the owner's 'approve' with dmarc=pass approves the parked effect, which runs once, by the owner via @mail", async () => {
   const events = captureEvents();
@@ -447,23 +449,23 @@ it("[email-quoted-approve] an 'approve' only in the quoted text below the owner'
   expect(fx.runs).toBe(1);
 });
 
-it("[email-unknown-auth-tool] with no authentication result, 'approve' approves an effect that doesn't publish, marked unknown", async () => {
+it("[email-unknown-auth-tool] without authserv, 'approve' approves an effect that doesn't publish, marked unknown", async () => {
   const { request, fx } = await asked("em-unk");
   const { replies, env: e } = answering();
   // A display name and another letter case are still the owner's address.
-  await handleEmail(reply({ from: "The Owner <Owner@Probe.Example>", envelopeFrom: OWNER, subject: `Re: ${request.subject}`, text: below(request, "  Approve  ") }), e, system);
+  await handleEmail(reply({ from: "The Owner <Owner@Probe.Example>", envelopeFrom: OWNER, subject: `Re: ${request.subject}`, text: below(request, "  Approve  ") }), e, withoutAuthserv);
   await settle(env, system);
   expect(fx.runs).toBe(1);
   expect(await probe("em-unk").decisions()).toEqual([{ effect: "gateway.approval", effectKey: "em-unk", decision: "approve", reason: null, by: OWNER, authenticated: "unknown" }]);
   expect(replies.map((r) => r.text)).toEqual([received("approve", "em-unk")]);
 });
 
-it("[email-unknown-auth-publishes] with no authentication result, 'approve' can't approve an effect that publishes, though a deny can", async () => {
+it("[email-unknown-auth-publishes] without authserv, 'approve' can't approve an effect that publishes, though a deny can", async () => {
   const events = captureEvents();
   const { request, fx } = await asked("em-pub", "gateway.publish");
   const { replies, env: e } = answering();
   const subject = `Re: ${request.subject}`;
-  await handleEmail(reply({ from: OWNER, subject, text: below(request, "approve") }), e, system);
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "approve") }), e, withoutAuthserv);
   await settle(env, system);
   expect(replies.map((r) => r.text)).toEqual(["this effect publishes; approve it in GitHub"]);
   expect(fx.runs).toBe(0);
@@ -471,11 +473,11 @@ it("[email-unknown-auth-publishes] with no authentication result, 'approve' can'
   expect(await fxStatus("em-pub", "gateway.publish")).toBe("awaiting_approval");
   expect(sourceEvents(events)).toMatchObject([{ kind: "source.rejected", actor: "@mail", reason: "publishes_unauthenticated", effect: "gateway.publish", effectKey: "em-pub" }]);
   // Refusing needs no proof of who sent it, so a deny goes through.
-  await handleEmail(reply({ from: OWNER, subject, text: below(request, "deny wrong repo") }), e, system);
+  await handleEmail(reply({ from: OWNER, subject, text: below(request, "deny wrong repo") }), e, withoutAuthserv);
   await settle(env, system);
   expect(await probe("em-pub").decisions()).toMatchObject([{ decision: "deny", reason: "wrong repo", authenticated: "unknown" }]);
   expect(await fxStatus("em-pub", "gateway.publish")).toBe("denied");
-  // With dmarc=pass, the same approve of an effect that publishes counts.
+  // With authserv and dmarc=pass, the same approve of an effect that publishes counts.
   const ok = await asked("em-pub-ok", "gateway.publish");
   await handleEmail(reply({ from: OWNER, subject: `Re: ${ok.request.subject}`, text: below(ok.request, "approve"), headers: { "Authentication-Results": PASS } }), e, system);
   await settle(env, system);
@@ -554,23 +556,29 @@ it("[email-duplicate-delivery] the same email, with the same Message-ID, handled
   expect(await probe("em-dup-bare").approvals()).toEqual([{ key: "em-dup-bare", ok: true }]);
 });
 
-it("[email-misconfigured] without a secret or an owner nothing is accepted, and a reply that can't be sent is recorded", async () => {
+it("[email-misconfigured] without a secret, an owner or the authserv value the source names nothing is accepted, and a reply that can't be sent is recorded", async () => {
   const events = captureEvents();
   const { request, fx } = await asked("em-cfg");
   const e = env as unknown as Record<string, unknown>;
   const answer = (text: string) => reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, text), headers: { "Authentication-Results": PASS } });
-  await handleEmail(answer("approve"), { PROBE: e.PROBE, PROBE_OWNER: OWNER, PROBE_FROM: e.PROBE_FROM }, system);
-  await handleEmail(answer("approve"), { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_FROM: e.PROBE_FROM }, system);
+  const configured = { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_OWNER: OWNER, PROBE_FROM: e.PROBE_FROM, PROBE_AUTHSERV: e.PROBE_AUTHSERV };
+  await handleEmail(answer("approve"), { ...configured, PROBE_APPROVAL_SECRET: undefined }, system);
+  await handleEmail(answer("approve"), { ...configured, PROBE_OWNER: undefined }, system);
+  // The source names an authserv, so with no value for it, or an empty one, no reply can authenticate: refused, and recorded as such.
+  await handleEmail(answer("approve"), { ...configured, PROBE_AUTHSERV: undefined }, system);
+  await handleEmail(answer("approve"), { ...configured, PROBE_AUTHSERV: " " }, system);
   // No send binding: the ask can't go out, and that is recorded rather than thrown.
-  await handleEmail(answer("hmm"), { PROBE: e.PROBE, PROBE_APPROVAL_SECRET: e.PROBE_APPROVAL_SECRET, PROBE_OWNER: OWNER, PROBE_FROM: e.PROBE_FROM }, system);
+  await handleEmail(answer("hmm"), configured, system);
   await settle(env, system);
   expect(fx.runs).toBe(0);
   expect(await probe("em-cfg").approvals()).toEqual([]);
-  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason])).toEqual([
-    ["source.rejected", "secret_missing"],
-    ["source.rejected", "owner_missing"],
-    ["source.ignored", "unparsed"],
-    ["source.failed", "reply_failed"],
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.reason, ev.detail?.authserv])).toEqual([
+    ["source.rejected", "secret_missing", undefined],
+    ["source.rejected", "owner_missing", undefined],
+    ["source.rejected", "authserv_missing", "PROBE_AUTHSERV"],
+    ["source.rejected", "authserv_missing", "PROBE_AUTHSERV"],
+    ["source.ignored", "unparsed", undefined],
+    ["source.failed", "reply_failed", undefined],
   ]);
 });
 
@@ -582,8 +590,6 @@ const FORGED: Array<[string, string[], Record<string, unknown>]> = [
   ["em-forged-b", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dmarc=none header.from=probe.example", "mx.probe.example; dmarc=pass header.from=probe.example"], {}],
   // the trusted header's only "dmarc=pass" is in a comment, or in a quoted value a sender chose
   ["em-forged-c", ['mx.probe.example; spf=pass (dmarc=pass) smtp.mailfrom=probe.example; dkim=none header.s="x;dmarc=pass"; dmarc=none'], {}],
-  // a real pass, but this Worker trusts no authserv-id
-  ["em-forged-d", [PASS], { PROBE_AUTHSERV: undefined }],
   // the trusted header has a dmarc=pass, but also a dmarc=none: every dmarc result must pass
   ["em-forged-e", ["mx.probe.example; dmarc=none header.from=probe.example; dmarc=pass header.from=probe.example"], {}],
   // a pass for a domain that isn't the owner's
@@ -592,21 +598,41 @@ const FORGED: Array<[string, string[], Record<string, unknown>]> = [
   ["em-forged-g", ["mx.probe.example; dmarc=pass", "mx.probe.example; dmarc=pass header.from=probe.example header.from=evil.example"], {}],
   // a trusted header with no dmarc result at all
   ["em-forged-h", ["mx.probe.example; spf=pass smtp.mailfrom=probe.example; dkim=pass header.d=probe.example"], {}],
+  // no Authentication-Results header at all
+  ["em-forged-none", [], {}],
+  // What Cloudflare wrote above mail forging the owner's Gmail address (issue #68): dmarc=none rather than fail, with
+  // the forged pass kept below it.
+  ["em-forged-cf", ["mx.cloudflare.net; dmarc=none header.from=probe.example policy.dmarc=none; spf=none (mx.cloudflare.net: no SPF records found for postmaster@host.example) smtp.helo=host.example; spf=softfail (mx.cloudflare.net: domain of owner@probe.example reports soft fail for 192.0.2.1) smtp.mailfrom=owner@probe.example; arc=none smtp.remote-ip=192.0.2.1", "mx.cloudflare.net; dmarc=pass header.from=probe.example"], { PROBE_AUTHSERV: "mx.cloudflare.net" }],
 ];
 
-it.each(FORGED)("[email-forged-auth] only the topmost Authentication-Results, from the trusted authserv-id, can make a reply 'pass' (%s)", async (key, results, overrides) => {
+it.each(FORGED)("[email-forged-auth] with authserv set, mail from the owner's address that the trusted topmost header doesn't pass is treated like a stranger's: no reply, nothing delivered (%s)", async (key, results, overrides) => {
+  const events = captureEvents();
   const { request, fx } = await asked(key, "gateway.publish");
   const { replies, env: e } = answering(overrides);
   const headers = { "Authentication-Results": results };
-  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers }), e, system);
+  for (const answer of ["approve", "deny"]) await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, answer), headers }), e, system);
+  await settle(env, system);
+  // No reply, so a forger can't make the Worker email the owner, and a deny is refused like an approve.
+  expect(replies).toEqual([]);
+  expect(fx.runs).toBe(0);
+  expect(await probe(key).decisions()).toEqual([]);
+  expect(await fxStatus(key, "gateway.publish")).toBe("awaiting_approval");
+  expect(sourceEvents(events).map((ev) => [ev.kind, ev.actor, ev.reason])).toEqual(Array(2).fill(["source.rejected", "@mail", "unauthenticated"]));
+});
+
+it("[email-forged-auth] without authserv every reply is 'unknown', even a real pass: the owner's address is answered, but can't approve an effect that publishes", async () => {
+  const { request, fx } = await asked("em-forged-d", "gateway.publish");
+  const { replies, env: e } = answering();
+  const headers = { "Authentication-Results": PASS };
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "approve"), headers }), e, withoutAuthserv);
   await settle(env, system);
   expect(replies.map((r) => r.text)).toEqual(["this effect publishes; approve it in GitHub"]);
   expect(fx.runs).toBe(0);
-  expect(await fxStatus(key, "gateway.publish")).toBe("awaiting_approval");
+  expect(await fxStatus("em-forged-d", "gateway.publish")).toBe("awaiting_approval");
   // The same headers on a denial, which goes through, show what the reply counted as.
-  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "deny"), headers }), e, system);
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${request.subject}`, text: below(request, "deny"), headers }), e, withoutAuthserv);
   await settle(env, system);
-  expect(await probe(key).decisions()).toMatchObject([{ decision: "deny", authenticated: "unknown" }]);
+  expect(await probe("em-forged-d").decisions()).toMatchObject([{ decision: "deny", authenticated: "unknown" }]);
 });
 
 // The authserv-id and the domain compare case-insensitively (RFC 8601), so these pass and approve.
@@ -655,7 +681,7 @@ it("[email-auto-reply] an auto-responder's mail gets no reply, and every reply i
   await handleEmail(asking, e, system);
   await handleEmail(reply({ from: OWNER, subject: "hello", text: "approve", headers: { "Authentication-Results": PASS } }), e, system);
   const pub = await asked("em-away-pub", "gateway.publish");
-  await handleEmail(reply({ from: OWNER, subject: `Re: ${pub.request.subject}`, text: "approve" }), e, system);
+  await handleEmail(reply({ from: OWNER, subject: `Re: ${pub.request.subject}`, text: "approve" }), e, withoutAuthserv);
   expect(replies.map((r) => r.text)).toEqual([ASK_AGAIN, "this address only accepts replies to actord approval requests", "this effect publishes; approve it in GitHub"]);
   expect(replies.map((r) => r.headers?.["Auto-Submitted"])).toEqual(Array(3).fill("auto-replied"));
   expect(replies[0]!.headers).toEqual({ "Auto-Submitted": "auto-replied", "In-Reply-To": asking.headers.get("message-id") });

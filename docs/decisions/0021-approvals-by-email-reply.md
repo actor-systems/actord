@@ -29,7 +29,11 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
    1. *Sender.* The envelope sender **and** the header `From` must both be the owner's address
       (`env[owner]`), compared case-insensitively. Otherwise there is no reply at all, so a stranger cannot make
       the system email the owner, or learn whether a token is good. Recorded as `source.rejected`.
-   2. *DMARC.* `dmarc=fail` in any `Authentication-Results` header refuses the reply.
+   2. *DMARC and authentication.* `dmarc=fail` in any `Authentication-Results` header refuses the reply. With
+      `authserv` configured, so does a reply that isn't `authenticated: "pass"` (decision 5), recorded as
+      `source.rejected` (`unauthenticated`), and a missing or empty `env[authserv]` refuses all mail
+      (`authserv_missing`). Both get no reply. *Added 2026-10-27 (#69):* Cloudflare marks mail forging a `p=none`
+      domain's address `dmarc=none`, not `dmarc=fail`, so without this a forger could pass rule 4.1.
    3. *Auto-replies.* Mail that says it was sent automatically is ignored without a reply, so an out-of-office
       answer and a reply to it cannot loop. That is an `Auto-Submitted` header other than `no` (RFC 3834), or, for
       older auto-responders, `Precedence: bulk`, `junk`, `list` or `auto_reply`, or an `X-Autoreply` or
@@ -44,11 +48,13 @@ agent replying to an agent.) The spec is amended (§8.2, §4) to say so.
    `Authentication-Results: …; dmarc=pass` header. So the reply is `authenticated: "pass"` only when the **topmost**
    `Authentication-Results` header's authserv-id equals the value in `env[authserv]`, compared case-insensitively
    (RFC 8601), and that header has at least one `dmarc` result, read outside comments and quoted strings, with
-   **every** one `pass` and its `header.from` equal to the owner's domain (case-insensitively). Everything else is
-   `"unknown"`, including when the source has no `authserv`. `by` is the verified sender address.
-6. **The publishes guard.** With `"unknown"`, an email cannot approve an effect declared `publishes: true` (or one the
-   system no longer declares); the sender is told to approve it in GitHub. A deny always goes through. Approving
-   mid-run tool calls by email is allowed on a valid token from the owner, with that limit written in Limitations.
+   **every** one `pass` and its `header.from` equal to the owner's domain (case-insensitively). With `authserv`
+   configured, anything else is refused by rule 4.2. Without `authserv`, every reply is `"unknown"`. `by` is the
+   verified sender address.
+6. **The publishes guard.** With `"unknown"`, which only a source without `authserv` delivers, an email cannot approve
+   an effect declared `publishes: true` (or one the system no longer declares); the sender is told to approve it in
+   GitHub. A deny always goes through. Approving mid-run tool calls by email is allowed on a valid token from the
+   owner, with that limit written in Limitations.
 7. **One notification per parked effect.** When an effect parks, the runtime queues the system's `approvals.notify`
    effect with the row id `fx:<notify>:approval:<effect>:<effectKey>`, so parking it again after a recovery sends
    nothing new. The notify is an effect of its own: if it fails, the parked effect stays parked and still expires.
@@ -98,13 +104,15 @@ carried a forged `Authentication-Results: mx.cloudflare.net; dmarc=pass …` as 
   forged line arrived below Cloudflare's. With five messages over three hosts, IPv4 and IPv6, signed and unsigned,
   Cloudflare's header was always topmost. That is still not proof.
 - **Reading only the topmost header is what keeps a forged `pass` out, and it does.** Cloudflare's header said
-  `dmarc=none`, so with `authserv` set the reply is `"unknown"` (runtime test `[email-forged-auth] (em-forged-b)`).
+  `dmarc=none`, so with `authserv` set the reply isn't `"pass"`, and since #69 it is refused without a reply
+  (runtime tests `[email-forged-auth] (em-forged-b)` and `(em-forged-cf)`).
 - **Cloudflare accepted the unauthenticated mail.** Its SPF-or-DKIM requirement applies to forwarding, not to
   mail routed to a Worker.
 - **Cloudflare writes `dmarc=none`, not `dmarc=fail`, for an unaligned message from a `p=none` domain** such as
   `gmail.com`. So rule 4.2 didn't fire, mail forging the owner's address passed rule 4.1, and the owner got a
-  missing-token reply. A stranger who forges the owner's address can therefore make the system email the owner.
-  Nothing is approved without a valid token. Filed as #69.
+  missing-token reply. A stranger who forges the owner's address could therefore make the system email the owner.
+  Nothing is approved without a valid token. Filed as #69, which made rule 4.2 refuse such mail when `authserv` is
+  configured.
 - **The factory's choice:** the factory sets `authserv` to `mx.cloudflare.net`. The ruling on #68 made that choice
   depend on this result: Cloudflare's header must be topmost on forged mail, with the forged one removed or below
   it. The subject token remains the second barrier.
@@ -114,6 +122,9 @@ carried a forged `Authentication-Results: mx.cloudflare.net; dmarc=pass …` as 
   person's: unless its first line is `approve` or `deny`, it gets the reply asking again. Because every answer
   now gets a `Received: …` reply, such a responder can loop with the handler until the token expires.
 - Strict envelope equality refuses an owner whose provider rewrites MAIL FROM (VERP or SRS). It fails closed.
-- Under Cloudflare, rule 4.1 doesn't stop mail that forges the owner's address on both envelope and `From`, because
-  Cloudflare reports such mail as `dmarc=none` (issue #68). The forger can make the handler reply to the owner, but
-  can't read the reply or approve anything without a valid token (#69).
+- Without `authserv`, rule 4.1 doesn't stop mail that forges the owner's address on both envelope and `From`,
+  because Cloudflare reports such mail as `dmarc=none` (issue #68). The forger can make the handler reply to the
+  owner, but can't read the reply or approve anything without a valid token. With `authserv`, rule 4.2 refuses it
+  (#69).
+- With `authserv`, an owner's own reply that somehow arrives without `dmarc=pass` gets no reply either; the
+  `source.rejected` (`unauthenticated`) event is the only trace.

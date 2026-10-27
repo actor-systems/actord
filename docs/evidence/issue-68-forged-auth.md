@@ -87,7 +87,8 @@ The HELO name is what Python offered by default: the reverse-DNS name of the mac
 - **With `authserv` set to `mx.cloudflare.net`, m1 would be `"unknown"`.** The topmost header is Cloudflare's and says
   `dmarc=none`, so a forged `dmarc=pass` below it doesn't count. That is exactly the runtime test
   `[email-forged-auth] (em-forged-b)`: a trusted header without `dmarc=pass` on top, and a forged `pass` with the same
-  authserv-id below. The test asserts that the reply is `"unknown"` and can't approve a `publishes: true` effect.
+  authserv-id below. The test asserted then that the reply is `"unknown"` and can't approve a `publishes: true`
+  effect. Since #69, with `authserv` set, such a reply is refused without an answer.
 
 **New finding: Cloudflare writes `dmarc=none` where RFC 7489 says `fail`.**
 - `gmail.com` publishes a DMARC record (`p=none`), and m1 wasn't aligned, yet Cloudflare reported `dmarc=none`.

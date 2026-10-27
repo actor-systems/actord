@@ -128,8 +128,9 @@ export interface EmailSourceSpec {
   readonly send: string;
   /**
    * Names the env entry holding the authserv-id of the receiving server, whose topmost Authentication-Results
-   * header alone can make a reply authenticated: "pass". Without it every reply is "unknown", so an effect
-   * that publishes can't be approved by email.
+   * header alone can make a reply authenticated: "pass". With it, mail from the owner's address that isn't
+   * "pass" is refused without a reply, and an empty entry refuses all mail. Without it every reply is "unknown",
+   * so an effect that publishes can't be approved by email.
    */
   readonly authserv?: string;
   readonly message: string;
