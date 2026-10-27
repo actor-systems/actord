@@ -1,4 +1,4 @@
-// Spikes 2 and 5 (plan 3): Pi on Workers AI working in a Computer workspace on a real container.
+// Spikes 2, 4 and 5 (plan 3): Pi on Workers AI working in a Computer workspace on a real container.
 //
 // One Durable Object, Bench (instance "main", so one container at most), holds:
 // - a Computer Workspace in its SQLite, whose one backend is a Cloudflare Container running computerd, started by the
@@ -20,9 +20,14 @@
 //   POST /test                     npm test -w @actord/toolkit
 //   POST /prompt                   Pi adds one line to docs/progress.md with the workspace tools, then runs git diff
 //   POST /push                     spike 5: mint an installation token here, push factory/spike-5, search for the token
+//   POST /long                     spike 4: start a long task (TODO comments, a test run after each); returns at once
+//   POST /evict[?during=exec]      ctx.abort(); with during=exec, once a command is running (waits up to 5 minutes)
 //   POST /stop[?force=1]           destroy the container (the watchdog does this after 20 minutes without a job)
 //   GET  /status                   the running job and exec, if any
-//   GET  /report                   everything recorded
+//   GET  /report                   everything recorded, with pi's submissions and tasks, and minute-by-minute snapshots
+//
+// The long run ends when pi settles, or is stopped at 45 minutes, $5 of model spend or 200 model responses, whichever
+// comes first. The watchdog checks every minute and records a snapshot of the workspace's git diff each time.
 import { DurableObject } from "cloudflare:workers";
 import { type DurableObjectStorageLike, Workspace, WorkspaceProxy, type WorkspaceRuntimeExecHandle, type WorkspaceRuntimeResult } from "@cloudflare/computer";
 import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
@@ -69,6 +74,20 @@ const IDLE_STOP_MS = 20 * 60_000;
 const INACTIVITY_TIMEOUT_MS = 10 * 60_000;
 const TICK_MS = 60_000;
 const OUTPUT_TAIL = 4000;
+
+/** Spike 4's limits: the long run is stopped at the first one it reaches. */
+const LONG_MS = 45 * 60_000;
+const LONG_USD_CAP = 5;
+const LONG_TURNS = 200;
+/** After a stop, how long pi gets to settle before the job is closed anyway. */
+const LONG_SETTLE_MS = 5 * 60_000;
+/** The repository has no TODO comments, so the long run plants its own: one at the top of each of these files. */
+const TODO_MARK = "TODO(spike-4)";
+const TODO_FILES = 30;
+const TODO_DIR = `${REPO}/packages/toolkit/src`;
+const EVICT_WAIT_MS = 5 * 60_000;
+
+const LONG_PROMPT = `Work through the open ${TODO_MARK} comments in the repository at ${REPO}, one file at a time. Find them with grep for "${TODO_MARK}" under ${TODO_DIR}. For each file: do what its TODO says and remove the TODO line, then run \`npm test -w @actord/toolkit\` with exec, with cwd ${REPO}, and check that it passes before you move on to the next file. If a command is interrupted, or fails for a reason that isn't your change, run it again. Keep going until none are left, then reply with the list of files you changed.`;
 
 const PREAMBLE = `You work in a Linux container through tools. The git repository ${REPOSITORY} is checked out at ${REPO}. Paths are absolute. Use read, ls, find, grep, write and edit for files, and exec for commands, with cwd ${REPO}. Node and npm are installed and the dependencies are already installed. The network is closed: do not install anything. Keep replies short.`;
 
@@ -190,10 +209,62 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     const exec = this.#sql<Row>("SELECT id, job, source, command, started_at FROM spike_execs WHERE ended_at IS NULL AND boot = ? ORDER BY id DESC LIMIT 1", this.boot)[0];
     const since = (at: SqlStorageValue) => Math.round((Date.now() - Number(at)) / 1000);
     return {
-      job: job ? { id: job.id, kind: job.kind, seconds: since(job.started_at) } : null,
+      job: job ? { id: job.id, kind: job.kind, seconds: since(job.started_at), ...(job.kind === "long" ? { turns: this.#turns(job.id), minutesLeft: Math.max(0, Math.round((Number(job.started_at) + LONG_MS - Date.now()) / 60_000)) } : {}) } : null,
       exec: exec ? { id: exec.id, job: exec.job, source: exec.source, command: exec.command, seconds: since(exec.started_at) } : null,
       container: { running: this.ctx.container?.running ?? null },
+      boot: this.boot,
     };
+  }
+
+  /**
+   * Spike 4: plants the TODO comments, submits the long task to pi and returns. pi carries the run across restarts;
+   * the watchdog snapshots it every minute, stops it at its limits, and closes the job once pi settles.
+   */
+  async startLong(): Promise<Record<string, unknown>> {
+    await this.lifecycle.start();
+    const busy = this.#runningJob();
+    if (busy) return { refused: `job ${busy.id} (${busy.kind}) is still running; read GET /status` };
+    if (!(await this.#cloned())) return { refused: "no clone yet: POST /clone first" };
+    const usage = usageTotals(await this.#usage());
+    if (usage.priceUsd >= SPEND_CAP_USD) return { refused: `model spend has reached the spike's $${SPEND_CAP_USD} cap` };
+    const started = Date.now();
+    const id = this.#sql<{ id: number }>("INSERT INTO spike_jobs (kind, boot, status, started_at, options, before) VALUES ('long', ?, 'running', ?, '{}', ?) RETURNING id", this.boot, started, JSON.stringify(this.#vfs()))[0]!.id;
+    try {
+      const container = await this.#connect();
+      // node_modules is local-only, so a container the watchdog stopped has lost it.
+      const deps = await this.#run(id, "test -d node_modules/vitest && echo present || echo missing", { cwd: REPO, timeoutMs: 60_000, source: "spike" });
+      if (!deps.stdout.includes("present")) throw new Error("the container has no node_modules (it was stopped since the install): POST /install, then POST /long again");
+      const seeded = await this.#seedTodos();
+      await this.#snapshot(id, "start");
+      this.#limitTurns(id, LONG_TURNS);
+      const operationId = `long-${id}`;
+      const receipt = await this.harness.submit(LONG_PROMPT, { operationId });
+      const options: LongOptions = { operationId, accepted: receipt.accepted, deadline: started + LONG_MS, usdAtStart: usage.priceUsd, seeded, container };
+      this.#sql("UPDATE spike_jobs SET options = ? WHERE id = ?", JSON.stringify(options), id);
+      await this.#armWatchdog();
+    } catch (err) {
+      this.#sql("UPDATE spike_jobs SET status = 'failed', ended_at = ?, after = ?, error = ? WHERE id = ?", Date.now(), JSON.stringify(this.#vfs()), JSON.stringify(errorOf(err)), id);
+    }
+    return this.#jobRecord(id);
+  }
+
+  /** Spike 4: resets the object, as an eviction would. With duringExec, waits for a command to be running first. */
+  async evict(duringExec: boolean): Promise<Record<string, unknown>> {
+    await this.lifecycle.start();
+    const running = () => this.#sql<Row>("SELECT id, job, source, command, started_at FROM spike_execs WHERE ended_at IS NULL AND boot = ? ORDER BY id DESC LIMIT 1", this.boot)[0];
+    const until = Date.now() + EVICT_WAIT_MS;
+    while (duringExec && !running()) {
+      if (Date.now() >= until) return { refused: "no command started within 5 minutes; nothing was evicted" };
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    const exec = running() ?? null;
+    const long = this.#runningJob();
+    await this.#snapshot(long?.id ?? null, "before evict");
+    this.#event("evict", { boot: this.boot, exec, job: long?.id ?? null });
+    // abort() drops writes not yet durable, so wait for the evidence above first.
+    await this.ctx.storage.sync();
+    this.ctx.abort("spike 4: evict");
+    return { evicted: true, exec };
   }
 
   /** Destroys the container. Refused while a job runs, unless forced. */
@@ -211,7 +282,7 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     const egress = this.#sql<Row>("SELECT host, method, allowed, status, COUNT(*) AS n FROM spike_egress GROUP BY host, method, allowed, status ORDER BY host, n DESC");
     return {
       settings: { model: MODEL_ID, localOnly: this.#setting("ignore") === "off" ? [] : LOCAL_ONLY, registry: REGISTRY },
-      boots: this.#sql<Row>("SELECT * FROM spike_boots ORDER BY id").map((b) => ({ id: b.id, at: iso(b.at), version: b.version, containerRunning: b.container_running === 1 })),
+      boots: this.#sql<Row>("SELECT * FROM spike_boots ORDER BY id").map((b) => ({ id: b.id, at: iso(b.at), version: b.version, containerRunning: b.container_running === 1, firstModelResponseAt: iso(b.first_turn_at) })),
       jobs: this.#sql<{ id: number }>("SELECT id FROM spike_jobs ORDER BY id").map((j) => this.#jobRecord(j.id)),
       egress: {
         seen: egress.map((e) => ({ host: e.host, method: e.method, allowed: e.allowed === 1, status: e.status, requests: e.n })),
@@ -221,13 +292,21 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       vfs: this.#vfs(),
       syncOperations: this.#rows("SELECT backend, direction, status, mode, created_at, updated_at, last_error FROM _vfs_sync_operations"),
       container: { running: this.ctx.container?.running ?? null },
+      // Computer's record of which runtime each exec belongs to, kept so a restart can settle or resume it.
+      executionRuntimes: this.#rows("SELECT * FROM computer_execution_runtime"),
+      snapshots: this.#sql<Row>("SELECT * FROM spike_snapshots ORDER BY id").map((n) => ({ id: n.id, at: iso(n.at), job: n.job, boot: n.boot, reason: n.reason, diffSha256: n.diff_sha256, diffBytes: n.diff_bytes, changed: json(n.changed), todosLeft: n.todos_left, pending: json(n.pending), exec: json(n.exec), sync: json(n.sync), error: n.error })),
       pi: await this.#piReport(),
     };
   }
 
-  /** The watchdog: destroys a container left idle, so an open computerd socket can't keep it billing. */
+  /**
+   * The watchdog. It looks after a long run (see #tickLong), and destroys a container left idle, so an open computerd
+   * socket can't keep it billing.
+   */
   async onJob({ job }: LifecycleJobContext): Promise<{ rescheduleAt: number } | undefined> {
     if (job.fn !== "watchdog") return undefined;
+    const long = this.#runningJob();
+    if (long?.kind === "long") await this.#tickLong(long.id, Number(long.started_at));
     const running = this.#runningJob();
     const container = this.ctx.container;
     if (!running && container?.running) {
@@ -412,6 +491,88 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
     }
   }
 
+  /** One watchdog tick of a long run: a snapshot, then a stop at a limit, or the end once pi has settled. */
+  async #tickLong(job: number, startedAt: number): Promise<void> {
+    const options = this.#longOptions(job);
+    if (!options) return;
+    await this.#snapshot(job, "tick");
+    const pending = await this.harness.pending();
+    if (!pending.some((p) => p.operationId === options.operationId)) return this.#finishLong(job, options);
+    if (options.stop) {
+      if (Date.now() - options.stop.at >= LONG_SETTLE_MS) await this.#finishLong(job, options);
+      return;
+    }
+    const spent = usageTotals(await this.#usage()).priceUsd - options.usdAtStart;
+    const responses = this.#turns(job)?.responses ?? 0;
+    const reason = Date.now() - startedAt >= LONG_MS ? "45 minutes" : spent >= LONG_USD_CAP ? `$${LONG_USD_CAP} of model spend` : responses >= LONG_TURNS ? `${LONG_TURNS} model responses` : null;
+    if (reason === null) return;
+    options.stop = { at: Date.now(), reason };
+    this.#sql("UPDATE spike_jobs SET options = ? WHERE id = ?", JSON.stringify(options), job);
+    this.#event("long.stop", { job, reason, spentUsd: spent, responses });
+    // Stop pi first, so it starts nothing new, then any command still running for it.
+    await this.harness.abort();
+    for (const e of this.#sql<{ exec_id: string | null }>("SELECT exec_id FROM spike_execs WHERE job = ? AND source = 'model' AND ended_at IS NULL AND boot = ?", job, this.boot)) {
+      if (e.exec_id) await this.workspace.runtime.killExec(e.exec_id, { backend: BACKEND_ID }).catch(() => {});
+    }
+  }
+
+  async #finishLong(job: number, options: LongOptions): Promise<void> {
+    const result = await this.harness.wait(options.operationId, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+    const usage = usageTotals(await this.#usage());
+    const detail = {
+      operationId: options.operationId,
+      stoppedBy: options.stop?.reason ?? null,
+      result: result ? { status: result.status, reason: result.reason, text: result.text?.slice(0, OUTPUT_TAIL) } : null,
+      turns: this.#turns(job),
+      spentUsd: usage.priceUsd - options.usdAtStart,
+      seeded: options.seeded.length,
+      todosLeft: await this.#todosLeft(),
+    };
+    this.#sql("UPDATE spike_jobs SET status = ?, ended_at = ?, after = ?, detail = ? WHERE id = ?", options.stop ? "stopped" : "done", Date.now(), JSON.stringify(this.#vfs()), JSON.stringify(detail), job);
+    await this.#snapshot(job, "end");
+  }
+
+  #longOptions(job: number): LongOptions | null {
+    const raw = this.#sql<{ options: string | null }>("SELECT options FROM spike_jobs WHERE id = ?", job)[0]?.options;
+    const options = raw ? (JSON.parse(raw) as Partial<LongOptions>) : {};
+    return typeof options.operationId === "string" ? (options as LongOptions) : null;
+  }
+
+  /** Puts a TODO comment at the top of up to TODO_FILES source files that don't have one yet. Returns them all. */
+  async #seedTodos(): Promise<string[]> {
+    const found = await this.workspace.fs.find(TODO_DIR, "**/*.ts");
+    // A declaration file isn't compiled, and a shebang must stay the first line.
+    const paths = found.map((f) => f.path).filter((p) => !p.endsWith(".d.ts") && !p.endsWith("/cli/bin.ts")).sort().slice(0, TODO_FILES);
+    const seeded: string[] = [];
+    for (const path of paths) {
+      const text = await this.workspace.fs.readFile(path, "utf8");
+      if (text.startsWith("#!")) continue;
+      if (!text.includes(TODO_MARK)) await this.workspace.fs.writeFile(path, `// ${TODO_MARK}: replace this line with a one-sentence comment that says what this file is for.\n${text}`);
+      seeded.push(path.slice(REPO.length + 1));
+    }
+    return seeded;
+  }
+
+  async #todosLeft(): Promise<number> {
+    return (await this.workspace.fs.grep(TODO_MARK, TODO_DIR, { limit: 1000 })).length;
+  }
+
+  /** The workspace as git sees it from the object's side, pi's queue, and the running command, at one moment. */
+  async #snapshot(job: number | null, reason: string): Promise<void> {
+    const at = Date.now();
+    const exec = this.#sql<Row>("SELECT id, source, command, started_at FROM spike_execs WHERE ended_at IS NULL AND boot = ? ORDER BY id DESC LIMIT 1", this.boot)[0] ?? null;
+    const sync = this.#rows("SELECT backend, direction, status, updated_at, last_error FROM _vfs_sync_operations");
+    try {
+      const diff = await this.workspace.git.diff({ dir: REPO });
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(diff)));
+      const changed = (await this.workspace.git.status({ dir: REPO })).map((e) => `${e.index}${e.worktree} ${e.path}`);
+      const pending = await this.harness.pending();
+      this.#sql("INSERT INTO spike_snapshots (at, job, boot, reason, diff_sha256, diff_bytes, changed, todos_left, pending, exec, sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", at, job, this.boot, reason, [...digest].map((b) => b.toString(16).padStart(2, "0")).join(""), diff.length, JSON.stringify(changed), await this.#todosLeft(), JSON.stringify(pending), JSON.stringify(exec), JSON.stringify(sync));
+    } catch (err) {
+      this.#sql("INSERT INTO spike_snapshots (at, job, boot, reason, exec, sync, error) VALUES (?, ?, ?, ?, ?, ?, ?)", at, job, this.boot, reason, JSON.stringify(exec), JSON.stringify(sync), errorOf(err).message);
+    }
+  }
+
   /** Runs one command to its end and summarises it. */
   async #run(job: number, command: string, options: ExecOptions): Promise<ExecSummary> {
     const exec = await this.#exec(job, command, options);
@@ -554,6 +715,8 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
   }
   #countTurn(): void {
     this.#sql("UPDATE spike_turns SET n = n + 1 WHERE job = ?", this.#turnJob());
+    // When pi first answered after this boot: with the boot's time, how long a restart left the run waiting.
+    this.#sql("UPDATE spike_boots SET first_turn_at = ? WHERE id = ? AND first_turn_at IS NULL", Date.now(), this.boot);
   }
   #overTurns(): boolean {
     const t = this.#sql<{ n: number; cap: number }>("SELECT n, cap FROM spike_turns WHERE job = ?", this.#turnJob())[0];
@@ -576,6 +739,10 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
       pending: await this.harness.pending(),
       // pi's record of how the wire treated each request, such as a reasoning level the model's format dropped.
       diagnostics: [...new Set(entries.flatMap((e) => findDiagnostics(e)).map((d) => JSON.stringify(d)))].map((d) => JSON.parse(d) as unknown),
+      submissions: this.#rows("SELECT id, conversation_id, request_id, status, record FROM pi_submissions ORDER BY id").map((r) => ({ ...r, record: String(r.record).slice(0, 1500) })),
+      tasks: this.#rows("SELECT id, conversation_id, kind, status, abort_requested, background, record FROM pi_tasks ORDER BY id").map((r) => ({ ...r, record: String(r.record).slice(0, 600) })),
+      // What pi told the model about tool calls a restart cut off.
+      interrupted: entries.map((e) => JSON.stringify(e)).filter((e) => e.includes("interrupted")).map((e) => e.slice(0, 1500)),
       transcript: entries.map((e) => JSON.stringify(e).slice(0, 800)),
     };
   }
@@ -688,6 +855,17 @@ export class Bench extends withWorkspaceContainer(class extends DurableObject<Sp
   }
 }
 
+/** What a long run keeps in its job's options: set at the start, and `stop` once a limit is reached. */
+interface LongOptions {
+  operationId: string;
+  accepted: boolean;
+  deadline: number;
+  usdAtStart: number;
+  seeded: string[];
+  container: unknown;
+  stop?: { at: number; reason: string };
+}
+
 interface VfsSizes {
   databaseBytes: number;
   nodes: number | null;
@@ -705,15 +883,17 @@ interface VfsSizes {
 function openSpike(ctx: DurableObjectState, env: SpikeEnv): number {
   const sql = ctx.storage.sql;
   sql.exec("CREATE TABLE IF NOT EXISTS spike_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
-  sql.exec("CREATE TABLE IF NOT EXISTS spike_boots (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, version TEXT, container_running INTEGER)");
+  sql.exec("CREATE TABLE IF NOT EXISTS spike_boots (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, version TEXT, container_running INTEGER, first_turn_at INTEGER)");
   sql.exec("CREATE TABLE IF NOT EXISTS spike_jobs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, boot INTEGER NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER, options TEXT, before TEXT, after TEXT, detail TEXT, error TEXT, reset_by INTEGER)");
   sql.exec("CREATE TABLE IF NOT EXISTS spike_execs (id INTEGER PRIMARY KEY, job INTEGER, source TEXT NOT NULL, exec_id TEXT, command TEXT NOT NULL, cwd TEXT, boot INTEGER NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER, status TEXT, exit_code INTEGER, sync TEXT, pushed INTEGER, pulled INTEGER, stdout_tail TEXT, stderr_tail TEXT, error TEXT)");
   sql.exec("CREATE TABLE IF NOT EXISTS spike_egress (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, job INTEGER, method TEXT NOT NULL, host TEXT NOT NULL, path TEXT NOT NULL, allowed INTEGER NOT NULL, status INTEGER, error TEXT)");
   sql.exec("CREATE TABLE IF NOT EXISTS spike_turns (job INTEGER PRIMARY KEY, n INTEGER NOT NULL, cap INTEGER NOT NULL)");
   sql.exec("CREATE TABLE IF NOT EXISTS spike_events (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT)");
+  sql.exec("CREATE TABLE IF NOT EXISTS spike_snapshots (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, job INTEGER, boot INTEGER NOT NULL, reason TEXT NOT NULL, diff_sha256 TEXT, diff_bytes INTEGER, changed TEXT, todos_left INTEGER, pending TEXT, exec TEXT, sync TEXT, error TEXT)");
   const now = Date.now();
   const boot = sql.exec<{ id: number }>("INSERT INTO spike_boots (at, version, container_running) VALUES (?, ?, ?) RETURNING id", now, env.CF_VERSION_METADATA.id, ctx.container?.running ? 1 : 0).one().id;
-  sql.exec("UPDATE spike_jobs SET status = 'interrupted', ended_at = ?, reset_by = ? WHERE status = 'running' AND boot < ?", now, boot, boot);
+  // A long run is pi's, which resumes it; the watchdog closes that job. Any other job a reset cut off is over.
+  sql.exec("UPDATE spike_jobs SET status = 'interrupted', ended_at = ?, reset_by = ? WHERE status = 'running' AND boot < ? AND kind != 'long'", now, boot, boot);
   return boot;
 }
 
@@ -806,6 +986,15 @@ export default {
         return streamed(bench.run("prompt"), ctx);
       case "POST /push":
         return streamed(bench.run("push"), ctx);
+      case "POST /long":
+        return Response.json(await bench.startLong());
+      case "POST /evict":
+        try {
+          return Response.json(await bench.evict(flag("during", "exec")));
+        } catch (err) {
+          // The abort rejects this call: that is the eviction.
+          return Response.json({ evicted: true, error: errorOf(err).message });
+        }
       case "POST /stop":
         return Response.json(await bench.stop(flag("force")));
       default:

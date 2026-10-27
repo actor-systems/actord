@@ -1,4 +1,4 @@
-# Spikes 2 and 5: an agent workspace on a real container
+# Spikes 2, 4 and 5: an agent workspace on a real container
 
 **Spike 2** puts Pi to work on the actord repository in a Computer workspace whose backend is a real Cloudflare
 Container, and measures:
@@ -7,6 +7,13 @@ Container, and measures:
 - whether anything like computer issue #179 happens (an install timeout, then a storage timeout that resets the
   object);
 - whether the tests pass in the container, and whether the model's edit shows in `git diff`.
+
+**Spike 4** gives Pi a long task, up to 45 minutes. It redeploys the Worker during a running command about 10 minutes
+in, and evicts the object about 20 minutes in. For each disruption it asks:
+- whether the command came back interrupted or ran again;
+- whether a workspace edit was lost;
+- whether pi resumed by itself, and how long the gap was;
+- whether a sync was left pending.
 
 **Spike 5** pushes a `factory/` branch from the Durable Object with a GitHub App installation token passed to the git
 client as a header. It then searches the container for the token.
@@ -40,6 +47,7 @@ Each container command is an exec, recorded with its exit code, sync status and 
 - There is one container at most.
 - The watchdog destroys the container after 20 minutes without a job.
 - `/prompt` gets at most 15 model responses and 10 minutes, and no prompt starts once the model spend reaches $8.
+- `/long` is stopped at 45 minutes, $5 of model spend or 200 model responses, whichever comes first.
 - Model commands time out after 10 minutes, the install after 20 and the tests after 15.
 
 **Endpoints.** Every endpoint needs `Authorization: Bearer <SPIKE_TOKEN>`; anything else gets `401`.
@@ -54,9 +62,11 @@ Each container command is an exec, recorded with its exit code, sync status and 
 | `POST /test` | `npm test -w @actord/toolkit` |
 | `POST /prompt` | Pi adds one fixed line to `docs/progress.md` with the workspace tools, then runs `git diff`. The spike checks the diff on both sides |
 | `POST /push` | Spike 5: mint an installation token in the object, push `factory/spike-5`, search the container for the token, revoke the token |
+| `POST /long` | Spike 4: start the long task and return at once. See [Spike 4](#spike-4-the-long-run) |
+| `POST /evict[?during=exec]` | Spike 4: `ctx.abort()`. With `during=exec`, it first waits, up to 5 minutes, for a command to be running |
 | `POST /stop[?force=1]` | Destroy the container. Refused while a job runs, unless forced |
 | `GET /status` | The running job and exec, if any |
-| `GET /report` | Everything recorded: boots, jobs, execs, egress, events, `vfs_*` sizes, sync operations, and pi's usage, diagnostics and transcript |
+| `GET /report` | Everything recorded: boots (with the version each ran), jobs, execs with their sync status, egress, events, `vfs_*` sizes, sync operations, Computer's execution runtimes, the long run's snapshots, and pi's usage, diagnostics, submissions, tasks, interrupted tool calls and transcript |
 
 `call.sh METHOD PATH` calls the deployed Worker. It reads the token and the URL from the git-ignored `.spike-token` and
 `.deploy.log`.
@@ -181,7 +191,9 @@ logged in, run `! npx wrangler login` first.
    ! spikes/agent-workspace/call.sh POST /push
    ```
 
-10. **Run this last: the install without local-only paths.**
+Steps 10 to 13 are spike 4, below. Run them next, then come back for steps 14 and 15.
+
+14. **Run this last: the install without local-only paths.**
     - It relaunches the container with nothing ignored and runs `npm ci` again, so `node_modules` syncs into the
       object. This is the comparison, and maybe computer#179. It may take much longer than step 6.
     - There's no switching back: after it, the workspace holds `node_modules`.
@@ -190,7 +202,7 @@ logged in, run `! npx wrangler login` first.
     ! spikes/agent-workspace/call.sh POST /install?ignore=off
     ```
 
-11. **Stop the container.** The watchdog would stop it after 20 minutes without a job.
+15. **Stop the container.** The watchdog would stop it after 20 minutes without a job.
 
     ```
     ! spikes/agent-workspace/call.sh POST /stop
@@ -208,10 +220,65 @@ or, without the helper:
 curl -sS -H "Authorization: Bearer $(cat spikes/agent-workspace/.spike-token)" "$(grep -o 'https://[a-z0-9.-]*workers\.dev' spikes/agent-workspace/.deploy.log | head -1)/report" | jq
 ```
 
+## Spike 4: the long run
+
+**The task.** The repository has no `TODO` comments, so `/long` plants its own first. It puts
+`// TODO(spike-4): replace this line with a one-sentence comment that says what this file is for.` at the top of 30 files
+under `packages/toolkit/src`. It then asks Pi to work through them one file at a time, running
+`npm test -w @actord/toolkit` after each. That is more work than 45 minutes holds, so the run ends at a limit unless
+the model is quick.
+
+**What's recorded.**
+- Every minute the watchdog takes a snapshot: the workspace's `git diff` on the object's side (its SHA-256 and size),
+  the changed files, how many TODOs are left, pi's pending operations, the running command, and Computer's sync
+  operations.
+- Each boot records the Worker version it runs, which tells a deploy from an eviction, and when pi first answered
+  after it.
+
+**Before you start.** Steps 5 to 9 have run. If the container was stopped since the install (after 20 idle minutes, or
+by step 15), `/long` refuses and says so: run step 6 again first.
+
+10. **Start the long run.** It answers at once with the job's record. `options.seeded` lists the files, and
+    `options.deadline` is when the 45 minutes end.
+
+    ```
+    ! spikes/agent-workspace/call.sh POST /long
+    ```
+
+11. **About 10 minutes in, redeploy during a running command.**
+    - Check `/status` until `exec` isn't `null`, which means a command, usually the tests, is running.
+    - Then redeploy at once. The image is unchanged, so wrangler should only rebuild from cache.
+    - Note the time.
+
+    ```
+    ! spikes/agent-workspace/call.sh GET /status
+    ! npx wrangler deploy -c spikes/agent-workspace/wrangler.jsonc 2>&1 | tee -a spikes/agent-workspace/.deploy.log
+    ```
+
+12. **About 20 minutes in, evict the object.** `during=exec` waits up to 5 minutes for a command to be running, then
+    calls `ctx.abort()`. The answer is `{"evicted":true,…}`.
+
+    ```
+    ! spikes/agent-workspace/call.sh POST /evict?during=exec
+    ```
+
+13. **Let it finish.**
+    - The job ends when pi settles, or at 45 minutes, $5 of model spend or 200 model responses. The watchdog notices
+      within a minute.
+    - `/status` shows the job until it ends, with `minutesLeft`; its `kind` is `long`.
+    - When `job` is `null`, the job's record in `/report` has `status` (`done` or `stopped`), `detail.stoppedBy` and
+      `detail.todosLeft`.
+
+    ```
+    ! spikes/agent-workspace/call.sh GET /status
+    ```
+
+Then continue with step 14.
+
 ## Cost
 
-Expected cost is under $1, and at most about $1.50 with every cap reached. The phase-one spike budget has about $20 left.
-These are list prices; Workers Paid's monthly allowances may cover all of the container time.
+Expected cost is about $1 to $3, and at most about $6 with every cap reached. The phase-one spike budget has about $20
+left. These are list prices; Workers Paid's monthly allowances may cover all of the container time.
 
 **Container time.** `standard-2` costs:
 - memory: 6 GiB × $0.0000025 per GiB-second, $0.054 an hour;
@@ -222,10 +289,11 @@ That is at most $0.13 an hour, billed while the container runs.
 
 The container runs:
 - for steps 6 to 9, about 30 minutes;
-- for step 10, perhaps 30 more;
-- after the last job, up to 20 minutes before the watchdog stops it. Step 11 avoids that.
+- for spike 4, 45 minutes;
+- for step 14, perhaps 30 more;
+- after the last job, up to 20 minutes before the watchdog stops it. Step 15 avoids that.
 
-About an hour and a half in all is about $0.20 at most. Workers Paid includes 25 GiB-hours of memory, 375 vCPU-minutes
+About two and a half hours in all is about $0.35 at most. Workers Paid includes 25 GiB-hours of memory, 375 vCPU-minutes
 and 200 GB-hours of disk a month, which is about four hours of `standard-2`.
 
 **Workers AI.** `/prompt` needs about 5 to 8 model calls:
@@ -233,6 +301,14 @@ and 200 GB-hours of disk a month, which is about four hours of `standard-2`.
 - with 1,000 to 3,000 output tokens each, at the default reasoning.
 
 That is about $0.03. The 15-response cap bounds it near $0.15.
+
+Spike 4 is the larger part. In 45 minutes, perhaps 100 to 150 model calls:
+- each call's input grows with the transcript, to tens of thousands of tokens;
+- uncached, 150 calls averaging 50,000 input tokens is 7.5 million tokens, about $2.25;
+- output adds about $0.40;
+- whatever Workers AI's prefix cache serves costs $0.006 per million instead of $0.30.
+
+The watchdog stops the run once its spend reaches $5, counted from pi's token usage at the list prices above, so it can't cost much more than $5.
 
 **The rest.** The Worker, its Durable Object and the egress requests are a rounding error on Workers Paid. Durable
 Object storage holds a few hundred MB at most after step 10.
@@ -301,8 +377,10 @@ names this spike's config or this spike's application.
     answered;
   - `/clone` cloned the real repository through Computer's git client in 1.8 seconds, putting about 12.7 MB in the
     object's SQLite;
-  - `/install` and `/test` failed cleanly ("DO is not container-enabled") and `/push` failed cleanly ("set
-    GITHUB_APP_ID…"). Both were recorded as `failed`, with no container started.
+  - `/install`, `/test` and `/long` failed cleanly ("DO is not container-enabled") and `/push` failed cleanly ("set
+    GITHUB_APP_ID…"). Each was recorded as `failed`, with no container started;
+  - `/evict` reset the object: the next request ran in a second boot, and the eviction's event and snapshot, written
+    before `ctx.abort()`, were there.
 - **The object-side git calls `/push` and `/prompt` make.** On that clone, these all worked:
   - `branch` with checkout, `status`, `diff` limited to a path, `add`, `commit` and `log`;
   - `.git/config` held no credentials;
@@ -317,8 +395,11 @@ names this spike's config or this spike's application.
 - the egress gateway and the CA trust;
 - Workers AI;
 - the GitHub token and push;
-- `wrangler deploy`'s handling of the `containers` block.
+- `wrangler deploy`'s handling of the `containers` block;
+- the long run, the deploy during it, and the watchdog's minute ticks;
+- the seeded TODO comments against the tests: `test/` only imports these files, so a leading comment shouldn't matter.
 
 ## Results
 
-Not yet run. The results will go in `docs/evidence/spike-2-computer.md` and `docs/evidence/spike-5-push.md`.
+Not yet run. The results will go in `docs/evidence/spike-2-computer.md`, `docs/evidence/spike-4-long-run.md` and
+`docs/evidence/spike-5-push.md`.
