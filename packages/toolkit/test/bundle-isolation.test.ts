@@ -22,6 +22,20 @@ describe("bundle isolation", () => {
       expect(text, banned).not.toMatch(new RegExp(`(?:from\\s*|import\\s*\\(?\\s*|require\\(\\s*)["']${banned.replace("/", "\\/")}(?:/[^"']*)?["']`));
   });
 
+  // `actord check` loads system.ts under Node, so /system and the payload schemas it exports (payloads.ts) must reach
+  // neither cloudflare:* nor the Agents SDK, in code or in types.
+  it("dist/system.mjs imports neither cloudflare:* nor the Agents SDK", () => {
+    const text = readFileSync(join(dist, "system.mjs"), "utf8");
+    expect(text).not.toMatch(/(?:from\s*|import\s*\(?\s*)["']cloudflare:[^"']*["']/);
+    expect(text).not.toMatch(/(?:from\s*|import\s*\(?\s*)["']agents(?:\/[^"']*)?["']/);
+  });
+
+  it("dist/types/payloads.d.ts imports nothing but ./system.js", () => {
+    const text = readFileSync(join(dist, "types", "payloads.d.ts"), "utf8");
+    const specifiers = [...text.matchAll(/(?:from\s*|import\s*\(\s*)["']([^"']+)["']/g)].map((m) => m[1]);
+    expect(new Set(specifiers)).toEqual(new Set(["./system.js"]));
+  });
+
   for (const name of ["runtime", "system", "sources"])
     it(`dist/${name}.mjs does not contain the decision adapters`, () => {
       const text = readFileSync(join(dist, `${name}.mjs`), "utf8");

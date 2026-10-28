@@ -52,6 +52,15 @@ describe("actord doctor", () => {
     }
   });
 
+  it("requires Node 22.19: 22.18 is an error with the 22.19 fix, 22.19.0 passes", () => {
+    const old = doctor(tmp(), {}, "22.18.9");
+    expect(byId(old, "node")?.status).toBe("error");
+    expect(byId(old, "node")?.message).toMatch(/older than 22\.19/);
+    expect(byId(old, "node")?.fix).toMatch(/22\.19/);
+    expect(byId(doctor(tmp(), {}, "22.19.0"), "node")?.status).toBe("ok");
+    expect(byId(doctor(tmp(), {}, "24.1.0"), "node")?.status).toBe("ok");
+  });
+
   it("warns when the plugin bundles a different version than the project pins", () => {
     const r = doctor(tmp(), { ACTORD_PLUGIN_VERSION: "9.9.9", ACTORD_LAUNCHER: "project-pin" });
     expect(byId(r, "cli.pin-mismatch")?.status).toBe("warn");

@@ -294,6 +294,9 @@ export interface System<
   readonly kind: typeof SYSTEM_BRAND;
 }
 
+// The payloads the runtime delivers itself, with hand-written schemas: importable here, where Node loads them.
+export { type AgentExhausted, type AgentFailed, type ApprovalDecided, agentExhausted, agentFailed, approvalDecided } from "./payloads.ts";
+
 /** Declare a message contract. */
 export function message<const S extends StandardSchemaV1>(spec: MessageSpec<S>): MessageSpec<S> {
   return spec;

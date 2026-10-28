@@ -7,14 +7,18 @@
 // - Back: the owner's reply becomes an `approval.decided` message (ApprovalDecided, validated by the
 //   hand-written approvalDecided schema), and the actor's handler passes it to applyDecision.
 import { EffectRejected, type ApprovalRequest, type EffectAdapter } from "../runtime/index.ts";
-import type { StandardResult, StandardSchemaV1 } from "../system.ts";
+import type { ApprovalDecided } from "../payloads.ts";
 import { signApprovalToken } from "./token.ts";
 
 export type { ApprovalRequest } from "../runtime/index.ts";
+export { type ApprovalDecided, approvalDecided } from "../payloads.ts";
 
-/** The part of a send_email binding (Cloudflare Email Service) that approvalEmail uses. */
+/**
+ * The part of a send_email binding (Cloudflare Email Service) that approvalEmail and the email source's replies use:
+ * exactly the message they send, so workerd's SendEmail (whose builder takes wider fields) is assignable to it.
+ */
 export interface SendEmailLike {
-  send(message: { from: string | { email: string; name?: string }; to: string | string[]; subject: string; text: string; headers?: Record<string, string> }): Promise<unknown>;
+  send(message: { from: string; to: string; subject: string; text: string; headers?: Record<string, string> }): Promise<unknown>;
 }
 
 /** The effect adapter that emails an approval request to the owner. */
@@ -68,70 +72,6 @@ const indent = (text: string) =>
     .split("\n")
     .map((line) => `    ${line}`)
     .join("\n");
-
-/** The payload of `approval.decided`: a person's answer to an approval request, from a source such as @email. */
-export interface ApprovalDecided {
-  effect: string;
-  effectKey: string;
-  decision: "approve" | "deny";
-  /** A denial's reason; null when none was given. */
-  reason: string | null;
-  /** Who decided: for email, the verified sender address. */
-  by: string;
-  /**
-   * "pass": the topmost Authentication-Results header comes from the source's trusted authserv-id and every
-   * dmarc result in it is pass, for the owner's domain (header.from). With an authserv configured, nothing else
-   * is delivered, so the answer is always "pass". "unknown" is the answer of a source with no authserv, whose
-   * replies are never checked. (A dmarc=fail anywhere refuses the reply before this is set.)
-   */
-  authenticated: "pass" | "unknown";
-}
-
-type Issue = { message: string; path: [string] | [] };
-const FIELDS = ["effect", "effectKey", "decision", "reason", "by", "authenticated"] as const;
-
-function validateDecided(value: unknown): StandardResult<ApprovalDecided> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return { issues: [{ message: "expected an object", path: [] }] };
-  const v = value as Record<string, unknown>;
-  const issues: Issue[] = [];
-  const nonEmpty = (k: "effect" | "effectKey" | "by") => {
-    if (typeof v[k] !== "string" || v[k] === "") issues.push({ message: `${k}: expected a non-empty string`, path: [k] });
-  };
-  nonEmpty("effect");
-  nonEmpty("effectKey");
-  if (v.decision !== "approve" && v.decision !== "deny") issues.push({ message: 'decision: expected "approve" or "deny"', path: ["decision"] });
-  if (v.reason !== null && typeof v.reason !== "string") issues.push({ message: "reason: expected a string or null", path: ["reason"] });
-  nonEmpty("by");
-  if (v.authenticated !== "pass" && v.authenticated !== "unknown") issues.push({ message: 'authenticated: expected "pass" or "unknown"', path: ["authenticated"] });
-  if (issues.length > 0) return { issues };
-  // Only the declared fields go on, as a schema library's object parser would.
-  return { value: Object.fromEntries(FIELDS.map((k) => [k, v[k]])) as unknown as ApprovalDecided };
-}
-
-/** A fresh copy each call, so a caller that edits it can't change the next one. */
-const decidedJsonSchema = (): Record<string, unknown> => ({
-  type: "object",
-  properties: {
-    effect: { type: "string", minLength: 1 },
-    effectKey: { type: "string", minLength: 1 },
-    decision: { type: "string", enum: ["approve", "deny"] },
-    reason: { anyOf: [{ type: "string" }, { type: "null" }] },
-    by: { type: "string", minLength: 1 },
-    authenticated: { type: "string", enum: ["pass", "unknown"] },
-  },
-  required: [...FIELDS],
-  additionalProperties: false,
-});
-
-/** The Standard Schema for `approval.decided`'s payload, written by hand so apps need no schema library. */
-export const approvalDecided: StandardSchemaV1<ApprovalDecided> = {
-  "~standard": {
-    version: 1,
-    vendor: "actord",
-    validate: validateDecided,
-    jsonSchema: { input: decidedJsonSchema },
-  },
-};
 
 /**
  * Apply an approval.decided payload inside the actor's handler: approve or deny the effect it names, as the

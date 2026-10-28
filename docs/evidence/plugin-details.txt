@@ -10,19 +10,19 @@ Component inventory
   LSP servers (0)
 
 Projected token cost
-  Always-on:   ~803 tok   added to every session
+  Always-on:   ~821 tok   added to every session
 
 Per-component (rounded)
   component         always-on  on-invoke
-  design                  ~90       ~770
-  inspect                ~110       ~490
+  design                  ~90      ~1.2k
+  inspect                ~130      ~1.2k
   setup                   ~80       ~560
-  start                   ~70       ~540
-  evolve                 ~100       ~750
-  reliability            ~160       ~760
-  implement               ~70       ~830
-  boundary-critic         ~70       ~450
-  delivery-auditor        ~60       ~630
+  start                   ~70       ~620
+  evolve                 ~100       ~930
+  reliability            ~160      ~1.1k
+  implement               ~70        ~1k
+  boundary-critic         ~70       ~740
+  delivery-auditor        ~60      ~1.3k
 
   On-invoke cost is paid each time a skill or agent fires.
   Token counts are estimates and may differ from actual usage.

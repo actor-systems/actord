@@ -1,6 +1,6 @@
 ---
 name: reliability
-description: Establish what an actor system on Cloudflare Durable Objects actually guarantees, and fix it where it falls short. Use when a message, notification, or effect happens twice, goes missing, or gets stuck (after a retry, crash, restart, or repeated poll), to find the cause, fix it, and prove the fix with a fault test; or when asked what the system guarantees. Writes and runs workerd fault tests (duplicates, crashes before and after writes, retries, restarts, reentrancy at await points, lost acknowledgments), then classifies each claim as proved locally, stub only, or not guaranteed. Has the delivery-auditor review handlers.
+description: Establish what an actor system on Cloudflare Durable Objects actually guarantees, and fix it where it falls short. Use when a message, notification, or effect happens twice, goes missing, or gets stuck (after a retry, crash, restart, or repeated poll), to find the cause, fix it, and prove the fix with a fault test; or when asked what the system guarantees. Writes and runs workerd fault tests (duplicates, crashes before and after writes, retries, restarts, handlers that await, timers, jobs, lost acknowledgments), then classifies each claim as proved locally, stub only, or not guaranteed. Has the delivery-auditor review handlers.
 allowed-tools: Bash(actord test *) Bash(actord verify *) Bash(actord events *) Bash(actord trace *) Bash(actord check *)
 ---
 
@@ -15,6 +15,8 @@ Rules that hold for this whole skill:
   destination honors them, and `in_doubt` outcomes where it doesn't.
 - A claim proved only against a test double of an external system is **stub only**, never "proved".
 - `blocked` (for example, a sandbox denying local port binding) is not a pass. Say what blocked it.
+- **Handlers may not await I/O**, so a fix never adds an await to a handler: the I/O becomes an effect
+  (`ctx.effect`) whose result arrives as a message. A test that passes with a handler that awaits proves nothing.
 
 ## Steps
 
@@ -32,18 +34,32 @@ to step 1 for the faults around it:
    a `basis` (`workerd`, `stub`, or `not-guaranteed`), tagged `tests`, and for not-guaranteed claims a `why`.
 2. **Have the auditor look:** launch the `delivery-auditor` subagent on the handlers and effect adapters.
    Turn each finding into a fault test or a code fix, never into an unverified claim.
-3. **Cover the fault matrix** (`references/fault-matrix.md`): a duplicate inbound message; a rejected or
-   malformed message; delayed or out-of-order delivery; a crash before and after a durable write; a
-   delivery retry; a scheduled wake and a restart; simultaneous messages around an external await; an
-   unavailable model or tool; gateway acceptance followed by a lost acknowledgment; a denied capability.
+3. **Cover the fault matrix** (`references/fault-matrix.md`) for what the system has:
+   - every system: a duplicate inbound message; a rejected or malformed message; delayed or out-of-order
+     delivery; a crash before and after a durable write; a delivery retry and its exhaustion; a handler that
+     awaits I/O (the canary fails it); a denied capability;
+   - effects: a lost acknowledgment, keyed and unkeyed; an unavailable model or tool; a crash mid-effect, and
+     a keyed effect parked after 5 interruptions; a message that arrives while an effect is in flight;
+   - schedules and timers: a scheduled wake; a timer that fires, is cancelled or replaced, survives a restart,
+     or is dropped after its handler fails 6 times;
+   - jobs and approvals: settled by its completion message, by a probe, by its deadline, by a cancel; an
+     approval that expires;
+   - sources, agents and decisions: a bad webhook signature, a redelivery, a replay under a new delivery id;
+     an agent that runs out of budget; a shadow decision that is never delivered.
+
    Skip only what the system can't exhibit, and say why.
 4. **Run them:** `actord test --profile ${user_config.fault_profile}`, then `actord verify`. The profile is
    the plugin's `fault_profile` option: `standard` unless it was set to `extended`. Where the option was
    never saved, the line above shows its placeholder; use `standard`.
-5. **When something fails,** find out why with `actord events --notable` and `actord trace <id>`.
+5. **When something fails,** find out why with `actord events --notable` and `actord trace <id>`. A `failed`
+   reason ending `handlers may not await I/O; use ctx.effect` means the handler awaited: move that work into an
+   effect (`/actord:implement`, `../implement/references/runtime.md`). An `in_doubt` reason starting `parked:` means the effect
+   was cut off by 5 restarts and will never run again: a person decides.
 
 ## Report (done when shown)
 
 A table of every claim with its status from `.actord/evidence.json`: **proved locally**, **stub only**,
 **not guaranteed** (with why), **blocked** (with why), **failing**, or **untested**. List the tests behind each
-proved claim, and end with the verdict exactly as `actord verify` gave it.
+proved claim, and end with the verdict exactly as `actord verify` gave it. Where a guarantee rests on a known
+limit (an abandoned handler's writes, a budget's overshoot, local logs only), name the Limitations entry rather than
+claiming more.

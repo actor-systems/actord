@@ -90,7 +90,9 @@ export const gates = [
     requires: [
       "g5.cli.unit",
       "g5.skills.lint",
+      "g5.skills.snippets",
       "g5.evals.static",
+      "g5.evals.scaffolds",
       "g5.inventory",
       "g5.starter.smoke",
       "g5.verify.blocked",
@@ -264,7 +266,12 @@ export const checks = [
   command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/toolkit" }),
   command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate, heredoc note), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/toolkit" }),
   command("g5.skills.lint", "G5", "Seven skills and two read-only critics follow the charter's authoring rules", "node --test tests/skills.test.mjs"),
+  // Built first (the snippets typecheck against packages/toolkit/dist/types, and the system blocks run through the
+  // built CLI), so it holds under --only too. The runtime types come from `wrangler types`, offline.
+  command("g5.skills.snippets", "G5", "Every // actord:check block in the plugin skills typechecks against the built toolkit and wrangler's runtime types, and actord check loads each system block", "npm run --silent build -w @actord/toolkit && node --test tests/skill-snippets.test.mjs"),
   command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
+  // Static: running every scaffold clones node_modules each time, about a minute even in parallel.
+  command("g5.evals.scaffolds", "G5", "Every eval scaffold's paths resolve from its own location, and every source patch applies to its example", "node --test tests/eval-scaffolds.test.mjs"),
   {
     id: "g5.inventory",
     gate: "G5",
@@ -288,7 +295,7 @@ export const checks = [
     command: "claude plugin eval plugins/claude --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
     async run({ root }) {
       const runs = evalRuns(root).filter((r) => !r.doc.partial);
-      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved eval lane ($50 total ceiling)" };
+      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved post-plan-5 eval round (two full runs, about $25, a $14-a-run ceiling)" };
       const strict = (c) => c.name.startsWith("safety-") || c.name.startsWith("negative-");
       const again = remeasuredCases(root);
       const below = (c) => (c.aggregates?.score ?? 0) < 1;

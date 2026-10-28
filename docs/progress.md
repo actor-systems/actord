@@ -10,8 +10,9 @@ the wiki generated from `docs/wiki/` (decision 0015); `@actord/toolkit` 0.2.0 is
 plugins ship. `packages/toolkit`, `plugins/claude/`, and `plugins/codex/` share version 0.2.0 and the tag
 `actord--v0.2.0` (`0020f21`); `actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. The
 Codex plugin moved in on `codex-plugin` (its own agent; relicensed Apache-2.0; reference templates ship only in
-its distribution) and was merged by the owner. Release runs L and M are the Claude plugin's eval record
-(`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds); the Codex plugin has none yet.
+its distribution) and was merged by the owner. Release runs L and M were the Claude plugin's eval record until
+plan 5 superseded them (`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds); the Codex
+plugin has none yet.
 Report: `docs/implementation-report.md`.
 
 **Plan 1 (actord on Lifecycle) is built on `plan1/lifecycle-foundation`, not yet released.** actord is now a
@@ -45,7 +46,23 @@ local event log. A shadow decision is recorded and never delivered, and a decisi
 Verified, after the final review's fixes and R10 (a forecast's value is a list), from a plain clone at `273692a`:
 60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312).
 Every project regenerates its manifest once (`actord graph --write`). The plugin skills still teach the old style
-(plan 5). Plan 5 is next: the plugin skills, templates and eval scaffolds.
+(plan 5). Plan 5 (the plugin skills, templates and eval scaffolds) follows.
+
+**Plan 5 (plugin skills) is delivered on `plan5/skills`, not yet released.** Every Claude and Codex skill and both
+agents now teach plans 1 to 4 (decision 0023), with no new skills: sources, timers, agents and decisions are references
+under `implement`, the declaration is under `design`. Every `// actord:check` code block in a skill is typechecked
+against the built toolkit and `wrangler types`' runtime types, and `actord check` loads each `system` block (gate
+`g5.skills.snippets`); a test pins the Codex `workflow.md` copies, and `actord doctor` requires Node 22.19. Plan 5 fixed
+a toolkit bug it found: `approvalDecided`, `agentFailed` and `agentExhausted` moved to the Node-safe
+`@actord/toolkit/system`, because a `system.ts` importing them failed `actord check`. The starter guidance and the
+examples' copies carry the no-await rule. The eval scaffolds were hardened (9 of 13 had been broken since `d4103b5`;
+gate `g5.evals.scaffolds`), three cases were added (the suite is 15), and the host re-run runs under an allowlisted
+environment. The final review's fixes: `SendEmailLike` accepts workerd's `SendEmail`, and the starter's tests keep
+bindings local (`remoteBindings: false`). Runs L and M are superseded (decision 0023, option A), so `g5.evals.run`,
+`g5.evals.host` and `g1.start-session` are **blocked** until the owner approves two full runs after merge (about $25,
+$14-a-run ceiling). Issues filed: #89 (`actord check` doesn't flag misspelled fields) and #90 (CLI `--notable` and
+`trace` gaps). Verified from a plain clone at `bb71dca`, after the final review: 59 pass, 0 fail, 4 blocked
+(`g6.mod.typecheck`: no mod declarations on this machine; the three eval gates, per decision 0023).
 
 **#80 (handler I/O) is merged, and #82 replaces its timer with an exact canary on `fix/82-canary-detector`.
 Neither is released yet.**
@@ -115,6 +132,10 @@ Neither is released yet.**
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 
 ## Open issues
+- #89: `actord check` doesn't flag a misspelled optional field, and a misspelled `publishes` skips
+  `PUBLISHES_WITHOUT_APPROVAL`.
+- #90: `actord events --notable` lacks `effect.parked`, and `trace` shows source refusals as unknown and draws no
+  `decision.*` events.
 - #79: Computer 0.8.0's push drops `corsProxy`, so `gitPushEffect` refuses a push when `.git/config` sets one; the
   fix belongs upstream.
 - Eval runs deny the loopback port workerd needs (decision 0004), so agents in evals can't run their own

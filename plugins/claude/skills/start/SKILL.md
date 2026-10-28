@@ -26,7 +26,12 @@ Rules that hold for this whole skill:
    check that it's enabled.
 3. **Where to look.** Two reference apps show the conventions end to end:
    - `examples/release-radar`: deterministic actors with scheduling, duplicate input, and a causal trace.
-   - `examples/briefing-desk`: an agent actor with a model adapter, approval gateway, and in-doubt effects.
+   - `examples/briefing-desk`: a model-assisted actor (it calls a model through an effect; it is not an agent
+     actor) with an approval gateway and in-doubt effects.
+
+   Agent actors (`kind: "agent"`) also exist: a model session with tools, a budget, and an optional container
+   workspace. No reference app has one yet; the implement skill's `references/agents.md` and the wiki's Runtime
+   page ("Agent actors") describe them.
 4. **What to do next.** Offer one step that fits the doctor result:
    - not in a project → `/actord:setup` to scaffold one, or `/actord:design` to start from an idea;
    - in a project with warnings → the first fix the doctor gave;

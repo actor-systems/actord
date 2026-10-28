@@ -114,7 +114,8 @@ allowed-tools: Bash(npm run verify) Bash(npx actord verify *)
    \`blocked\` means a check couldn't run (for example, the sandbox denies the local port workerd needs).
    It is not a pass.
 3. Don't commit or call the work done while the verdict is \`fail\`. Fix the cause, or say plainly what
-   is still failing.
+   is still failing. A test failing with \`handlers may not await I/O; use ctx.effect\` names a handler
+   that awaits: move that I/O into \`ctx.effect\` and handle its result message.
 
 Evidence comes from the commands above, not from reading the code. Deploying is never part of
 verification; it needs a person's approval.
@@ -136,9 +137,9 @@ function claudeMd(name) {
 
 An actor system on Cloudflare Durable Objects, built with @actord/toolkit.
 - The declaration is \`system.ts\` (actors, messages, routes, effects). Actors live in \`src/actors/\`, contracts in \`src/messages/\`.
-- \`npx actord check\` validates what the compiler can't; \`npx actord graph\` prints the topology.
+- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; \`ctx.sql\`, microtasks and the storage calls \`get\`, \`put\`, \`list\` and \`delete\` are fine.
+- \`npx actord check\` validates what the compiler can't; \`npx actord graph\` prints the topology. \`npm run verify\` runs everything and writes \`.actord/evidence.json\`: run it before committing.
 - \`npm test\` runs workerd tests and records events in \`.actord/events.ndjson\`; \`npx actord trace <id>\` explains one.
-- \`npm run verify\` runs everything and writes \`.actord/evidence.json\`. Run it before committing.
 - When adding behavior, keep public read methods (names and return shapes) and existing tests as they are; prove the change with a new test.
 - Deploys need a person's approval. Asked to deploy, give the plan from \`npx actord diff\`; never run \`wrangler deploy\` unasked.
 - Write and change files with the Write and Edit tools, not shell redirection or heredocs.
@@ -175,6 +176,7 @@ Run \`npm run verify\` and read \`.actord/evidence.json\`. Report each claim as 
 This project uses the shared @actord/toolkit core on native Cloudflare Durable Objects.
 
 - Read \`system.ts\` for actors, messages, routes, effects and budgets; implementations live in \`src/actors/\`.
+- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; \`ctx.sql\`, microtasks and the storage calls \`get\`, \`put\`, \`list\` and \`delete\` are fine.
 - Run \`npx actord check\`, \`npx actord graph --write\`, and \`npm run verify\` after changes. Read the verdict in \`.actord/evidence.json\`.
 - Use \`npx actord trace <message-id>\` for local causal evidence. Say unknown beyond recorded coverage.
 - Preserve public read methods and existing tests while adding behavior. Add a test proving the requested change.
@@ -248,19 +250,19 @@ function readJsonc(path) {
 }
 
 // src/cli/commands/doctor.ts
-var NODE_FLOOR = [22, 18, 0];
+var NODE_FLOOR = [22, 19, 0];
 var MODS_FLOOR = "2.1.287";
 var EVAL_FLOOR = "2.1.269";
-function doctor(cwd, env = process.env) {
+function doctor(cwd, env = process.env, nodeVersion = process.versions.node) {
   const findings = [];
   const add = (f) => findings.push(f);
-  const node = process.versions.node.split(".").map(Number);
+  const node = nodeVersion.split(".").map(Number);
   add(
-    compare(node, NODE_FLOOR) >= 0 ? { id: "node", status: "ok", message: `Node.js ${process.versions.node}` } : {
+    compare(node, NODE_FLOOR) >= 0 ? { id: "node", status: "ok", message: `Node.js ${nodeVersion}` } : {
       id: "node",
       status: "error",
-      message: `Node.js ${process.versions.node} is older than 22.18, which loads system.ts natively`,
-      fix: "Install Node.js 22.19 or later, the floor @actord/toolkit declares (24 LTS recommended)."
+      message: `Node.js ${nodeVersion} is older than 22.19, the floor @actord/toolkit declares`,
+      fix: "Install Node.js 22.19 or later (24 LTS recommended)."
     }
   );
   const source = env.ACTORD_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORD_LAUNCHER === "project-pin" ? "project pin" : "direct";
@@ -2650,8 +2652,10 @@ export default {
 import { actorEvents } from "@actord/toolkit/vitest";
 import { defineConfig } from "vitest/config";
 
+// remoteBindings: false keeps every binding local: Workers AI has no local mode, so once an "ai" binding is
+// declared its calls fail in the tests instead of opening a remote session on your Cloudflare credentials.
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } }), actorEvents()],
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, remoteBindings: false }), actorEvents()],
 });
 `,
     "tests/greeting.test.ts": `import { env } from "cloudflare:workers";
