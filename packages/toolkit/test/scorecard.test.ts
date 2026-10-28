@@ -90,6 +90,10 @@ describe("scorecard", () => {
     ).events;
     const v = scorecard(unlabelled).effects.find((e) => e.effect === "triage")!.questions.find((x) => x.id === "verdict")!;
     expect(v).toMatchObject({ labelled: 0, accuracy: null, brier: null });
+    const nulls = scorecard(unlabelled).effects.flatMap((e) => e.questions);
+    expect(nulls.find((x) => x.id === "risky")).toMatchObject({ labelled: 0, brier: null });
+    expect(nulls.find((x) => x.id === "severity")).toMatchObject({ labelled: 0, meanAbsError: null });
+    expect(nulls.find((x) => x.id === "amount")).toMatchObject({ labelled: 0, correct: null });
     expect(scorecard(events, { effect: "triage" }).effects.map((e) => e.effect)).toEqual(["triage"]);
   });
 });
@@ -121,6 +125,21 @@ describe("actord scorecard", () => {
     expect(r.out).toContain("0.75");
     const only = await run("--effect", "extractInvoice", "--file", file);
     expect(only.out).not.toContain("triage");
+  });
+
+  it("handles option names that are Object.prototype keys", () => {
+    const rec = { $actord: 1 as const, kind: "decision.recorded", at: 1, actor: "A", detail: { decision: "e:k", effect: "e", key: "k", kind: "decision", model: "m", mode: "act", answers: { constructor: { type: "choice", choice: "__proto__", probabilities: { __proto__: 0.4, constructor: 0.6 } } } } };
+    const out = { $actord: 1 as const, kind: "decision.outcome", at: 2, actor: "A", detail: { decision: "e:k", actual: { constructor: "constructor" } } };
+    const r = scorecard([rec, out] as never).effects[0]!.questions[0]!;
+    if (r.type !== "choice") throw new Error("choice");
+    expect(r.labelled).toBe(1);
+    expect(r.wrongWhenChosen).toEqual({ ["__proto__"]: { chosen: 1, wrong: 1 } });
+  });
+
+  it("names the effect when --effect matches nothing", async () => {
+    const r = await run("--effect", "nope", "--file", file);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("No decisions or extractions recorded for effect nope");
   });
 
   it("says so when there are no decisions", async () => {

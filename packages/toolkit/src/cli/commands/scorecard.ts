@@ -18,5 +18,6 @@ export function scorecard(cwd: string, opts: { effect?: string; file?: string })
   const log = readEvents(path);
   if (!log) return { data: { projectRoot: root, file, effects: [] }, text: "No decisions recorded: no local events yet. Run the tests to produce .actord/events.ndjson.", exitCode: 0 };
   const card = compute(log.events, { effect: opts.effect });
-  return { data: { projectRoot: root, file, ...card }, text: renderScorecard(card), exitCode: 0 };
+  const text = card.effects.length === 0 && opts.effect ? `No decisions or extractions recorded for effect ${opts.effect}.` : renderScorecard(card);
+  return { data: { projectRoot: root, file, ...card }, text, exitCode: 0 };
 }

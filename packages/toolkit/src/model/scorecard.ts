@@ -97,16 +97,17 @@ export function scorecard(events: LoggedEvent[], opts: { effect?: string } = {})
 
 function question(id: string, type: string, list: Decision[]): QuestionCard {
   // Each labelled decision that has both an answer and a label for this question.
-  const pairs = list.flatMap((x) => (x.label && Object.hasOwn(x.label, id) && x.answers[id] ? [{ a: x.answers[id]!, label: x.label[id] }] : []));
+  const pairs = list.flatMap((x) => (x.label && Object.hasOwn(x.label, id) && Object.hasOwn(x.answers, id) ? [{ a: x.answers[id]!, label: x.label[id] }] : []));
   if (type === "choice") {
     const rows = pairs.flatMap(({ a, label }) => {
       const probs = isRecord(a.probabilities) ? Object.entries(a.probabilities).filter((kv): kv is [string, number] => num(kv[1])) : [];
       const top = typeof a.choice === "string" ? a.choice : probs.reduce<[string, number] | null>((best, kv) => (best === null || kv[1] > best[1] ? kv : best), null)?.[0];
       return top === undefined ? [] : [{ probs, top, label }];
     });
-    const wrongWhenChosen: Record<string, { chosen: number; wrong: number }> = {};
+    const chosen = new Map<string, { chosen: number; wrong: number }>(); // a Map: option names are arbitrary ("constructor", "__proto__")
     for (const r of rows) {
-      const w = (wrongWhenChosen[r.top] ??= { chosen: 0, wrong: 0 });
+      const w = chosen.get(r.top) ?? { chosen: 0, wrong: 0 };
+      chosen.set(r.top, w);
       w.chosen++;
       if (r.top !== r.label) w.wrong++;
     }
@@ -118,7 +119,7 @@ function question(id: string, type: string, list: Decision[]): QuestionCard {
       accuracy: mean(rows.map((r) => (r.top === r.label ? 1 : 0))),
       brier: mean(withP.map((r) => r.probs.reduce((s, [opt, p]) => s + (p - (opt === r.label ? 1 : 0)) ** 2, 0))),
       bins: bins(withP.map((r) => ({ p: r.probs.find(([o]) => o === r.top)?.[1] ?? Math.max(...r.probs.map(([, p]) => p)), hit: r.top === r.label }))),
-      wrongWhenChosen,
+      wrongWhenChosen: Object.fromEntries(chosen),
     };
   }
   if (type === "noul") {
