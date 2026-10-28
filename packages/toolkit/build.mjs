@@ -32,6 +32,8 @@ const library = { outdir: join(here, "dist"), outExtension: { ".js": ".mjs" }, b
 await build({ ...library, entryPoints: { system: join(here, "src/system.ts"), runtime: join(here, "src/runtime/index.ts") }, platform: "neutral", external: ["agents", "agents/*"] });
 await build({ ...library, entryPoints: { testing: join(here, "src/testing.ts") }, platform: "neutral", external: ["cloudflare:test", "agents", "agents/*"] });
 // The Worker's source handlers deliver through the runtime, so the same packages stay the project's own.
+// Decision and extraction adapters call the Workers AI binding and import nothing but the runtime's EffectRejected.
+await build({ ...library, entryPoints: { decisions: join(here, "src/decisions/index.ts") }, platform: "neutral", external: ["agents", "agents/*", "cloudflare:workers"] });
 await build({ ...library, entryPoints: { sources: join(here, "src/sources/index.ts") }, platform: "neutral", external: ["agents", "agents/*", "cloudflare:workers"] });
 // Agent actors run on the project's own Pi and Computer, optional peers that only this entry point imports.
 await build({ ...library, entryPoints: { agents: join(here, "src/agents/index.ts") }, platform: "neutral", external: ["agents", "agents/*", "@earendil-works/*", "@cloudflare/computer", "@cloudflare/computer/*", "cloudflare:*"] });

@@ -1,0 +1,23 @@
+{
+  "model": "clef-flash",
+  "answers": {
+    "route": {
+      "type": "choice",
+      "choice": "ready",
+      "probabilities": {
+        "ready": 0.7106,
+        "needs_info": 0.1192,
+        "not_for_factory": 0.1702
+      },
+      "confidence": 0.3222
+    },
+    "one_line": {
+      "type": "noul",
+      "noul": 0.1129
+    }
+  },
+  "usage": {
+    "input_tokens": 335,
+    "output_tokens": 0
+  }
+}

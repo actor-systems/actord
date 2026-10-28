@@ -29,6 +29,10 @@
       "types": "./dist/types/sources/index.d.ts",
       "default": "./dist/sources.mjs"
     },
+    "./decisions": {
+      "types": "./dist/types/decisions/index.d.ts",
+      "default": "./dist/decisions.mjs"
+    },
     "./agents": {
       "types": "./dist/types/agents/index.d.ts",
       "default": "./dist/agents.mjs"
