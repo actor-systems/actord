@@ -1,0 +1,36 @@
+{
+  "model": "clef-flash",
+  "answers": {
+    "risk": {
+      "type": "score",
+      "score": 0.9138,
+      "legend": {
+        "0": "No risk",
+        "1": "Low",
+        "2": "Medium",
+        "3": "High"
+      },
+      "probabilities": {
+        "0": 0.1842,
+        "1": 0.7414,
+        "2": 0.0507,
+        "3": 0.0237
+      },
+      "confidence": 0.4491
+    },
+    "area": {
+      "type": "choice",
+      "choice": "ci",
+      "probabilities": {
+        "ci": 0.984,
+        "runtime": 0.0073,
+        "docs": 0.0087
+      },
+      "confidence": 0.9527
+    }
+  },
+  "usage": {
+    "input_tokens": 263,
+    "output_tokens": 0
+  }
+}

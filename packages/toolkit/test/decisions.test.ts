@@ -8,8 +8,14 @@ import { PRICE_PER_MILLION_INPUT_TOKENS, decisionAdapters, type DecisionValue } 
 const rejected = (e: unknown) => e instanceof Error && (e as { rejected?: unknown }).rejected === true;
 const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", name), "utf8"));
 const clefResponse = fixture("clef-flash-response.json");
-clefResponse.answers.clarity = { type: "score", score: 1.4, legend: ["murky", "ok", "clear"], probabilities: { "0": 0.1, "1": 0.5, "2": 0.4 }, confidence: 0.5 };
+clefResponse.answers.clarity = { type: "score", score: 1.4, legend: { "0": "murky", "1": "ok", "2": "clear" }, probabilities: { "0": 0.1, "1": 0.5, "2": 0.4 }, confidence: 0.5 };
 const clairicResponse = fixture("clairic-response.json");
+const scoreResponse = fixture("clef-flash-score-response.json");
+// The questions of the live call that produced the score fixture.
+const scoreQuestions = {
+  risk: { type: "score", instructions: "How risky is merging this change?", criteria: ["No risk", "Low", "Medium", "High"] },
+  area: { type: "choice", instructions: "Which area does it touch?", criteria: { ci: "CI and workflows", runtime: "Runtime code", docs: null } },
+};
 
 const questions = {
   route: { type: "choice", instructions: "How should a software factory handle this issue?", criteria: { ready: "Clear", needs_info: "Missing", not_for_factory: "Human" } },
@@ -28,6 +34,7 @@ const system = defineSystem({
   effects: {
     triage: { kind: "decision", model: "@cf/cloudflare/clef-flash", questions },
     parse: { kind: "extraction", model: "@cf/cloudflare/clairic", fields },
+    risk: { kind: "decision", model: "@cf/cloudflare/clef-flash", questions: scoreQuestions },
     mail: { target: "mail" },
   },
   routes: [],
@@ -127,6 +134,9 @@ describe("decisionAdapters", () => {
     it("a noul outside 0 to 1", () => reject(run("triage", { answers: { ...clefResponse.answers, one_line: { type: "noul", noul: 1.5 } } }), "one_line"));
     it("a missing field", () => reject(run("parse", { answers: { failing_check: clairicResponse.answers.failing_check }, truncated: false }), "run_id"));
     it("a NaN noul", () => reject(run("triage", { answers: { ...clefResponse.answers, one_line: { type: "noul", noul: NaN } } }), "NaN"));
+    it("a real score out of range", () => reject(run("risk", { ...scoreResponse, answers: { ...scoreResponse.answers, risk: { ...scoreResponse.answers.risk, score: 3.5 } } }), "risk"));
+    it("a real score below 0", () => reject(run("risk", { ...scoreResponse, answers: { ...scoreResponse.answers, risk: { ...scoreResponse.answers.risk, score: -0.1 } } }), "risk"));
+    it("a real score that is not a number", () => reject(run("risk", { ...scoreResponse, answers: { ...scoreResponse.answers, risk: { ...scoreResponse.answers.risk, score: "0.9" } } }), "risk"));
     it("a score out of range", () => reject(run("triage", { answers: { ...clefResponse.answers, clarity: { ...clefResponse.answers.clarity, score: 3 } } }), "clarity"));
     it("a score that is not a number", () => reject(run("triage", { answers: { ...clefResponse.answers, clarity: { type: "score" } } }), "clarity"));
     it("probabilities that are not numbers", () =>
@@ -166,5 +176,11 @@ describe("decisionAdapters", () => {
   it("throws at construction for a decision without a model", () => {
     const bad = { effects: { oops: { kind: "decision", questions } } } as never;
     expect(() => decisionAdapters(bad, { ai: fakeAI({}).ai })).toThrow(/oops/);
+  });
+
+  it("accepts a real Clef-flash score response", async () => {
+    const value = (await decisionAdapters(system, { ai: fakeAI(scoreResponse).ai }).risk!.run({ state: "s" }, ctx().ctx)) as DecisionValue;
+    expect(value.answers).toEqual(scoreResponse.answers);
+    expect(value.usage).toEqual({ inputTokens: 263, outputTokens: 0 });
   });
 });
