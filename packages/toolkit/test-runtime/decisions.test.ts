@@ -6,6 +6,8 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, expect, it } from "vitest";
 import { type ActorEvent, ingress } from "../src/runtime/index.ts";
 import { captureEvents, overrideEffect, overrideEffectBudget, resetSeams, settle } from "../src/testing.ts";
+import type { LoggedEvent } from "../src/model/events.ts";
+import { scorecard } from "../src/model/scorecard.ts";
 import { system } from "./src/index.ts";
 
 const ai = globalThis as { __probeAi?: (model: string, body: unknown) => unknown };
@@ -353,4 +355,169 @@ it("[decision-failed-not-recorded] a decision that fails or ends in doubt writes
   expect(await probe("doubt-1").answers()).toMatchObject([{ message: "probe.decided", status: "in_doubt", error: "socket hang up" }]);
   for (const instance of ["fail-1", "fail-x", "doubt-1"]) expect(await records(instance), instance).toEqual([]);
   expect(of(events, "decision.recorded")).toEqual([]);
+});
+
+it("[decision-usage-absent] a response without usage is recorded with usage NULL, and its result and events carry no usage or cost", async () => {
+  const events = captureEvents();
+  ai.__probeAi = () => ({ model: "clef-flash", answers: CLEF_ANSWERS });
+  await decide("nousage-1", "decide.route");
+  await settle(env, system);
+  const [answer] = await probe("nousage-1").answers();
+  expect(answer).toMatchObject({ status: "confirmed", value: { answers: CLEF_ANSWERS, usage: null } });
+  const [row] = await records("nousage-1");
+  expect(row).toMatchObject({ id: "decide.route:nousage-1", usage: null });
+  expect(of(events, "decision.recorded", "nousage-1")).toMatchObject([{ detail: { usage: null } }]);
+  // No usage was reported, so the effect has none, and none is invented as $0: the result's payload has no usage, the
+  // effect's row body none, and effect.confirmed no detail.
+  const [result] = (await messageRows("nousage-1")).map((r) => JSON.parse(r.body) as { type: string; payload: Record<string, unknown> });
+  expect(result).toMatchObject({ type: "probe.decided", payload: { key: "nousage-1", status: "confirmed" } });
+  expect(result!.payload).not.toHaveProperty("usage");
+  const [fx] = await runInDurableObject(probe("nousage-1"), (_i, s) => s.storage.sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ?", "fx:decide.route:nousage-1").toArray());
+  expect(JSON.parse(fx!.body)).not.toHaveProperty("usage");
+  const [confirmed] = of(events, "effect.confirmed", "nousage-1");
+  expect(confirmed).toBeDefined();
+  expect(confirmed).not.toHaveProperty("detail");
+  // The same decision with usage reports the cost: 335 input tokens at $0.038 per million.
+  ai.__probeAi = () => CLEF;
+  await decide("usage-1", "decide.route");
+  await settle(env, system);
+  const [paid] = (await messageRows("usage-1")).map((r) => JSON.parse(r.body) as { payload: Record<string, unknown> });
+  expect(paid!.payload.usage).toEqual({ inputTokens: 335, outputTokens: 0, costUsd: (335 * 0.038) / 1e6 });
+});
+
+it("[decision-inputs] with an R2 inputs bucket, the request body is written under its digest before the call, and the row, the event and the value name it", async () => {
+  const events = captureEvents();
+  const shared = globalThis as { __probeInputs?: Record<string, { value: string; options: unknown }> };
+  delete shared.__probeInputs;
+  const seen: string[] = [];
+  ai.__probeAi = () => {
+    seen.push(...Object.keys(shared.__probeInputs ?? {}));
+    return CLEF;
+  };
+  try {
+    await decide("inputs-1", "decide.route");
+    await settle(env, system);
+    const [row] = await records("inputs-1");
+    const ref = `decisions/inputs/${row!.input_digest}.json`;
+    expect(row).toMatchObject({ id: "decide.route:inputs-1", input_ref: ref });
+    expect(of(events, "decision.recorded", "inputs-1")).toMatchObject([{ detail: { inputDigest: row!.input_digest, inputRef: ref } }]);
+    expect(await probe("inputs-1").answers()).toMatchObject([{ status: "confirmed", value: { inputDigest: row!.input_digest, inputRef: ref } }]);
+    // Put before ai.run was called, as the exact body sent, which hashes to the digest.
+    expect(seen).toEqual([ref]);
+    const kept = shared.__probeInputs![ref]!;
+    expect(kept.options).toEqual({ httpMetadata: { contentType: "application/json" } });
+    expect(JSON.parse(kept.value)).toEqual({ model: "clef-flash", state: STATE, questions: system.effects["decide.route"].questions });
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kept.value)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    expect(digest).toBe(row!.input_digest);
+    // Without the bucket the digest is the same, and nothing names an object.
+    await decide("noinputs-1", "decide.route", "inputs-1");
+    await settle(env, system);
+    expect(await records("noinputs-1")).toMatchObject([{ input_digest: row!.input_digest, input_ref: null }]);
+  } finally {
+    delete shared.__probeInputs;
+  }
+});
+
+it("[decide-in-handler] ActorRuntime.decide called from a handler, even one that doesn't await it, is refused, synchronously or after an await; the approval stays parked", async () => {
+  overrideEffect("gateway.approval", { run: async () => "ran" });
+  ai.__probeAi = () => CLEF;
+  const refused = "decide can't be called from inside a handler (its approval would escape the handler's transaction and the guard on a decision's result); use ctx.approve or ctx.deny";
+  for (const [instance, key] of [
+    ["decin-1", "try-decide-1"],
+    ["decin-2", "try-decide-late-1"],
+  ] as const) {
+    await ingress(env, system, "Probe", "probe.effect", { effect: "gateway.approval", key: instance }, { key: instance });
+    await settle(env, system);
+    await decide(instance, "decide.route", key);
+    await settle(env, system);
+    expect((await probe(instance).answers()).map((a) => ({ key: a.key, status: a.status, tried: a.tried })), instance).toEqual([{ key, status: "confirmed", tried: { decide: refused } }]);
+    const [parked] = await runInDurableObject(probe(instance), (_i, s) => s.storage.sql.exec<{ status: string }>("SELECT status FROM _actors_outbox WHERE id = ?", `fx:gateway.approval:${instance}`).toArray());
+    expect(parked, instance).toEqual({ status: "awaiting_approval" });
+    // From outside a handler, decide still approves.
+    expect(await probe(instance).decide(instance, "approve")).toMatchObject({ status: "confirmed", key: instance });
+  }
+});
+
+// The runtime's own events, through actord scorecard: two instances decide with the same key, so both records are
+// decide.route:77, and each instance labels its own. CLEF_B is a second Clef-flash answer, its risk score Σ level·p:
+// .15 + 2·.45 + 3·.35 = 2.1.
+//   route (choice ready|needs_info|not_for_factory)
+//     sc-a  P .7106/.1192/.1702  top ready       label ready       Σ(p-1[label])² = .2894²+.1192²+.1702²
+//                                                                    = .08375236+.01420864+.02896804 = .12692904
+//     sc-b  P .2/.7/.1           top needs_info  label needs_info  Σ = .2²+.3²+.1² = .04+.09+.01 = .14
+//     accuracy 2/2 = 1; Brier (.12692904+.14)/2 = .13346452 → .1335
+//     bins on top p: .7106 and .7 → [.7,.9) n2 meanP (.7106+.7)/2 = .7053 observed 1
+//     wrongWhenChosen: ready 1/0, needs_info 1/0
+//   one_line (noul): sc-a .1129, false → .1129² = .01274641; sc-b .8, true → .2² = .04
+//     Brier (.01274641+.04)/2 = .026373205 → .0264; bins: .1129 → [0,.5) n1 observed 0; .8 → [.7,.9) n1 observed 1
+//   risk (score): sc-a .9138, level 1 → .0862; sc-b 2.1, level 2 → .1; mean (.0862+.1)/2 = .0931
+//   recorded 2, shadow 0, labelled 2, acted 1 (sc-a)
+const CLEF_B = {
+  model: "clef-flash",
+  answers: {
+    route: { type: "choice", choice: "needs_info", probabilities: { ready: 0.2, needs_info: 0.7, not_for_factory: 0.1 }, confidence: 0.4127 },
+    one_line: { type: "noul", noul: 0.8 },
+    risk: { type: "score", score: 2.1, legend: CLEF_ANSWERS.risk.legend, probabilities: { "0": 0.05, "1": 0.15, "2": 0.45, "3": 0.35 }, confidence: 0.3014 },
+  },
+  usage: { input_tokens: 335, output_tokens: 0 },
+};
+
+it("[decision-scorecard-pipeline] the runtime's decision events, from two instances deciding with the same key, score as two records", async () => {
+  const events = captureEvents();
+  ai.__probeAi = () => CLEF;
+  await decide("sc-a", "decide.route", "77");
+  await settle(env, system);
+  ai.__probeAi = () => CLEF_B;
+  await decide("sc-b", "decide.route", "77");
+  await settle(env, system);
+  expect(await label("sc-a", { decision: "decide.route:77", action: "routed:ready", actual: { route: "ready", one_line: false } })).toMatchObject({ status: "handled" });
+  expect(await label("sc-a", { decision: "decide.route:77", actual: { risk: 1 } })).toMatchObject({ status: "handled" });
+  expect(await label("sc-b", { decision: "decide.route:77", actual: { route: "needs_info", one_line: true, risk: 2 } })).toMatchObject({ status: "handled" });
+  expect(of(events, "decision.recorded").map((e) => [e.actor, e.detail?.decision])).toEqual([
+    ["Probe:sc-a", "decide.route:77"],
+    ["Probe:sc-b", "decide.route:77"],
+  ]);
+  const empty = { meanP: 0, n: 0, observed: 0 };
+  expect(scorecard(events as LoggedEvent[])).toEqual({
+    orphanLabels: 0,
+    effects: [
+      {
+        effect: "decide.route",
+        model: "@cf/cloudflare/clef-flash",
+        recorded: 2,
+        shadow: 0,
+        labelled: 2,
+        acted: 1,
+        questions: [
+          {
+            id: "route",
+            type: "choice",
+            labelled: 2,
+            accuracy: 1,
+            brier: 0.1335,
+            bins: [
+              { from: 0, to: 0.5, ...empty },
+              { from: 0.5, to: 0.7, ...empty },
+              { from: 0.7, to: 0.9, n: 2, meanP: 0.7053, observed: 1 },
+              { from: 0.9, to: 1, ...empty },
+            ],
+            wrongWhenChosen: { ready: { chosen: 1, wrong: 0 }, needs_info: { chosen: 1, wrong: 0 } },
+          },
+          {
+            id: "one_line",
+            type: "noul",
+            labelled: 2,
+            brier: 0.0264,
+            bins: [
+              { from: 0, to: 0.5, n: 1, meanP: 0.1129, observed: 0 },
+              { from: 0.5, to: 0.7, ...empty },
+              { from: 0.7, to: 0.9, n: 1, meanP: 0.8, observed: 1 },
+              { from: 0.9, to: 1, ...empty },
+            ],
+          },
+          { id: "risk", type: "score", labelled: 2, meanAbsError: 0.0931 },
+        ],
+      },
+    ],
+  });
 });

@@ -343,8 +343,19 @@ export type Handlers<S extends AnySystem, A extends ActorName<S>> = {
   [M in MessagesTo<S, A>]: (message: Message<S, M>, ctx: HandlerContext<S, A>) => void | Promise<void>;
 };
 
+/**
+ * @internal The agent runtime's withdrawal of a stopped or replaced session's approvals (src/agents): ctx.deny, without
+ * the guard on a decision's result. That is the machinery withdrawing a session's own requests, not a decision denying,
+ * and an agent's `on` may start or stop a session from a decision's result. Only the runtime's own handlers use it.
+ */
+export const WITHDRAW_APPROVAL: unique symbol = Symbol("actord.withdrawApproval");
+/** @internal What a handler's ctx carries beside HandlerContext, for the runtime's own handlers. */
+export interface InternalContext {
+  [WITHDRAW_APPROVAL](name: string, key: string, reason: string): boolean;
+}
+
 /** Handlers the runtime adds for one actor (see RuntimeOptions.internal), typed loosely: their messages aren't in system.ts. */
-export type InternalHandlers = Record<string, (message: Message<System, string>, ctx: HandlerContext<System, string>) => void | Promise<void>>;
+export type InternalHandlers = Record<string, (message: Message<System, string>, ctx: HandlerContext<System, string> & InternalContext) => void | Promise<void>>;
 
 export interface RuntimeOptions<S extends AnySystem> {
   /** Effect adapters by effect name. Tests can override them with @actord/toolkit/testing. */
@@ -444,6 +455,7 @@ const HEARTBEAT_MS = 30_000;
 const DEFAULT_APPROVAL_EXPIRES: Duration = "3d";
 const APPROVAL_EXPIRED = "approval expired";
 const REQUESTED_IN_HANDLER = "requestEffect can't be called from inside a handler (it would wait on the delivery it is part of); use ctx.effect";
+const DECIDED_IN_HANDLER = "decide can't be called from inside a handler (its approval would escape the handler's transaction and the guard on a decision's result); use ctx.approve or ctx.deny";
 
 // @actord/toolkit/agents reads _actors_outbox too (a session job's status; effects awaiting approval, by their body's
 // key): a change to its columns, ids ("fx:<effect>:<key>") or body must keep src/agents/index.ts in step.
@@ -712,7 +724,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
    * A handler's ctx, and how to close it once its delivery ends. Closed, every method throws, `sql.exec` included;
    * `self`, `key` and `now` stay readable.
    */
-  function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>, cancels: string[]): { ctx: HandlerContext<S, A>; close(): void } {
+  function handlerContext(current: Envelope, pending: Pending[], notes: Array<Omit<ActorEvent, "$actord">>, cancels: string[]): { ctx: HandlerContext<S, A> & InternalContext; close(): void } {
     let open = true;
     const live = () => {
       if (!open) throw new Error(`${actorName}.${current.type}: this handler's delivery has ended; its ctx can't be used`);
@@ -731,6 +743,16 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       },
     });
     let n = 0;
+    /** Refuse an effect parked for approval, in this handler's transaction; false when none is waiting. */
+    const denyParked = (name: string, effectKey: string, reason: string, identity?: { by: string }): boolean => {
+      const id = `fx:${name}:${effectKey}`;
+      const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval' AND next_at > ?", id, now()).toArray()[0];
+      if (!row) return false;
+      const req = JSON.parse(row.body) as { causationId: string; correlationId: string };
+      sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason, id);
+      notes.push({ kind: "effect.denied", at: now(), actor: self, effect: name, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason, detail: { by: identity?.by ?? null, via: current.from } });
+      return true;
+    };
     const schedule = (dueAt: number, type: string, payload: unknown, timerKey: string) => {
       // A timer is a self-delivery from @timer, so the route @timer → type → this actor must exist.
       if (!system.routes.some((r) => r.from === "@timer" && r.message === type && r.to === actorName)) throw new Error(`${actorName} has no route @timer → ${type} → ${actorName}; declare it in system.ts`);
@@ -739,7 +761,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       setTimer(sql, { key: timerKey, type, payload: JSON.stringify(payload), due_at: dueAt, causation_id: current.id, correlation_id: current.correlationId });
       notes.push({ kind: "timer.set", at: now(), actor: self, messageId: current.id, type, correlationId: current.correlationId, detail: { key: timerKey, dueAt } });
     };
-    const ctx: HandlerContext<S, A> = {
+    const ctx: HandlerContext<S, A> & InternalContext = {
       self,
       key,
       sql: liveSql,
@@ -783,13 +805,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       deny(name, effectKey, reason, identity) {
         live();
         if (decisionResults.has(current.type)) throw new Error(DECISION_CANT_APPROVE);
-        const id = `fx:${name as string}:${effectKey}`;
-        const row = sql.exec<{ body: string }>("SELECT body FROM _actors_outbox WHERE id = ? AND status = 'awaiting_approval' AND next_at > ?", id, now()).toArray()[0];
-        if (!row) return false;
-        const req = JSON.parse(row.body) as { causationId: string; correlationId: string };
-        sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason, id);
-        notes.push({ kind: "effect.denied", at: now(), actor: self, effect: name as string, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason, detail: { by: identity?.by ?? null, via: current.from } });
-        return true;
+        return denyParked(name as string, effectKey, reason, identity);
+      },
+      [WITHDRAW_APPROVAL](name, effectKey, reason) {
+        live();
+        return denyParked(name, effectKey, reason);
       },
       after(delay, type, payload, opts) {
         live();
@@ -1609,37 +1629,46 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     if (receipt.status === "rejected") emit({ kind: "undeliverable", at: now(), actor: self, ...event, reason: receipt.reason });
   }
 
+  /** ActorRuntime.decide, once it is known to come from outside a handler. */
+  async function decide(effectKey: string, decision: "approve" | "deny", reason?: string): Promise<EffectOutcome> {
+    await cap.ready();
+    await recoverOrphans();
+    // A request past its expiry time is expired even if the alarm hasn't yet processed it.
+    const row = sql.exec<{ id: string; body: string; attempts: number; target: string }>("SELECT id, body, attempts, target FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval' AND next_at > ?", `fx:%:${effectKey}`, now()).toArray()[0];
+    if (!row && sql.exec("SELECT 1 FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval'", `fx:%:${effectKey}`).toArray().length > 0) {
+      expireApprovals();
+      await drain();
+      return { status: "denied", key: effectKey, error: APPROVAL_EXPIRED };
+    }
+    if (!row) return { status: "denied", key: effectKey, error: "no effect awaiting approval with that key" };
+    const req = JSON.parse(row.body) as { name: string; causationId: string; correlationId: string };
+    if (decision === "deny") {
+      sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason ?? "denied by a person", row.id);
+      emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason: reason ?? "denied by a person", detail: { by: null, via: "@rpc" } });
+      notifySettled(row.id);
+      return { status: "denied", key: effectKey, error: reason ?? "denied by a person" };
+    }
+    sql.exec("UPDATE _actors_outbox SET status = 'pending', body = ?, next_at = ? WHERE id = ?", JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: { messageId: null, from: "@rpc", by: null } }), now(), row.id);
+    emit({ kind: "note", at: now(), actor: self, correlationId: req.correlationId, effect: req.name, effectKey, reason: "approved by a person", detail: { by: null, via: "@rpc" } });
+    await drain();
+    await inflight.get(row.id);
+    const done = sql.exec<{ status: string; body: string; last_error: string | null }>("SELECT status, body, last_error FROM _actors_outbox WHERE id = ?", row.id).toArray()[0]!;
+    const outcome = (JSON.parse(done.body) as { outcome?: unknown }).outcome;
+    if (done.status === "confirmed") return { status: "confirmed", key: effectKey, value: outcome };
+    if (done.status === "in_doubt") return { status: "in_doubt", key: effectKey, error: done.last_error ?? "unknown" };
+    if (["pending", "running", "awaiting_job", "cancelling"].includes(done.status)) return { status: "in_doubt", key: effectKey, error: `not settled yet: ${done.last_error ?? (done.status === "awaiting_job" ? "the job is running" : "in flight")}` };
+    return { status: "failed", key: effectKey, error: done.last_error ?? "failed" };
+  }
+
   const runtime: ActorRuntime = {
     receive: (envelope) => receive(envelope),
     drive,
-    async decide(effectKey, decision, reason) {
-      await cap.ready();
-      await recoverOrphans();
-      // A request past its expiry time is expired even if the alarm hasn't yet processed it.
-      const row = sql.exec<{ id: string; body: string; attempts: number; target: string }>("SELECT id, body, attempts, target FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval' AND next_at > ?", `fx:%:${effectKey}`, now()).toArray()[0];
-      if (!row && sql.exec("SELECT 1 FROM _actors_outbox WHERE id LIKE ? AND status = 'awaiting_approval'", `fx:%:${effectKey}`).toArray().length > 0) {
-        expireApprovals();
-        await drain();
-        return { status: "denied", key: effectKey, error: APPROVAL_EXPIRED };
-      }
-      if (!row) return { status: "denied", key: effectKey, error: "no effect awaiting approval with that key" };
-      const req = JSON.parse(row.body) as { name: string; causationId: string; correlationId: string };
-      if (decision === "deny") {
-        sql.exec("UPDATE _actors_outbox SET status = 'denied', last_error = ? WHERE id = ?", reason ?? "denied by a person", row.id);
-        emit({ kind: "effect.denied", at: now(), actor: self, effect: req.name, effectKey, causationId: req.causationId, correlationId: req.correlationId, reason: reason ?? "denied by a person", detail: { by: null, via: "@rpc" } });
-        notifySettled(row.id);
-        return { status: "denied", key: effectKey, error: reason ?? "denied by a person" };
-      }
-      sql.exec("UPDATE _actors_outbox SET status = 'pending', body = ?, next_at = ? WHERE id = ?", JSON.stringify({ ...JSON.parse(row.body), approved: true, approvedBy: { messageId: null, from: "@rpc", by: null } }), now(), row.id);
-      emit({ kind: "note", at: now(), actor: self, correlationId: req.correlationId, effect: req.name, effectKey, reason: "approved by a person", detail: { by: null, via: "@rpc" } });
-      await drain();
-      await inflight.get(row.id);
-      const done = sql.exec<{ status: string; body: string; last_error: string | null }>("SELECT status, body, last_error FROM _actors_outbox WHERE id = ?", row.id).toArray()[0]!;
-      const outcome = (JSON.parse(done.body) as { outcome?: unknown }).outcome;
-      if (done.status === "confirmed") return { status: "confirmed", key: effectKey, value: outcome };
-      if (done.status === "in_doubt") return { status: "in_doubt", key: effectKey, error: done.last_error ?? "unknown" };
-      if (["pending", "running", "awaiting_job", "cancelling"].includes(done.status)) return { status: "in_doubt", key: effectKey, error: `not settled yet: ${done.last_error ?? (done.status === "awaiting_job" ? "the job is running" : "in flight")}` };
-      return { status: "failed", key: effectKey, error: done.last_error ?? "failed" };
+    decide(effectKey, decision, reason) {
+      // From a handler, its approval or denial would escape the handler's transaction (the handler needn't even await
+      // it), and in a handler of a decision's result, the guard on ctx.approve and ctx.deny (spec §9.3). Refused at once,
+      // as requestEffect is, so the handler fails even if it doesn't await the call.
+      if (inHandlerCall || inHandlerTransaction) throw new Error(DECIDED_IN_HANDLER);
+      return decide(effectKey, decision, reason);
     },
     async probeNow(effect, effectKey) {
       await cap.ready();

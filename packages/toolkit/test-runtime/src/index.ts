@@ -3,7 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents/lifecycle";
 import { z } from "zod";
 import { agentExhausted, agentFailed } from "../../src/agents/index.ts";
-import { decisionAdapters, type WorkersAI } from "../../src/decisions/index.ts";
+import { type DecisionInputs, decisionAdapters, type WorkersAI } from "../../src/decisions/index.ts";
 import { actorRuntime, type Envelope, type HandlerContext } from "../../src/runtime/index.ts";
 import { computer, containerBackend, defineSystem, inboundEmail, message, pi, webhook } from "../../src/system.ts";
 import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
@@ -62,6 +62,9 @@ export const system = defineSystem({
     "agent.failed": message({ version: 1, description: "A session ended without a result", payload: agentFailed }),
     "agent.exhausted": message({ version: 1, description: "A session ran out of budget", payload: agentExhausted }),
     "scribe.noted": message({ version: 1, description: "A note effect's outcome", payload: Outcome }),
+    // Scribe asks judge.task, a decision, and its result starts a session ([agent-decision-starts-session]).
+    "scribe.judge": message({ version: 1, description: "Ask whether a task is ready", payload: z.object({ key: z.string(), state: z.string() }) }),
+    "scribe.judged": message({ version: 1, description: "judge.task's outcome", payload: Outcome }),
     // Builder, the agent actor with a workspace (agent.ts).
     "builder.task": message({ version: 1, description: "Start a session that changes files and runs a command", payload: z.object({ topic: z.string() }) }),
     "builder.done": message({ version: 1, description: "The session's result", payload: z.object({ summary: z.string() }) }),
@@ -90,11 +93,12 @@ export const system = defineSystem({
       justification: ["state", "lifecycle"],
       harness: pi(),
       model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", reasoning: "high" },
-      on: { "scribe.task": "start", "scribe.hint": "steer", "scribe.halt": "stop" },
+      on: { "scribe.task": "start", "scribe.hint": "steer", "scribe.halt": "stop", "scribe.judged": "start" },
       returns: "scribe.done",
       budget: { usd: 1, turns: 10, wallClock: "10m" },
-      // note.hidden is an effect Scribe may request but not a tool: the model is never offered it.
-      effects: ["note.keyed", "note.plain", "note.approved", "note.silent", "note.hidden"],
+      // note.hidden is an effect Scribe may request but not a tool: the model is never offered it. Nor is judge.task, a
+      // decision whose result starts a session.
+      effects: ["note.keyed", "note.plain", "note.approved", "note.silent", "note.hidden", "judge.task"],
       tools: ["note.keyed", "note.plain", "note.approved", "note.silent"],
     },
     Builder: {
@@ -164,6 +168,14 @@ export const system = defineSystem({
     // No result message: only the session's probe can bring its outcome back to the session.
     "note.silent": { description: "Write a note a person must approve first, with no result message", idempotency: "key", approval: "human", input: z.object({ text: z.string() }) },
     "note.hidden": { description: "Write a note no tool offers", idempotency: "key", input: z.object({ text: z.string() }) },
+    "judge.task": {
+      description: "Judge whether a task is ready",
+      kind: "decision",
+      model: "@cf/cloudflare/clef-flash",
+      idempotency: "key",
+      result: "scribe.judged",
+      questions: { route: { type: "choice", instructions: "How should a software factory handle this issue?", criteria: { ready: "Clear enough to implement now", needs_info: "Missing information the factory must ask for", not_for_factory: "Needs a human: design, policy, or out of scope" } } },
+    },
     // Tests install approvalEmail with a fake send binding (overrideEffect); none is registered here.
     "notify.approval": { description: "Email the owner that an approval is waiting", idempotency: "none" },
   },
@@ -207,6 +219,8 @@ export const system = defineSystem({
     { from: "Scribe", message: "agent.failed", to: "Scribe" },
     { from: "Scribe", message: "agent.exhausted", to: "Scribe" },
     { from: "Scribe", message: "scribe.noted", to: "Scribe" },
+    { from: "@ingress", message: "scribe.judge", to: "Scribe" },
+    { from: "Scribe", message: "scribe.judged", to: "Scribe" },
     { from: "@ingress", message: "builder.task", to: "Builder" },
     { from: "Builder", message: "builder.done", to: "Builder" },
     { from: "Builder", message: "agent.failed", to: "Builder" },
@@ -224,7 +238,7 @@ const forcedShadowResult = { ...system, effects: { ...system.effects, "decide.sh
 const systemFor = (name: string | undefined): typeof system => (name?.startsWith("quiet-") ? unnotified : name?.startsWith("forced-") ? forcedShadowResult : system);
 
 /** The Workers AI binding the decision adapters call: each test scripts globalThis.__probeAi ([decision-*]). */
-const stubAi: WorkersAI = {
+export const stubAi: WorkersAI = {
   async run(model, body) {
     const script = (globalThis as { __probeAi?: (model: string, body: unknown) => unknown }).__probeAi;
     if (!script) throw new Error("stub Workers AI: no __probeAi scripted");
@@ -233,11 +247,32 @@ const stubAi: WorkersAI = {
 };
 
 /**
- * A decision's or an extraction's result: kept for the test. Keys starting "try-approve" also try ctx.approve and
- * ctx.deny on this instance's parked gateway.approval, and keep what each did ([decision-cannot-approve]).
+ * The R2 bucket "inputs-…" instances give the decision adapters: what each put, by object key, in globalThis.__probeInputs
+ * ([decision-inputs]).
  */
-function answered(message: string, payload: z.infer<typeof Outcome>, ctx: HandlerContext<typeof system, "Probe">): void {
+const stubInputs: DecisionInputs = {
+  async put(key, value, options) {
+    const shared = globalThis as { __probeInputs?: Record<string, { value: string; options: unknown }> };
+    shared.__probeInputs = { ...shared.__probeInputs, [key]: { value, options } };
+  },
+};
+
+/**
+ * A decision's or an extraction's result: kept for the test. Keys starting "try-approve" also try ctx.approve and
+ * ctx.deny on this instance's parked gateway.approval, and keep what each did ([decision-cannot-approve]). Keys starting
+ * "try-decide" call the runtime's own decide (`decide`, ActorRuntime.decide) to approve it, without awaiting, and keep
+ * whether it was refused ([decide-in-handler]).
+ */
+function answered(message: string, payload: z.infer<typeof Outcome>, ctx: HandlerContext<typeof system, "Probe">, decide: (key: string) => Promise<unknown>): void {
   const tried: Record<string, string> = {};
+  if (payload.key.startsWith("try-decide")) {
+    try {
+      decide(ctx.key).catch(() => {});
+      tried.decide = "not refused";
+    } catch (err) {
+      tried.decide = (err as Error).message;
+    }
+  }
   if (payload.key.startsWith("try-approve")) {
     for (const [call, run] of [
       ["approve", () => ctx.approve("gateway.approval", ctx.key)],
@@ -408,8 +443,12 @@ export class Probe extends DurableObject<Env> {
     "probe.decide": ({ payload }, ctx) => {
       ctx.effect(payload.effect, { state: payload.state }, { key: payload.key });
     },
-    "probe.decided": ({ type, payload }, ctx) => answered(type, payload, ctx),
-    "probe.extracted": ({ type, payload }, ctx) => answered(type, payload, ctx),
+    // "try-decide-late…" keys call decide after an await: past the handler's synchronous run, still in its transaction.
+    "probe.decided": async ({ type, payload }, ctx) => {
+      if (payload.key.startsWith("try-decide-late")) await Promise.resolve();
+      answered(type, payload, ctx, (k) => this.actor.decide(k, "approve"));
+    },
+    "probe.extracted": ({ type, payload }, ctx) => answered(type, payload, ctx, (k) => this.actor.decide(k, "approve")),
     // Labels a recorded decision or extraction; a bad label throws, and this delivery fails ([decision-labels]).
     "probe.label": ({ payload }, ctx) => {
       if (payload.action !== undefined) ctx.acted(payload.decision, payload.action);
@@ -497,7 +536,8 @@ export class Probe extends DurableObject<Env> {
     },
   }, {
     backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40, // a test can hold a retry back
-    effects: decisionAdapters(systemFor(this.ctx.id.name), { ai: stubAi }),
+    // "inputs-…" instances keep each request body in a stub R2 bucket ([decision-inputs]).
+    effects: decisionAdapters(systemFor(this.ctx.id.name), { ai: stubAi, ...(this.ctx.id.name?.startsWith("inputs-") ? { inputs: stubInputs } : {}) }),
   });
 
   receive(envelope: Envelope) {

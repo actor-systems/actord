@@ -18,6 +18,8 @@ import { system } from "./src/index.ts";
 const scribe = (key: string) => env.SCRIBE.getByName(key);
 type Script = (request: ScriptedRequest) => ScriptedTurn | Promise<ScriptedTurn>;
 const shared = globalThis as { __scribeToolGates?: Record<string, () => Promise<void>>; __scribeScripts?: Record<string, Script>; __scribeInstructions?: Record<string, string>; __scribeNotedThrows?: Record<string, number>; __scribes?: Record<string, Scribe> };
+/** The Workers AI stub the decision adapters call (test-runtime/src/index.ts), for Scribe's judge.task. */
+const ai = globalThis as { __probeAi?: (model: string, body: unknown) => unknown };
 
 /** Answer each model request of instance `name` with `script` (Scribe reads it at every request). */
 function script(name: string, fn: Script): void {
@@ -58,6 +60,7 @@ const gates: Array<() => void> = [];
 afterEach(() => {
   for (const open of gates.splice(0)) open();
   resetSeams();
+  delete ai.__probeAi;
 });
 
 const finish = (args: unknown): ScriptedTurn => ({ calls: [{ name: "finish", args }] });
@@ -792,6 +795,38 @@ for (const [how, reason] of [["stopped", "the session was stopped"], ["replaced"
     expect((await s.done()).map((d) => d.summary)).toEqual(how === "stopped" ? [] : ["second"]);
   }, 20_000);
 }
+
+// see [crash-loop-parked]
+it("[agent-decision-starts-session] an agent whose `on` starts a session from its own decision's result replaces a session parked on a tool approval, and withdraws that approval", async () => {
+  const events = captureEvents();
+  const name = "judged-start";
+  const requests: ScriptedRequest[] = [];
+  script(name, (r) => {
+    requests.push(r);
+    if ((users(r)[0] ?? "").startsWith("scribe.judged")) return finish({ summary: "judged" });
+    return r.lastToolResults.length === 0 ? call("note_approved", { text: "j" }) : { text: "Waiting for the approval." };
+  });
+  const s = scribe(name);
+  await task(name, "first", "task-judged1");
+  await eventually(async () => expect(requests.length).toBeGreaterThanOrEqual(2), 4000);
+  const [row] = await s.sessions();
+  const key = `${row!.session}:${toolResults(requests[1]!)[0]!.toolCallId}`;
+  expect(await effectRow(name, "note.approved", key)).toMatchObject({ status: "awaiting_approval" });
+  await runEnded(name, row!.session as string, "task-judged1");
+  // judge.task (a decision) answers; its result, scribe.judged, is a decision's result, and Scribe's `on` starts a
+  // session with it. Starting one withdraws the replaced session's approvals: machinery, not the decision approving.
+  ai.__probeAi = () => ({ model: "clef-flash", answers: { route: { type: "choice", choice: "ready", probabilities: { ready: 0.7106, needs_info: 0.1192, not_for_factory: 0.1702 }, confidence: 0.3222 } }, usage: { input_tokens: 335, output_tokens: 0 } });
+  expect(await ingress(env, system, "Scribe", "scribe.judge", { key: "judge-1", state: "Issue #77" }, { key: name })).toMatchObject({ status: "handled" });
+  await eventually(async () => expect(await effectRow(name, "note.approved", key)).toMatchObject({ status: "denied", last_error: "the session was replaced" }), 4000);
+  expect(events.filter((e) => e.kind === "effect.denied" && e.actor === `Scribe:${name}`)).toMatchObject([{ effect: "note.approved", effectKey: key, reason: "the session was replaced" }]);
+  await eventually(async () => expect((await s.done()).map((d) => d.summary)).toEqual(["judged"]), 4000);
+  const sessions = await s.sessions();
+  expect(sessions.map((x) => x.generation)).toEqual([1, 2]);
+  expect(events.filter((e) => e.kind === "failed" && e.actor === `Scribe:${name}`)).toEqual([]);
+  // The decision's result still can't approve or deny in the actor's own handlers: only the runtime's withdrawal passes.
+  expect(await s.decide(key, "approve")).toMatchObject({ status: "denied", key });
+  expect(await s.noted()).toEqual([]);
+}, 20_000);
 
 // see [crash-loop-parked]
 it("[agent-steer-while-awaiting-approval] a steer to a session idle on a tool that waits for a person reaches the model, and the session still finishes once the effect is approved", async () => {
