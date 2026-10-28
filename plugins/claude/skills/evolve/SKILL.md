@@ -17,7 +17,11 @@ Rules that hold for this whole skill:
 - **Never imply a deploy can be undone automatically.** Deleting an actor class destroys its data; a
   rollback can't cross a Durable Object lifecycle change.
 - Flag every change that is breaking, needs approval, or is irreversible, as `actord diff` classifies it.
-- Keep in-flight messages in mind: anything already queued must still be accepted after the deploy.
+- Keep in-flight work in mind: anything already queued, including timers already set, must still be accepted
+  after the deploy. Waiting jobs keep their deadline, parked approvals their expiry, and running agent sessions
+  their model and instructions.
+- **Never promise the new code is live on a running agent.** A deploy reaches a busy agent late, when its object
+  restarts (`references/compatibility.md`).
 
 ## Changes since the last commit
 
@@ -25,7 +29,8 @@ Rules that hold for this whole skill:
 
 ## Steps
 
-1. **State the change** and what must keep working (running schedules, queued messages, stored state).
+1. **State the change** and what must keep working (running schedules, queued messages, stored state, waiting
+   jobs and approvals, running agent sessions, recorded decisions).
 2. **Change the declaration first** (`system.ts`, `src/messages/`). Prefer additive changes: new optional
    fields, new messages, new routes. A receiver accepts one version of a message at a time, so a version
    bump refuses every queued copy. For an incompatible payload change, keep the new schema accepting the
@@ -38,13 +43,16 @@ Rules that hold for this whole skill:
 5. **Classify, then record:** run `actord diff` first. It compares against the manifest committed at `HEAD`,
    or, where git isn't usable, against `actord.manifest.json` on disk, which the next command overwrites.
    Then run `actord graph --write` and `actord verify`. Read `references/compatibility.md` for what each
-   class means on Cloudflare.
+   class means on Cloudflare, including the `agent.*`, `source.*` and job and decision `effect.*` changes. To try
+   a new model on a decision, add a new shadow effect beside it rather than changing `model` in place: the
+   scorecard mixes models within one effect.
 
 ## Output (done when shown)
 
 - The **semantic diff**: each change with its class (compatible, breaking, or risky), approval required,
   irreversible.
-- **Compatibility analysis:** in-flight messages, stored data, schedules, and external effects.
+- **Compatibility analysis:** in-flight messages, stored data, schedules and timers, waiting jobs and approvals,
+  running agent sessions, provider webhooks, and external effects.
 - **Tests and verify verdict:** what was run, with the real result.
 - The **deploy plan** from `actord diff`: config steps, drains, approvals, then "a person runs
   `npx wrangler deploy`". State plainly that nothing was deployed.
