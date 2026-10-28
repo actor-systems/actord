@@ -52,21 +52,31 @@ const article = (word: string) => (/^[aeiou]/.test(word) ? "an" : "a");
 const kindOf = (v: unknown) =>
   v === null ? "null" : Array.isArray(v) ? "a list" : typeof v === "number" && !Number.isFinite(v) ? "a number that isn't finite" : typeof v === "object" ? "an object" : `${article(typeof v)} ${typeof v}`;
 
-/** Whether `value` is what Clairic gives for a field of this type. Null, "not determined", is every type's. */
-function valueFits(field: ClairicField, value: unknown): boolean {
-  if (value === null) return true;
+/** An estimate's value, or one step of a forecast's: a date string for a range of dates (`min` a date string), else a number. */
+const pointFits = (field: ClairicField, v: unknown) => (typeof field.min === "string" ? typeof v === "string" : isFiniteNumber(v));
+
+/**
+ * What kind of value `value` is when it isn't what Clairic gives for a field of this type, or null when it is. Null,
+ * "not determined", is every type's. The shapes are spike 7's, from live calls of every type (R10).
+ */
+function misfit(field: ClairicField, value: unknown): string | null {
+  if (value === null) return null;
   switch (field.type) {
     case "number":
-    case "duration":
-      return isFiniteNumber(value);
+    case "duration": // seconds
+      return isFiniteNumber(value) ? null : kindOf(value);
     case "list":
-      return Array.isArray(value);
+      return Array.isArray(value) ? null : kindOf(value);
     case "estimate":
-    case "forecast":
-      // A range of dates (min given as a date string) estimates a date; any other range, a number.
-      return typeof field.min === "string" ? typeof value === "string" : isFiniteNumber(value);
+      return pointFits(field, value) ? null : kindOf(value);
+    case "forecast": {
+      // One entry per step (its horizon), with each step's detail in `steps`. The length isn't checked.
+      if (!Array.isArray(value)) return kindOf(value);
+      const bad = value.findIndex((v) => !pointFits(field, v));
+      return bad === -1 ? null : `a list holding ${kindOf(value[bad])}`;
+    }
     default: // text, date, time, datetime
-      return typeof value === "string";
+      return typeof value === "string" ? null : kindOf(value);
   }
 }
 
@@ -113,8 +123,8 @@ function validateAnswers(effect: string, answers: Record<string, unknown>, quest
     if (!("value" in answer)) throw new EffectRejected(`${effect}: field "${id}" has no "value" key`);
     if (answer.type !== field.type)
       throw new EffectRejected(`${effect}: field "${id}" is declared ${field.type} but the answer's type is ${String(answer.type)}`);
-    if (!valueFits(field, answer.value))
-      throw new EffectRejected(`${effect}: field "${id}" is ${article(field.type)} ${field.type} field, but its value is ${kindOf(answer.value)}`);
+    const wrong = misfit(field, answer.value);
+    if (wrong !== null) throw new EffectRejected(`${effect}: field "${id}" is ${article(field.type)} ${field.type} field, but its value is ${wrong}`);
   }
 }
 

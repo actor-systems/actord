@@ -11,6 +11,19 @@ const clefResponse = fixture("clef-flash-response.json");
 clefResponse.answers.clarity = { type: "score", score: 1.4, legend: { "0": "murky", "1": "ok", "2": "clear" }, probabilities: { "0": 0.1, "1": 0.5, "2": 0.4 }, confidence: 0.5 };
 const clairicResponse = fixture("clairic-response.json");
 const scoreResponse = fixture("clef-flash-score-response.json");
+// R10: a live Clairic call through the AI binding with a field of each type spike 7's first call didn't cover.
+const typesResponse = fixture("clairic-types-response.json");
+// That call's fields, as clairic-types-req.json sent them.
+const liveFields = {
+  t: { type: "time", instructions: "When the nightly job runs" },
+  dt: { type: "datetime", instructions: "When the CI run started" },
+  dur: { type: "duration", unit: "seconds", instructions: "How long the CI run took" },
+  est: { type: "estimate", min: 0, max: 10, step: 1, instructions: "Estimated days for a PR review" },
+  fc: { type: "forecast", min: 0, max: 2000, horizon: 3, interval: "month", instructions: "Monthly CI minutes for the next three months" },
+  num: { type: "number", integer: true, instructions: "The CI run id" },
+  lst: { type: "list", items: "number", instructions: "The monthly CI minutes" },
+  dl: { type: "date", instructions: "The date the CI run started" },
+} as const;
 // The questions of the live call that produced the score fixture.
 const scoreQuestions = {
   risk: { type: "score", instructions: "How risky is merging this change?", criteria: ["No risk", "Low", "Medium", "High"] },
@@ -26,8 +39,9 @@ const fields = {
   failing_check: { type: "text", instructions: "The verify check that failed" },
   run_id: { type: "number", integer: true },
 } as const;
-// One field of every Clairic type, for the value checks. Spike 7's live call (clairic-response.json) answered text,
-// number, list and date; the other types' answers are written in the published schema's { type, value } shape.
+// One field of every Clairic type, for the value checks, with answers in the shapes spike 7's live calls returned
+// (clairic-response.json, clairic-types-response.json). A forecast's value is one entry per step: numbers, or date
+// strings for a range of dates.
 const typedFields = {
   failing_check: { type: "text" },
   run_id: { type: "number", integer: true },
@@ -39,6 +53,7 @@ const typedFields = {
   cost: { type: "estimate", min: 0, max: 1000 },
   ships_on: { type: "estimate", min: "2026-01-01", max: "2027-12-31" },
   load: { type: "forecast", min: 0, max: 100, horizon: 4 },
+  renewals: { type: "forecast", min: "2026-01-01", max: "2028-12-31", horizon: 2 },
 } as const;
 const typedAnswers = {
   failing_check: clairicResponse.answers.failing_check,
@@ -50,7 +65,8 @@ const typedAnswers = {
   took: { type: "duration", value: 5400, confidence: 0.66, p_null: 0.2 },
   cost: { type: "estimate", value: 120.5, mean: 130, median: 120.5, p10: 80, p90: 210, confidence: 0.4 },
   ships_on: { type: "estimate", value: "2026-12-01", confidence: 0.35 },
-  load: { type: "forecast", value: 42, confidence: 0.3 },
+  load: { type: "forecast", value: [42, 44.5, 47, 51], median: [42, 44, 47, 50], p10: [35, 36, 37, 38], p90: [50, 53, 57, 62] },
+  renewals: { type: "forecast", value: ["2026-12-01", "2027-12-01"] },
 };
 
 const system = defineSystem({
@@ -62,6 +78,7 @@ const system = defineSystem({
     parse: { kind: "extraction", model: "@cf/cloudflare/clairic", fields },
     risk: { kind: "decision", model: "@cf/cloudflare/clef-flash", questions: scoreQuestions },
     typed: { kind: "extraction", model: "@cf/cloudflare/clairic", fields: typedFields },
+    live: { kind: "extraction", model: "@cf/cloudflare/clairic", fields: liveFields },
     mail: { target: "mail" },
   },
   routes: [],
@@ -80,7 +97,7 @@ const sha = async (text: string) => [...new Uint8Array(await crypto.subtle.diges
 
 describe("decisionAdapters", () => {
   it("makes adapters only for decisions and extractions", () => {
-    expect(Object.keys(decisionAdapters(system, { ai: fakeAI({}).ai })).sort()).toEqual(["parse", "risk", "triage", "typed"]);
+    expect(Object.keys(decisionAdapters(system, { ai: fakeAI({}).ai })).sort()).toEqual(["live", "parse", "risk", "triage", "typed"]);
   });
 
   it("prices the three models", () => {
@@ -214,8 +231,10 @@ describe("decisionAdapters", () => {
       ["took", "90m", "a string"],
       ["cost", "120.5", "a string"],
       ["ships_on", 20261201, "a number"],
-      ["load", [42, 43], "a list"],
+      ["load", 42, "a number"],
+      ["load", [42, "44.5", 47], "a list holding a string"],
       ["load", true, "a boolean"],
+      ["renewals", [20261201, 20271201], "a list holding a number"],
     ] as const)
       it(`${/^[aeiou]/.test((typedFields as Record<string, { type: string }>)[name]!.type) ? "an" : "a"} ${(typedFields as Record<string, { type: string }>)[name]!.type} field whose value is ${kind}`, async () => {
         const answer = { ...(typedAnswers as Record<string, object>)[name], value };
@@ -227,6 +246,26 @@ describe("decisionAdapters", () => {
       const { type: _t, ...untyped } = clairicResponse.answers.run_id;
       await reject(run("parse", { ...clairicResponse, answers: { ...clairicResponse.answers, run_id: untyped } }), 'field "run_id" is declared number but the answer\'s type is undefined');
     });
+  });
+
+  it("accepts every field of the live all-types Clairic response (R10), and rejects a forecast that isn't a list of numbers", async () => {
+    const run = (response: unknown) => decisionAdapters(system, { ai: fakeAI(response).ai }).live!.run({ state: "s", referenceDate: "2026-10-28" }, ctx().ctx);
+    const value = (await run(typesResponse)) as DecisionValue;
+    expect(value.answers).toEqual(typesResponse.answers);
+    expect(value.truncated).toBe(false);
+    expect(value.usage).toEqual({ inputTokens: 785, outputTokens: 0 });
+    // The forecast's value: one number per step, horizon 3.
+    expect(typesResponse.answers.fc.value).toHaveLength(3);
+    const fc = typesResponse.answers.fc;
+    for (const [bad, kind] of [
+      [fc.value[0], "a number"],
+      [[fc.value[0], String(fc.value[1]), fc.value[2]], "a list holding a string"],
+      [[fc.value[0], null, fc.value[2]], "a list holding null"],
+    ] as const) {
+      const error = await run({ ...typesResponse, answers: { ...typesResponse.answers, fc: { ...fc, value: bad } } }).then(() => null, (e) => e);
+      expect(rejected(error), kind).toBe(true);
+      expect((error as Error).message).toBe(`live: field "fc" is a forecast field, but its value is ${kind}`);
+    }
   });
 
   it("accepts every Clairic type's value, and null for any of them", async () => {
