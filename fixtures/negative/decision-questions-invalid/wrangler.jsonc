@@ -1,5 +1,5 @@
 {
-  "name": "fixture-job-deadline-missing",
+  "name": "fixture-decision-questions-invalid",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "durable_objects": {

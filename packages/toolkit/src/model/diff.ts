@@ -233,7 +233,7 @@ function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
   if (b.kind !== h.kind)
     add("effect.kind", s, "risky", `Kind ${b.kind} → ${h.kind}; effects already in flight change how they settle (a job already waiting can't be settled by ctx.settleJob once the effect is a call, and waits out its deadline)`);
   if ((b.model ?? null) !== (h.model ?? null))
-    add("effect.model", s, "risky", `Model ${b.model ?? "none"} → ${h.model ?? "none"}; answers change, and a decision's probabilities aren't comparable across models`);
+    add("effect.model", s, "risky", `Model ${b.model ?? "none"} → ${h.model ?? "none"}; answers change, and an answer's probabilities or confidences aren't comparable across models`);
   if (show(b.questions ?? null) !== show(h.questions ?? null)) add("effect.questions", s, "risky", "The questions a decision asks changed; answers already recorded were to the old questions");
   if (show(b.fields ?? null) !== show(h.fields ?? null)) add("effect.fields", s, "risky", "The fields an extraction returns changed; results already recorded have the old shape");
   if ((b.mode ?? null) !== (h.mode ?? null)) {

@@ -355,7 +355,6 @@ function sortDiagnostics(d: Diagnostic[]): Diagnostic[] {
   return d.sort((a, b) => rank(a) - rank(b) || cmp(a.code, b.code) || cmp(a.subject ?? "", b.subject ?? "") || cmp(a.message, b.message));
 }
 
-
 const CLEF_MODELS = ["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"];
 const CLAIRIC_MODEL = "@cf/cloudflare/clairic";
 const QUESTION_ID = /^[A-Za-z0-9_.-]{1,100}$/;
@@ -399,17 +398,19 @@ function checkDecisionEffect(e: ManifestEffect, add: AddFn) {
   if (decision ? e.model === null || !CLEF_MODELS.includes(e.model) : e.model !== CLAIRIC_MODEL)
     add("error", "DECISION_MODEL_UNKNOWN", e.name, `${e.name} is a ${label} with model ${e.model === null ? "none" : `"${e.model}"`}`, `Use model: ${decision ? CLEF_MODELS.map((x) => `"${x}"`).join(" or ") : `"${CLAIRIC_MODEL}"`}.`);
   if (decision) {
-    const entries = e.questions === null ? [] : Object.entries(e.questions);
-    const problem = e.questions === null ? "it declares no questions" : entries.length < 1 || entries.length > 64 ? `it declares ${entries.length} questions; Clef takes 1 to 64` : entries.map(([id, q]) => questionProblem(id, q)).find((p) => p !== null);
+    const entries = e.questions === null || Array.isArray(e.questions) ? [] : Object.entries(e.questions);
+    const problem = e.questions === null ? "it declares no questions" : Array.isArray(e.questions) ? "questions is a list; declare an object keyed by question id" : entries.length < 1 || entries.length > 64 ? `it declares ${entries.length} questions; Clef takes 1 to 64` : entries.map(([id, q]) => questionProblem(id, q)).find((p) => p !== null);
     if (problem) add("error", "DECISION_QUESTIONS_INVALID", e.name, `${e.name}: ${problem}`, `Declare 1 to 64 questions, each noul, choice (2 to 255 options) or score (2 to 10 levels), with instructions.`);
+    if (e.mode !== "act" && e.mode !== "shadow")
+      add("error", "DECISION_MODE_INVALID", e.name, `${e.name} has mode ${JSON.stringify(e.mode)}; a typo here would silently act on the answer`, `Use mode: "act" or mode: "shadow".`);
     if (e.mode === "shadow" && e.result)
       add("error", "DECISION_SHADOW_RESULT", e.name, `${e.name} is a shadow decision but delivers ${e.result}; a shadow answer is recorded for the scorecard and never delivered`, `Remove result, or set mode: "act".`);
     if (e.mode !== "shadow" && !e.result)
       add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an act-mode decision with no result, so the actor would never see the answer`, `Add result: "<message>", or set mode: "shadow" to only record it.`);
     if (e.fields !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a decision but declares fields, which only an extraction uses`, `Use questions, or make it an extraction.`);
   } else {
-    const entries = e.fields === null ? [] : Object.entries(e.fields);
-    const problem = entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
+    const entries = e.fields === null || Array.isArray(e.fields) ? [] : Object.entries(e.fields);
+    const problem = Array.isArray(e.fields) ? "fields is a list; declare an object keyed by field name" : entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
     if (problem) add("error", "EXTRACTION_FIELDS_INVALID", e.name, `${e.name}: ${problem}`, `Declare at least one field; see the Clairic field types and limits.`);
     if (!e.result) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
     for (const f of ["questions", "mode"] as const)

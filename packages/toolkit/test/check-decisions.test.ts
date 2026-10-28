@@ -114,6 +114,16 @@ describe("decision and extraction checks", () => {
     expect(codes(extraction({ fields: { x: { type: "forecast", min: 0, max: 1, horizon: 0 } } }))).toEqual(FIELDS);
   });
 
+  it("DECISION_QUESTIONS_INVALID and EXTRACTION_FIELDS_INVALID: a list is not a record", () => {
+    expect(codes(decision({ questions: [{ type: "noul", instructions: "Is it?" }] as never }))).toEqual(QUESTIONS);
+    expect(codes(extraction({ fields: [{ type: "text" }] as never }))).toEqual(FIELDS);
+  });
+
+  it("DECISION_MODE_INVALID: a typo never silently acts", () => {
+    expect(codes(decision({ mode: "shadwo" as never }))).toEqual(["error:DECISION_MODE_INVALID"]);
+    expect(codes(decision({ mode: "act" }))).toEqual([]);
+  });
+
   it("DECISION_SHADOW_RESULT: a shadow decision's answer is never delivered", () => {
     expect(codes(decision({ mode: "shadow" }))).toEqual(["error:DECISION_SHADOW_RESULT"]);
     expect(codes(decision({ mode: "shadow", result: undefined }))).toEqual([]);
@@ -135,8 +145,8 @@ describe("decision and extraction checks", () => {
   });
 
   it("DECISION_PUBLISHES: a decision or extraction is a pure read", () => {
-    expect(codes(decision({ publishes: true }))).toContain("error:DECISION_PUBLISHES");
-    expect(codes(extraction({ publishes: true }))).toContain("error:DECISION_PUBLISHES");
+    expect(codes(decision({ publishes: true }))).toEqual(["error:DECISION_PUBLISHES"]);
+    expect(codes(extraction({ publishes: true }))).toEqual(["error:DECISION_PUBLISHES"]);
   });
 
   it("DECISION_RESULT_MISSING: an act decision or an extraction nobody hears from is a warning", () => {
