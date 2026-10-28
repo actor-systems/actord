@@ -1,6 +1,7 @@
 // Every fenced ts block whose first line is `// actord:check` in the shipped plugin skills is typechecked against
-// the built @actord/toolkit types, so a skill cannot teach an API the toolkit no longer has.
-// `// actord:check system` names a block `system.ts`, which sibling blocks of the same file may import as "./system".
+// the built @actord/toolkit types and the real Workers runtime types, so a skill cannot teach an API the toolkit no
+// longer has, or a call a user's project rejects. `// actord:check system` names a block `system.ts`, which sibling
+// blocks of the same file may import as "./system"; the built `actord check` also loads each one under Node.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
@@ -10,6 +11,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
   existsSync,
 } from "node:fs";
@@ -69,45 +71,50 @@ function blocksOf(file) {
   return out;
 }
 
-// Types for the Workers runtime are not a dependency of the toolkit, so the snippets get the small slice they use.
-// The stub is deliberately CLOSED (no index signatures): a typo like ctx.storge must fail. Extend it explicitly when
-// a snippet needs another member.
-const workersStub = `declare module "cloudflare:workers" {
-  export class DurableObject<E = Env> {
-    constructor(ctx: DurableObjectState, env: E);
-    ctx: DurableObjectState;
-    env: E;
-  }
-  export const env: Env;
+// The snippets compile against the real Workers runtime types, as a user's project does: `wrangler types` (the
+// repository's pinned wrangler and its bundled workerd, offline) generates them from this config, so `env` holds
+// workerd's own binding types (Ai, R2Bucket, SendEmail), and "cloudflare:workers", DurableObjectState and the "*.txt"
+// Text module are workerd's declarations. They are closed (no index signatures): a typo like ctx.storge fails.
+// Add a binding here when a snippet reads another one from `env`.
+const wranglerConfig = {
+  name: "skill-snippets",
+  compatibility_date: "2026-10-01",
+  ai: { binding: "AI" },
+  r2_buckets: [
+    { binding: "DECISION_INPUTS", bucket_name: "decision-inputs" },
+    { binding: "TRANSCRIPTS", bucket_name: "transcripts" },
+  ],
+  send_email: [{ name: "MAIL" }],
+  vars: { OWNER: "owner@example.com", APPROVAL_FROM: "actord@example.com" },
+};
+// Secrets come from .dev.vars, which `wrangler types` reads as it does in a project.
+const devVars = "APPROVAL_SECRET=test-secret\n";
+
+function runtimeTypes(dir) {
+  writeFileSync(join(dir, "wrangler.jsonc"), JSON.stringify(wranglerConfig));
+  writeFileSync(join(dir, ".dev.vars"), devVars);
+  // No Cloudflare credentials and an empty HOME: `wrangler types` reads only the config and its bundled workerd.
+  const run = spawnSync(
+    join(repo, "node_modules/.bin/wrangler"),
+    ["types", "--path", join(dir, "worker-configuration.d.ts")],
+    {
+      cwd: dir,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        HOME: dir,
+        TMPDIR: tmpdir(),
+        WRANGLER_SEND_METRICS: "false",
+      },
+    },
+  );
+  assert.ifError(run.error);
+  assert.equal(
+    run.status,
+    0,
+    `wrangler types failed:\n${run.stdout}${run.stderr}`,
+  );
 }
-interface DurableObjectState {
-  id: { name?: string; toString(): string };
-  waitUntil(promise: Promise<unknown>): void;
-  storage: {
-    sql: import("@actord/toolkit/runtime").SqlStorageLike;
-    transaction<T>(closure: () => Promise<T>): Promise<T>;
-    setAlarm(scheduledTime: number | Date): Promise<void>;
-    getAlarm(): Promise<number | null>;
-    deleteAlarm(): Promise<void>;
-  };
-  blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
-}
-// The bindings and vars the implement references read, each as narrow as the toolkit's own structural type.
-interface Env {
-  AI: import("@actord/toolkit/decisions").WorkersAI;
-  DECISION_INPUTS: import("@actord/toolkit/decisions").DecisionInputs;
-  TRANSCRIPTS: import("@actord/toolkit/agents").TranscriptBucket;
-  MAIL: import("@actord/toolkit/sources").SendEmailLike;
-  OWNER: string;
-  APPROVAL_FROM: string;
-  APPROVAL_SECRET: string;
-}
-// What \`wrangler types\` declares for its default Text rule: an agent's instructions file.
-declare module "*.txt" {
-  const value: string;
-  export default value;
-}
-`;
 
 const exportsMap = JSON.parse(
   readFileSync(join(toolkit, "package.json"), "utf8"),
@@ -195,7 +202,7 @@ function compileSnippets(units) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "actord-snippets-")));
   try {
     const origin = new Map();
-    writeFileSync(join(dir, "workers.d.ts"), workersStub);
+    runtimeTypes(dir);
     const dirs = new Map();
     for (const u of units) {
       if (!dirs.has(u.file)) dirs.set(u.file, join(dir, String(dirs.size)));
@@ -228,7 +235,7 @@ function compileSnippets(units) {
           typeRoots: [join(repo, "node_modules/@types")],
           paths,
         },
-        include: ["workers.d.ts", "**/*.ts"],
+        include: ["worker-configuration.d.ts", "**/*.ts"],
       }),
     );
     const tsc = spawnSync(
@@ -258,7 +265,7 @@ function compileSnippets(units) {
   }
 }
 
-test("every // actord:check block typechecks against the built toolkit types", () => {
+test("every // actord:check block typechecks against the built toolkit and the real runtime types", () => {
   const units = files.flatMap((f) =>
     blocksOf(f).map((b) => ({ ...b, file: relative(repo, f) })),
   );
@@ -281,7 +288,97 @@ test("the harness is strict: a misspelled Workers member fails to compile", () =
   assert.notEqual(
     status,
     0,
-    "a typo'd ctx member compiled: the stub is too loose",
+    "a typo'd ctx member compiled: the runtime types are too loose",
   );
   assert.match(report.join("\n"), /storge/);
+});
+
+test("the harness's env holds workerd's own binding types, not the toolkit's structural ones", () => {
+  const code = [
+    "// actord:check",
+    'import { env } from "cloudflare:workers";',
+    "export const bindings: [Ai, R2Bucket, R2Bucket, SendEmail, string] = [env.AI, env.DECISION_INPUTS, env.TRANSCRIPTS, env.MAIL, env.APPROVAL_SECRET];",
+    "",
+  ].join("\n");
+  const { status, report } = compileSnippets([
+    { file: "self-test.md", n: 1, line: 1, code },
+  ]);
+  assert.equal(status, 0, report.join("\n"));
+});
+
+// `actord check` imports system.ts under Node, so a declaration that compiles can still fail to load (an entry point
+// that reaches cloudflare:workers). Each `// actord:check system` block runs through the built CLI, alone in a temp
+// project. A lone block is only system.ts, so these errors, about files that sit next to it in a project, are expected;
+// any other error fails the gate, as does a declaration that doesn't load.
+const NOT_IN_A_BLOCK = new Map([
+  ["CONFIG_MISSING", "no wrangler.jsonc: the block is the project's only file"],
+  [
+    "AGENT_CONTAINER_CONFIG_MISSING",
+    "a Computer container is declared in wrangler.jsonc's containers, which a lone block has none of",
+  ],
+  [
+    "AGENT_INSTRUCTIONS_MISSING",
+    "an agent's instructions file sits next to system.ts, and the block doesn't carry it",
+  ],
+]);
+const cli = join(claude, "dist/actord.mjs");
+
+function checkSystem(code) {
+  assert.ok(existsSync(cli), "build first: npm run build -w @actord/toolkit");
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "actord-check-")));
+  try {
+    // @actord/toolkit (a workspace link to packages/toolkit) and zod resolve from the repository.
+    symlinkSync(join(repo, "node_modules"), join(dir, "node_modules"));
+    writeFileSync(join(dir, "package.json"), '{ "type": "module" }\n');
+    writeFileSync(join(dir, "system.ts"), code);
+    const run = spawnSync("node", [cli, "check", "--json"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.ifError(run.error);
+    let result;
+    try {
+      result = JSON.parse(run.stdout);
+    } catch {
+      return [`no JSON from actord check: ${run.stdout}${run.stderr}`];
+    }
+    return [
+      ...(result.skipped ? ["the check was skipped"] : []),
+      ...result.diagnostics
+        .filter((d) => d.severity === "error" && !NOT_IN_A_BLOCK.has(d.code))
+        .map((d) => `${d.code}: ${d.message}`),
+    ];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("actord check loads every // actord:check system block, with no error a valid declaration shouldn't produce", () => {
+  const systems = files.flatMap((f) =>
+    blocksOf(f)
+      .filter((b) => b.name === "system")
+      .map((b) => ({ ...b, file: relative(repo, f) })),
+  );
+  assert.ok(systems.length > 0, "no // actord:check system blocks found");
+  const problems = systems.flatMap((b) =>
+    checkSystem(b.code).map((p) => `${b.file} (line ${b.line}): ${p}`),
+  );
+  assert.deepEqual(problems, []);
+});
+
+test("the check pass is strict: a system.ts importing a schema from an entry point Node can't load fails", () => {
+  const code = [
+    "// actord:check system",
+    'import { defineSystem, message } from "@actord/toolkit/system";',
+    'import { approvalDecided } from "@actord/toolkit/sources";',
+    "",
+    "export default defineSystem({",
+    '  name: "self-test",',
+    '  messages: { "approval.decided": message({ version: 1, description: "The owner answered", payload: approvalDecided }) },',
+    '  actors: { Desk: { binding: "DESK", kind: "deterministic", purpose: "Applies decisions", justification: ["state"] } },',
+    '  routes: [{ from: "@ingress", message: "approval.decided", to: "Desk" }],',
+    "});",
+    "",
+  ].join("\n");
+  assert.match(checkSystem(code).join("\n"), /DECLARATION_LOAD_FAILED/);
 });
