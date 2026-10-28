@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 9a846ca Docs for plan 4: say where a shadow answer and an input are kept, and spell out the Brier scores
+== repository at 215186b Rebuild the plugin dists for plan 4's final-review fixes
 == install Claude Code 2.1.312 from npm
 2.1.312 (Claude Code)
 == marketplace add + install
@@ -138,6 +138,7 @@ not installed
     "package/dist/types/sources/email.d.ts",
     "package/dist/types/agents/git.d.ts",
     "package/dist/types/agents/index.d.ts",
+    "package/dist/types/decisions/index.d.ts",
     "package/dist/types/runtime/index.d.ts",
     "package/dist/types/sources/index.d.ts",
     "package/dist/types/runtime/jobs.d.ts",

@@ -42,10 +42,10 @@ the new `@actord/toolkit/decisions`, runs them over the Workers AI binding. Ever
 `_actors_decisions`, `ctx.acted` and `ctx.outcome` label it, and the new `actord scorecard` reports calibration from the
 local event log. A shadow decision is recorded and never delivered, and a decision's result can't approve or deny
 (decision 0020). Spike 7 read both models' schemas and called them live (`docs/evidence/spike-7-clef-clairic.md`).
-Verified from a plain clone at `9a846ca`: 60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod
-declarations for its Claude Code, 2.1.312). Every project regenerates its manifest once (`actord graph --write`).
-The plugin skills still teach the old style (plan 5). Plan 5 is next: the plugin skills, templates and eval
-scaffolds.
+Verified, after the final review's fixes, from a plain clone at `215186b`: 60 pass, 0 fail, 1 blocked
+(`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312). Every project regenerates
+its manifest once (`actord graph --write`). The plugin skills still teach the old style (plan 5). Plan 5 is next:
+the plugin skills, templates and eval scaffolds.
 
 **#80 (handler I/O) is merged, and #82 replaces its timer with an exact canary on `fix/82-canary-detector`.
 Neither is released yet.**
