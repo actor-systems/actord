@@ -71,12 +71,14 @@ import { reachedLimit, type SessionBudget, type SessionObserver, type Spent, spe
 import type { scriptedModel } from "./scripted-model.ts";
 import { effectTools, shown, type ToolSession } from "./tools.ts";
 import { type Gateway, workspaceFetch, workspaceFor, workspaceTools } from "./workspace.ts";
+import { AGENT_BUDGETS, type AgentExhausted } from "../payloads.ts";
 
 export { type ScriptedRequest, type ScriptedTurn, scriptedModel } from "./scripted-model.ts";
 export { gitClone, gitPushEffect } from "./git.ts";
 export { type Gateway, RegistryReadGateway, workspaceFetch, workspaceFor, workspaceTools } from "./workspace.ts";
 export { WorkspaceProxy } from "@cloudflare/computer";
 export { withWorkspaceContainer } from "@cloudflare/computer/backends/container";
+export { type AgentExhausted, type AgentFailed, agentExhausted, agentFailed } from "../payloads.ts";
 
 type AnySystem = System;
 
@@ -94,95 +96,10 @@ const RESULT_ENTRY = "actord.effect_result";
 /** How often a waiting session is looked at, and how long past the actor's wallClock budget its job may wait. */
 const PROBE_EVERY: Duration = "30s";
 const DEADLINE_GRACE_MS = 10 * 60_000;
-const BUDGETS = ["usd", "turns", "wallClock"] as const;
 /** The `model.reasoning` an actor declares, as pi's thinking level for its sessions. */
 const THINKING: Record<"low" | "medium" | "high", ModelThinkingLevel> = { low: "low", medium: "medium", high: "high" };
 
-// ---- The messages an agent actor receives about its sessions ----
-
-/** The payload of `agent.failed`: a session ended without a result. `session` is "" when pi never opened one. */
-export interface AgentFailed {
-  session: string;
-  key: string;
-  reason: string;
-  usage?: EffectUsage;
-}
-/** The payload of `agent.exhausted`: a session ran out of one of its actor's budgets. */
-export interface AgentExhausted {
-  session: string;
-  key: string;
-  budget: (typeof BUDGETS)[number];
-  usage?: EffectUsage;
-}
-
-type Issue = { message: string; path: [string] | [] };
-const USAGE_FIELDS = ["inputTokens", "outputTokens", "costUsd", "containerSeconds"] as const;
-
-/** Checks the fields every session message has, and copies the declared ones. */
-function sessionFields(value: unknown, issues: Issue[]): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    issues.push({ message: "expected an object", path: [] });
-    return null;
-  }
-  const v = value as Record<string, unknown>;
-  if (typeof v.session !== "string") issues.push({ message: "session: expected a string", path: ["session"] });
-  if (typeof v.key !== "string" || v.key === "") issues.push({ message: "key: expected a non-empty string", path: ["key"] });
-  if (v.usage !== undefined) {
-    const u = v.usage as Record<string, unknown> | null;
-    if (typeof u !== "object" || u === null || Array.isArray(u)) issues.push({ message: "usage: expected an object", path: ["usage"] });
-    else for (const f of USAGE_FIELDS) if (u[f] !== undefined && (typeof u[f] !== "number" || !Number.isFinite(u[f]) || (u[f] as number) < 0)) issues.push({ message: `usage.${f}: expected a finite number at or above 0`, path: ["usage"] });
-  }
-  return v;
-}
-const usageOf = (v: Record<string, unknown>) => (v.usage === undefined ? {} : { usage: Object.fromEntries(USAGE_FIELDS.filter((f) => (v.usage as Record<string, unknown>)[f] !== undefined).map((f) => [f, (v.usage as Record<string, unknown>)[f]])) });
-
-const usageJsonSchema = () => ({ type: "object", properties: Object.fromEntries(USAGE_FIELDS.map((f) => [f, { type: "number", minimum: 0 }])), additionalProperties: false });
-
-/** The Standard Schema for `agent.failed`'s payload, written by hand so apps need no schema library. */
-export const agentFailed: StandardSchemaV1<AgentFailed> = {
-  "~standard": {
-    version: 1,
-    vendor: "actord",
-    validate(value): StandardResult<AgentFailed> {
-      const issues: Issue[] = [];
-      const v = sessionFields(value, issues);
-      if (v && typeof v.reason !== "string") issues.push({ message: "reason: expected a string", path: ["reason"] });
-      if (!v || issues.length > 0) return { issues };
-      return { value: { session: v.session, key: v.key, reason: v.reason, ...usageOf(v) } as AgentFailed };
-    },
-    jsonSchema: {
-      input: () => ({
-        type: "object",
-        properties: { session: { type: "string" }, key: { type: "string", minLength: 1 }, reason: { type: "string" }, usage: usageJsonSchema() },
-        required: ["session", "key", "reason"],
-        additionalProperties: false,
-      }),
-    },
-  },
-};
-
-/** The Standard Schema for `agent.exhausted`'s payload, written by hand so apps need no schema library. */
-export const agentExhausted: StandardSchemaV1<AgentExhausted> = {
-  "~standard": {
-    version: 1,
-    vendor: "actord",
-    validate(value): StandardResult<AgentExhausted> {
-      const issues: Issue[] = [];
-      const v = sessionFields(value, issues);
-      if (v && !BUDGETS.includes(v.budget as AgentExhausted["budget"])) issues.push({ message: 'budget: expected "usd", "turns" or "wallClock"', path: ["budget"] });
-      if (!v || issues.length > 0) return { issues };
-      return { value: { session: v.session, key: v.key, budget: v.budget, ...usageOf(v) } as AgentExhausted };
-    },
-    jsonSchema: {
-      input: () => ({
-        type: "object",
-        properties: { session: { type: "string" }, key: { type: "string", minLength: 1 }, budget: { type: "string", enum: [...BUDGETS] }, usage: usageJsonSchema() },
-        required: ["session", "key", "budget"],
-        additionalProperties: false,
-      }),
-    },
-  },
-};
+// ---- The messages an agent actor receives about its sessions: AgentFailed and AgentExhausted (payloads.ts) ----
 
 /** agent.session.settled: the job's outcome, as every effect's result message carries it (a tool's result too). */
 interface Settled {
@@ -888,7 +805,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
       return send("agent.failed", { session, key, reason: `the result doesn't match ${returns}: ${validated.issues.map((i) => i.message).join("; ")}`, ...spent });
     }
     const budget = status === "failed" && error?.startsWith("exhausted:") ? error.slice("exhausted:".length) : undefined;
-    if (budget !== undefined && (BUDGETS as readonly string[]).includes(budget)) return send("agent.exhausted", { session, key, budget, ...spent });
+    if (budget !== undefined && (AGENT_BUDGETS as readonly string[]).includes(budget)) return send("agent.exhausted", { session, key, budget, ...spent });
     // A cancel of the current session is a stop: a replaced one settled above.
     send("agent.failed", { session, key, reason: status === "failed" && error === "cancelled" ? "stopped" : error || status, ...spent });
   };

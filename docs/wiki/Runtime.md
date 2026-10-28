@@ -61,6 +61,8 @@ a route sender (`@github`), and routes deliver its messages like any other. Acto
 - **`inboundEmail({ secret, owner, from, send, authserv?, message })`** names `env` entries. `actord check` warns
   when wrangler `vars` and `.dev.vars.example` don't name one of them, or `send_email` doesn't declare `send`.
   Call `handleEmail(message, env, system)` from `email()`. It accepts only the owner's reply to an approval request.
+  Declare its `message` with the `approvalDecided` schema from `@actord/toolkit/system`, and pass the payload to
+  `applyDecision(ctx, payload)` from `@actord/toolkit/sources`.
   `authserv` is optional: the name of the entry holding the trusted authserv-id. Cloudflare Email Routing's is
   `mx.cloudflare.net` (spike 6 and issue #68; see Limitations). With it, mail from the owner's address that doesn't
   authenticate as `"pass"` is refused without a reply (`source.rejected`, `unauthenticated`), and a missing or empty
@@ -93,7 +95,8 @@ Computer.
     `input`, a Standard Schema, which the model is shown as the tool's parameters.
   - `on` maps a message to `"start"`, `"steer"` or `"stop"`.
   - Routes deliver each `on` message to the actor, and `returns`, `agent.failed` and `agent.exhausted` from the actor
-    to itself. Declare the last two with the exported schemas `agentFailed` and `agentExhausted`.
+    to itself. Declare the last two with the schemas `agentFailed` and `agentExhausted`, imported from
+    `@actord/toolkit/system`: `actord check` loads `system.ts` under Node, which can't load `@actord/toolkit/agents`.
 - **The class.** `agentRuntime(host, system, actor, handlers, options)`. `handlers` cover every message except the
   `on` messages, which drive sessions; a handler for a tool effect's result message is optional.
   - `options.instructions` is the instructions text, imported as a wrangler Text module.
