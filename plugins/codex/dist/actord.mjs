@@ -1382,7 +1382,7 @@ function checkProject(project) {
             add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
       }
     }
-    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, add);
+    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, m, add);
     else if (e.questions !== null || e.fields !== null || e.mode !== null || e.model !== null)
       add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${e.kind} effect but declares ${[e.model !== null && "model", e.questions !== null && "questions", e.fields !== null && "fields", e.mode !== null && "mode"].filter(Boolean).join(", ")}, which only a decision or an extraction uses`, `Set kind: "decision" or kind: "extraction", or remove the field.`);
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
@@ -1557,9 +1557,11 @@ function fieldProblem(name, f) {
   if (f.horizon !== void 0 && !(Number.isInteger(f.horizon) && f.horizon >= 1 && f.horizon <= 64)) return `field ${name} has horizon ${String(f.horizon)}; use 1 to 64`;
   return null;
 }
-function checkDecisionEffect(e, add) {
+function checkDecisionEffect(e, m, add) {
   const decision = e.kind === "decision";
   const label2 = decision ? "decision" : "extraction";
+  const requesters = m.actors.filter((a) => a.effects.includes(e.name));
+  const toolOnly = requesters.length > 0 && requesters.every((a) => a.tools?.includes(e.name));
   if (decision ? e.model === null || !CLEF_MODELS.includes(e.model) : e.model !== CLAIRIC_MODEL)
     add("error", "DECISION_MODEL_UNKNOWN", e.name, `${e.name} is a ${label2} with model ${e.model === null ? "none" : `"${e.model}"`}`, `Use model: ${decision ? CLEF_MODELS.map((x) => `"${x}"`).join(" or ") : `"${CLAIRIC_MODEL}"`}.`);
   if (decision) {
@@ -1570,20 +1572,28 @@ function checkDecisionEffect(e, add) {
       add("error", "DECISION_MODE_INVALID", e.name, `${e.name} has mode ${JSON.stringify(e.mode)}; a typo here would silently act on the answer`, `Use mode: "act" or mode: "shadow".`);
     if (e.mode === "shadow" && e.result)
       add("error", "DECISION_SHADOW_RESULT", e.name, `${e.name} is a shadow decision but delivers ${e.result}; a shadow answer is recorded for the scorecard and never delivered`, `Remove result, or set mode: "act".`);
-    if (e.mode !== "shadow" && !e.result)
+    if (e.mode !== "shadow" && !e.result && !toolOnly)
       add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an act-mode decision with no result, so the actor would never see the answer`, `Add result: "<message>", or set mode: "shadow" to only record it.`);
     if (e.fields !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a decision but declares fields, which only an extraction uses`, `Use questions, or make it an extraction.`);
   } else {
     const entries = e.fields === null || Array.isArray(e.fields) ? [] : Object.entries(e.fields);
     const problem = Array.isArray(e.fields) ? "fields is a list; declare an object keyed by field name" : entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
     if (problem) add("error", "EXTRACTION_FIELDS_INVALID", e.name, `${e.name}: ${problem}`, `Declare at least one field; see the Clairic field types and limits.`);
-    if (!e.result) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
+    if (!e.result && !toolOnly) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
     for (const f of ["questions", "mode"])
       if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is an extraction but declares ${f}, which only a decision uses`, `Remove ${f}, or make it a decision.`);
   }
   for (const f of ["deadline", "probe", "completes"])
     if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${label2} but declares ${f}, which only a job uses`, `Remove ${f}: a ${label2} is answered within one request.`);
   if (e.publishes === true) add("error", "DECISION_PUBLISHES", e.name, `${e.name} is a ${label2} and publishes; it only reads, so nothing public can come from it`, `Remove publishes: true.`);
+  if (e.result) {
+    const result2 = e.result;
+    const others = m.effects.filter((x) => x.name !== e.name && x.result === result2).map((x) => x.name);
+    const routed = m.routes.filter((r) => r.message === result2 && r.from !== r.to).map((r) => `${r.from} \u2192 ${r.to}`);
+    const ways = [...others.length > 0 ? [`the result of ${others.join(" and ")}`] : [], ...routed.length > 0 ? [`routed ${routed.join(", ")}`] : []];
+    if (ways.length > 0)
+      add("warning", "DECISION_RESULT_SHARED", e.name, `${e.name}'s result, ${result2}, is also ${ways.join(", and ")}, so ctx.approve and ctx.deny throw in every handler of ${result2}`, `Give ${e.name} a result message of its own, routed only from ${requesters.length === 1 ? requesters[0].name : "each requesting actor"} to itself.`);
+  }
   if (e.idempotency === "none") add("warning", "DECISION_IDEMPOTENCY_NONE", e.name, `${e.name} declares idempotency: "none", but a ${label2} is a deterministic read`, `Use idempotency: "key"; a retry is always safe.`);
 }
 
@@ -3107,21 +3117,26 @@ function bins(points) {
     return { from, to, n: inBin.length, meanP: mean(inBin.map((x) => x.p)) ?? 0, observed: mean(inBin.map((x) => x.hit ? 1 : 0)) ?? 0 };
   });
 }
+var instanceKey = (e, decision) => `${e.actor}\0${decision}`;
 function scorecard(events2, opts = {}) {
   const decisions = /* @__PURE__ */ new Map();
   for (const e of events2) {
     const d = e.detail;
-    if (!d || typeof d.decision !== "string") continue;
-    if (e.kind === "decision.recorded" && !decisions.has(d.decision)) {
-      const answers = isRecord(d.answers) ? d.answers : {};
-      decisions.set(d.decision, { detail: d, answers, label: null, acted: false });
-    } else if (e.kind === "decision.acted") {
-      const x = decisions.get(d.decision);
-      if (x) x.acted = true;
-    } else if (e.kind === "decision.outcome") {
-      const x = decisions.get(d.decision);
-      if (x && isRecord(d.actual)) x.label = d.actual;
-    }
+    if (e.kind !== "decision.recorded" || !d || typeof d.decision !== "string") continue;
+    const id2 = instanceKey(e, d.decision);
+    if (decisions.has(id2)) continue;
+    const answers = isRecord(d.answers) ? d.answers : {};
+    decisions.set(id2, { detail: d, answers, label: null, acted: false });
+  }
+  let orphanLabels = 0;
+  for (const e of events2) {
+    const d = e.detail;
+    if (e.kind !== "decision.acted" && e.kind !== "decision.outcome" || !d || typeof d.decision !== "string") continue;
+    const x = decisions.get(instanceKey(e, d.decision));
+    if (!x) {
+      if (!opts.effect || e.effect === opts.effect) orphanLabels++;
+    } else if (e.kind === "decision.acted") x.acted = true;
+    else if (isRecord(d.actual)) x.label = d.actual;
   }
   const byEffect = /* @__PURE__ */ new Map();
   for (const x of decisions.values()) {
@@ -3142,7 +3157,7 @@ function scorecard(events2, opts = {}) {
       questions: [...ids.entries()].map(([id2, type]) => question(id2, type, list2))
     };
   });
-  return { effects };
+  return { effects, orphanLabels };
 }
 function question(id2, type, list2) {
   const pairs = list2.flatMap((x) => x.label && Object.hasOwn(x.label, id2) && Object.hasOwn(x.answers, id2) ? [{ a: x.answers[id2], label: x.label[id2] }] : []);
@@ -3206,15 +3221,23 @@ function renderScorecard(card) {
 }
 
 // src/cli/commands/scorecard.ts
+var plural2 = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 function scorecard2(cwd, opts) {
   const { path, root } = eventsPath(cwd, opts.file);
-  if (!path) return { data: { projectRoot: null, file: null, effects: [] }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  if (!path) return { data: { projectRoot: null, file: null, unparseable: 0, effects: [], orphanLabels: 0 }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
   const file = root ? relative5(root, path) : path;
   const log = readEvents(path);
-  if (!log) return { data: { projectRoot: root, file, effects: [] }, text: "No decisions recorded: no local events yet. Run the tests to produce .actord/events.ndjson.", exitCode: 0 };
+  if (!log) return { data: { projectRoot: root, file, unparseable: 0, effects: [], orphanLabels: 0 }, text: "No decisions recorded: no local events yet. Run the tests to produce .actord/events.ndjson.", exitCode: 0 };
   const card = scorecard(log.events, { effect: opts.effect });
-  const text = card.effects.length === 0 && opts.effect ? `No decisions or extractions recorded for effect ${opts.effect}.` : renderScorecard(card);
-  return { data: { projectRoot: root, file, ...card }, text, exitCode: 0 };
+  const table = card.effects.length === 0 && opts.effect ? `No decisions or extractions recorded for effect ${opts.effect}.` : renderScorecard(card);
+  const gaps = [
+    ...log.unparseable > 0 ? [`${plural2(log.unparseable, "line", "lines")} of the log couldn't be read`] : [],
+    ...card.orphanLabels > 0 ? [`${plural2(card.orphanLabels, "label has", "labels have")} no decision.recorded in this log`] : []
+  ];
+  const text = gaps.length > 0 ? `${table}
+
+${gaps.join("; ")}.` : table;
+  return { data: { projectRoot: root, file, unparseable: log.unparseable, ...card }, text, exitCode: 0 };
 }
 
 // src/cli/commands/verify.ts
