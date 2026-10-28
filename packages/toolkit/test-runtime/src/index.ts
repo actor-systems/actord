@@ -17,8 +17,11 @@ export const system = defineSystem({
   name: "runtime-probe",
   messages: {
     "probe.misbehave": message({ version: 1, description: "Ask for an undeclared effect", payload: z.object({}) }),
-    "probe.storage": message({ version: 1, description: "Await every storage API a handler can reach", payload: z.object({ key: z.string() }) }),
-    "probe.io": message({ version: 1, description: "Write, await something, then use ctx again", payload: z.object({ key: z.string(), io: z.enum(["wait", "timeout", "fetch", "storage", "microtasks"]) }) }),
+    "probe.storage": message({ version: 1, description: "Await every storage API a handler may await", payload: z.object({ key: z.string() }) }),
+    "probe.io": message({ version: 1, description: "Write, await something, then use ctx again", payload: z.object({ key: z.string(), io: z.enum(["wait", "timeout", "fetch", "sync", "bookmark", "transaction", "response-text", "response-json", "request-json", "storage", "microtasks"]) }) }),
+    "probe.yield": message({ version: 1, description: "Write, then await storage.sync() on the first attempt", payload: z.object({ key: z.string() }) }),
+    "probe.relay": message({ version: 1, description: "Pass a probe.yield on by a timer, to this instance, or to another", payload: z.object({ key: z.string(), via: z.enum(["timer", "self", "other"]) }) }),
+    "probe.abandon": message({ version: 1, description: "Await a nested transaction, then write directly once abandoned", payload: z.object({ key: z.string() }) }),
     "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
@@ -126,6 +129,11 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.misbehave", to: "Probe" },
     { from: "@ingress", message: "probe.storage", to: "Probe" },
     { from: "@ingress", message: "probe.io", to: "Probe" },
+    { from: "@ingress", message: "probe.yield", to: "Probe" },
+    { from: "@timer", message: "probe.yield", to: "Probe" },
+    { from: "Probe", message: "probe.yield", to: "Probe" },
+    { from: "@ingress", message: "probe.relay", to: "Probe" },
+    { from: "@ingress", message: "probe.abandon", to: "Probe" },
     { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
@@ -191,7 +199,7 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS pokes (id TEXT NOT NULL, cid TEXT)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS decided (payload TEXT NOT NULL)");
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS storage_awaits (key TEXT NOT NULL, crossed TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS storage_awaits (key TEXT NOT NULL, seen TEXT NOT NULL)");
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
@@ -200,62 +208,50 @@ export class Probe extends DurableObject<Env> {
       if (payload.after) await Promise.resolve();
       await this.actor.requestEffect("gateway.keyed", { key: payload.key }, { key: payload.key });
     },
-    // Awaits each storage API a handler can reach, through ctx or this, and a few other awaits. After each, it records
-    // whether a macrotask queued as the handler started has run (what #80's sentinel sees), and whether a transaction
-    // waiting beside the handler has run, nested in its transaction (the hazard itself). The test supplies the beside
-    // writers (__probeBeside): the first is requested from outside as the handler starts, and the next once one has run
-    // ([storage-await-no-macrotask]).
+    // Awaits each storage API a handler may await, through ctx or this, and a few other awaits that don't yield. After
+    // each, it records whether a transaction waiting beside the handler has run, nested in its transaction (the hazard
+    // the canary guards against). The test supplies the beside writers (__probeBeside): the first is requested from
+    // outside as the handler starts, and the next once one has run ([storage-awaits-allowed]). The awaits that do yield
+    // fail the delivery ([handler-io-fails-loudly]).
     "probe.storage": async ({ payload }, ctx) => {
       const beside = (globalThis as { __probeBeside?: { request(n: number): void; ran(n: number): boolean } }).__probeBeside!;
-      let turned = false;
-      const sentinel = setTimeout(() => (turned = true), 0);
       let writer = 0;
       beside.request(writer);
       const s = this.ctx.storage;
-      const seen: Record<string, { turn: boolean; beside: boolean }> = {};
+      const seen: Record<string, { beside: boolean }> = {};
       const step = async (api: string, call: () => unknown) => {
         // A microtask first, so a writer just requested has asked for its transaction before the await under test.
         await Promise.resolve();
         await call();
         const ran = beside.ran(writer);
-        seen[api] = { turn: turned, beside: ran };
+        seen[api] = { beside: ran };
         if (ran) beside.request(++writer);
       };
-      try {
-        await step("put", () => s.put("storage-probe", 1));
-        await step("put-many", () => s.put({ a: 1, b: 2 }));
-        await step("get", () => s.get("storage-probe"));
-        await step("get-many", () => s.get(["a", "b"]));
-        await step("list", () => s.list());
-        await step("delete", () => s.delete("a"));
-        await step("delete-many", () => s.delete(["b", "absent"]));
-        // Lifecycle owns the alarm: put it back as it was.
-        let alarm: number | null = null;
-        await step("getAlarm", async () => void (alarm = await s.getAlarm()));
-        await step("setAlarm", () => s.setAlarm(Date.now() + 86_400_000));
-        await step("deleteAlarm", () => s.deleteAlarm());
-        if (alarm !== null) await s.setAlarm(alarm);
-        await step("sql", () => ctx.sql.exec("SELECT COUNT(*) AS n FROM fired").toArray());
-        await step("kv.get", () => s.kv.get("storage-probe"));
-        await step("kv.put", () => s.kv.put("storage-probe-kv", 1));
-        await step("kv.delete", () => s.kv.delete("storage-probe-kv"));
-        await step("transaction", () => s.transaction(async () => s.get("storage-probe")));
-        await step("transactionSync", () => s.transactionSync(() => s.sql.exec("SELECT 1").toArray()));
-        await step("lifecycle.jobs.push", () => this.pinger.pingAt(Date.now() + 86_400_000));
-        await step("getCurrentBookmark", () => s.getCurrentBookmark());
-        await step("sync", () => s.sync());
-        // Not storage, but often awaited.
-        await step("Response.text", () => new Response("x").text());
-        await step("Response.json", () => new Response("{}").json());
-        await step("Request.json", () => new Request("https://probe/", { method: "POST", body: "{}" }).json());
-        await step("Blob.text", () => new Blob(["x"]).text());
-        await step("crypto.subtle.digest", () => crypto.subtle.digest("SHA-256", new TextEncoder().encode("x")));
-        // Not here: deleteAll() (it would delete actord's own tables), and getBookmarkForTime() and
-        // onNextSessionRestoreBookmark(), which local workerd refuses (no point-in-time recovery).
-      } finally {
-        clearTimeout(sentinel);
-      }
-      ctx.sql.exec("INSERT INTO storage_awaits (key, crossed) VALUES (?, ?)", payload.key, JSON.stringify(seen));
+      await step("put", () => s.put("storage-probe", 1));
+      await step("put-many", () => s.put({ a: 1, b: 2 }));
+      await step("get", () => s.get("storage-probe"));
+      await step("get-many", () => s.get(["a", "b"]));
+      await step("list", () => s.list());
+      await step("delete", () => s.delete("a"));
+      await step("delete-many", () => s.delete(["b", "absent"]));
+      // Lifecycle owns the alarm: put it back as it was.
+      let alarm: number | null = null;
+      await step("getAlarm", async () => void (alarm = await s.getAlarm()));
+      await step("setAlarm", () => s.setAlarm(Date.now() + 86_400_000));
+      await step("deleteAlarm", () => s.deleteAlarm());
+      if (alarm !== null) await s.setAlarm(alarm);
+      await step("sql", () => ctx.sql.exec("SELECT COUNT(*) AS n FROM fired").toArray());
+      await step("kv.get", () => s.kv.get("storage-probe"));
+      await step("kv.put", () => s.kv.put("storage-probe-kv", 1));
+      await step("kv.delete", () => s.kv.delete("storage-probe-kv"));
+      await step("transactionSync", () => s.transactionSync(() => s.sql.exec("SELECT 1").toArray()));
+      await step("lifecycle.jobs.push", () => this.pinger.pingAt(Date.now() + 86_400_000));
+      // Not storage, but often awaited.
+      await step("Blob.text", () => new Blob(["x"]).text());
+      await step("crypto.subtle.digest", () => crypto.subtle.digest("SHA-256", new TextEncoder().encode("x")));
+      // Not here: deleteAll() (it would delete actord's own tables), and getBookmarkForTime() and
+      // onNextSessionRestoreBookmark(), which local workerd refuses (no point-in-time recovery).
+      ctx.sql.exec("INSERT INTO storage_awaits (key, seen) VALUES (?, ?)", payload.key, JSON.stringify(seen));
     },
     // Writes a row and queues a message and an effect, awaits `io`, then calls every ctx method again. What each later
     // call did, and the ctx itself, go to globalThis.__probeIO[key] for the test to read: an abandoned handler (one
@@ -267,6 +263,12 @@ export class Probe extends DurableObject<Env> {
       if (io === "wait") await scheduler.wait(1);
       else if (io === "timeout") await new Promise((r) => setTimeout(r, 0));
       else if (io === "fetch") await (globalThis as { __probeFetch?: () => Promise<unknown> }).__probeFetch!();
+      else if (io === "sync") await this.ctx.storage.sync();
+      else if (io === "bookmark") await this.ctx.storage.getCurrentBookmark();
+      else if (io === "transaction") await this.ctx.storage.transaction(async () => {});
+      else if (io === "response-text") await new Response("x").text();
+      else if (io === "response-json") await new Response("{}").json();
+      else if (io === "request-json") await new Request("https://probe/", { method: "POST", body: "{}" }).json();
       else if (io === "storage") {
         await this.ctx.storage.put(`${key}:stored`, 1);
         await this.ctx.storage.get(`${key}:stored`);
@@ -293,6 +295,27 @@ export class Probe extends DurableObject<Env> {
       attempt("note", () => ctx.note("after the await"));
       const probeIO = ((globalThis as { __probeIO?: Record<string, unknown> }).__probeIO ??= {});
       probeIO[key] = { tried, readable: { self: ctx.self, key: ctx.key, now: typeof ctx.now() }, ctx };
+    },
+    // Writes a row, then awaits storage.sync(), a yield only the canary catches, on its first attempt only: a retry is
+    // handled, so the paths it fails on are left clean ([canary-every-path]).
+    "probe.yield": async ({ payload, attempt }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `${payload.key}:${attempt}`);
+      if (attempt === 1) await this.ctx.storage.sync();
+    },
+    // Passes a probe.yield on through a timer (a minute away, so only fireTimers fires it), or through the outbox to this
+    // instance or to "<key>-other".
+    "probe.relay": ({ payload: { key, via } }, ctx) => {
+      if (via === "timer") ctx.after(60_000, "probe.yield", { key }, { key });
+      else ctx.send("probe.yield", { key }, { key: via === "self" ? ctx.key : `${ctx.key}-other` });
+    },
+    // What an abandoned handler can still do ([abandoned-handler-limits]). It writes through ctx, then awaits a nested
+    // transaction that writes: the canary fails the delivery first, and the nested transaction runs after the rollback.
+    // Then it writes through this.ctx.storage directly, outside any transaction.
+    "probe.abandon": async ({ payload: { key } }, ctx) => {
+      ctx.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:ctx`);
+      await this.ctx.storage.transaction(async () => void this.ctx.storage.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:nested`));
+      this.ctx.storage.sql.exec("INSERT INTO fired (key) VALUES (?)", `${key}:direct`);
+      await this.ctx.storage.put(`${key}:put`, 1);
     },
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });
@@ -339,8 +362,10 @@ export class Probe extends DurableObject<Env> {
     "probe.tick.hourly": ({ payload }, ctx) => {
       ctx.sql.exec("INSERT INTO ticks (message, at) VALUES ('probe.tick.hourly', ?)", payload.at);
     },
-    "probe.tick.daily": (_m, ctx) => {
+    "probe.tick.daily": async (_m, ctx) => {
       ctx.sql.exec("INSERT INTO ticks (message) VALUES ('probe.tick.daily')");
+      // An instance keyed "yield-…" awaits a yield only the canary catches, so its tick fails ([canary-every-path]).
+      if (ctx.key.startsWith("yield-")) await this.ctx.storage.sync();
     },
     "probe.job.start": ({ payload }, ctx) => {
       ctx.effect("gateway.job", { key: payload.key }, { key: payload.key });

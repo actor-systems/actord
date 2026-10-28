@@ -107,16 +107,18 @@ it("[request-effect] requestEffect queues an effect from outside a handler as ct
   ]);
 });
 
-it("[request-effect-in-handler] requestEffect called from inside a handler is refused, so the delivery fails instead of hanging or running the effect before the handler commits", async () => {
+it("[request-effect-in-handler] requestEffect called as a handler runs is refused, so the delivery fails instead of hanging or running the effect before the handler commits; called after an await, the delivery fails for that await, and the abandoned handler's request is accepted", async () => {
   const refusal = "requestEffect can't be called from inside a handler (it would wait on the delivery it is part of); use ctx.effect";
   overrideEffect("gateway.keyed", { run: async () => "ran" });
-  // Called as the handler runs: refused at once.
+  // Called as the handler runs: refused at once, and nothing is queued.
   expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-now" }, { key: "nest-now" })).toMatchObject({ status: "failed", error: refusal });
-  // Called after the handler has awaited: its transaction runs nested in the handler's, finds it open, and is refused.
-  expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-later", after: true }, { key: "nest-later" })).toMatchObject({ status: "failed", error: refusal });
-  for (const key of ["nest-now", "nest-later"]) {
-    expect(await runInDurableObject(probe(key), (_i, st) => st.storage.sql.exec("SELECT id FROM _actors_outbox WHERE kind = 'effect'").toArray())).toEqual([]);
-  }
+  expect(await runInDurableObject(probe("nest-now"), (_i, st) => st.storage.sql.exec("SELECT id FROM _actors_outbox WHERE kind = 'effect'").toArray())).toEqual([]);
+  // Called after the handler has awaited: awaiting the request's own transaction yields, so the canary fails the
+  // delivery first (#82). The request's transaction then runs after the rollback, with no handler open, and is
+  // accepted: an abandoned handler's requestEffect, one of its limits in Limitations.
+  expect(await ingress(env, system, "Probe", "probe.nested", { key: "nest-later", after: true }, { key: "nest-later" })).toMatchObject({ status: "failed", error: "Probe.probe.nested: handlers may not await I/O; use ctx.effect" });
+  await settle(env, system);
+  expect(await runInDurableObject(probe("nest-later"), (_i, st) => st.storage.sql.exec("SELECT id, status FROM _actors_outbox WHERE kind = 'effect'").toArray())).toEqual([{ id: "fx:gateway.keyed:nest-later", status: "confirmed" }]);
 });
 
 it("[request-effect-beside-handler] a requestEffect made beside a handler, while its transaction is open, isn't refused: it runs after that transaction, whose rollback doesn't take it along", async () => {
@@ -156,14 +158,15 @@ it("[request-effect-beside-handler] a requestEffect made beside a handler, while
   expect(await probe("rq-wait").outcomes()).toEqual([{ key: "rq", status: "confirmed", error: null }]);
 });
 
-// What the slow probe.outcome handler awaits after it starts the beside write, before it throws. The last three are
-// awaits #80's sentinel misses ([storage-await-no-macrotask]): known, and tracked in #82.
+// What the slow probe.outcome handler awaits after it starts the beside write, before it throws. Before #82, every
+// await but microtasks let the write in, nested, and the rollback took it; #80's timer sentinel missed the last four.
 const NESTED = [
   { how: "microtasks", what: "doesn't start within the 500 microtasks the handler awaits before it throws, and commits after the rollback" },
-  { how: "io", what: "runs inside it once the handler awaits I/O, before the delivery fails for that (#80), and the rollback takes its write" },
-  { how: "sync", what: "runs inside it while the handler awaits storage.sync(), a known miss of the sentinel (#82): the handler's own throw fails the delivery, and the rollback takes its write" },
-  { how: "body", what: "runs inside it while the handler awaits a Response body read, a known miss of the sentinel (#82): the handler's own throw fails the delivery, and the rollback takes its write" },
-  { how: "transaction", what: "runs inside it while the handler awaits a nested transaction(), a known miss of the sentinel (#82): the handler's own throw fails the delivery, and the rollback takes its write" },
+  { how: "io", what: "doesn't run inside it when the handler awaits I/O: the canary, ahead of it, fails the delivery (#80, #82), and the write commits after the rollback" },
+  { how: "sync", what: "doesn't run inside it when the handler awaits storage.sync(): the canary fails the delivery (#82), and the write commits after the rollback" },
+  { how: "bookmark", what: "doesn't run inside it when the handler awaits getCurrentBookmark(): the canary fails the delivery (#82), and the write commits after the rollback" },
+  { how: "body", what: "doesn't run inside it when the handler awaits a Response body read: the canary fails the delivery (#82), and the write commits after the rollback" },
+  { how: "transaction", what: "doesn't run inside it when the handler awaits a nested transaction(): the canary fails the delivery (#82), and the write commits after the rollback" },
 ] as const;
 
 for (const { how, what } of NESTED) {
@@ -174,7 +177,7 @@ for (const { how, what } of NESTED) {
       const result = await runInDurableObject(probe(name), async (instance: { actor: { receive(e: unknown): Promise<{ status: string; error?: string }> } }, state) => {
         state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
         const db = new DurableObjectSqliteDatabase(state.storage);
-        const storage = state.storage as unknown as { sync(): Promise<void>; transaction<T>(f: () => Promise<T>): Promise<T> };
+        const storage = state.storage as unknown as { sync(): Promise<void>; getCurrentBookmark(): Promise<string>; transaction<T>(f: () => Promise<T>): Promise<T> };
         const log: string[] = [];
         // Registered here, outside any transaction: the write starts in this context, as pi's run starts its own.
         let start!: () => void;
@@ -193,11 +196,12 @@ for (const { how, what } of NESTED) {
           for (let i = 0; i < n; i++) await Promise.resolve();
         };
         // The slow probe.outcome handler awaits this inside its transaction: it starts the write, awaits `how`, then
-        // fails. After I/O it also waits for the write (or 2 s). The misses first let the write ask for its transaction.
+        // fails. After I/O it also waits for the write (or 2 s). The others first let the write ask for its transaction.
         const waits: Record<typeof how, () => Promise<unknown>> = {
           microtasks: () => microtasks(500),
           io: () => scheduler.wait(1).then(() => Promise.race([running, new Promise((r) => setTimeout(r, 2_000))])),
           sync: () => microtasks(10).then(() => storage.sync()),
+          bookmark: () => microtasks(10).then(() => storage.getCurrentBookmark()),
           body: () => microtasks(10).then(() => new Response("x").text()),
           transaction: () => microtasks(10).then(() => storage.transaction(async () => {})),
         };
@@ -220,14 +224,11 @@ for (const { how, what } of NESTED) {
       });
       if (how === "microtasks") {
         expect(result).toMatchObject({ receipt: { status: "failed", error: "the handler failed" }, log: ["handler throws", "beside runs", "beside committed"], rows: ["pi"] });
-      } else if (how === "io") {
-        // The delivery fails at the first event-loop turn, as the handler awaits. The beside write had already run nested
-        // ([sentinel-ordering]): its own commit resolved, and the rollback took its row. The handler threw later, abandoned.
-        expect(result).toMatchObject({ receipt: { status: "failed", error: "Probe.probe.outcome: handlers may not await I/O; use ctx.effect" }, log: ["beside runs", "beside committed", "handler throws"], rows: [] });
       } else {
-        // The await let the write in and finished before the sentinel ran: the delivery fails with the handler's own
-        // error, not #80's, and the rollback takes the write that was told it committed.
-        expect(result).toMatchObject({ receipt: { status: "failed", error: "the handler failed" }, log: ["beside runs", "beside committed", "handler throws"], rows: [] });
+        // The canary was requested before the handler ran, so it is ahead of the write. It runs at the handler's yield
+        // and fails the delivery, which rolls back before the write runs. The write keeps its row; the handler threw
+        // later, abandoned.
+        expect(result).toMatchObject({ receipt: { status: "failed", error: "Probe.probe.outcome: handlers may not await I/O; use ctx.effect" }, log: ["beside runs", "beside committed", "handler throws"], rows: ["pi"] });
       }
     } finally {
       delete gate.__probeGate;
@@ -235,23 +236,22 @@ for (const { how, what } of NESTED) {
   });
 }
 
-// The awaits that keep a transaction waiting beside the handler out of its transaction, and those that let it in. The
-// second still finish before a macrotask, so #80's sentinel doesn't see them (#82).
-const KEEP_OUT = ["put", "put-many", "get", "get-many", "list", "delete", "delete-many", "getAlarm", "setAlarm", "deleteAlarm", "sql", "kv.get", "kv.put", "kv.delete", "transactionSync", "lifecycle.jobs.push", "Blob.text", "crypto.subtle.digest"];
-const LET_IN = ["transaction", "getCurrentBookmark", "sync", "Response.text", "Response.json", "Request.json"];
+// The awaits a handler may make: none of them yields, so none lets a transaction waiting beside the handler into its
+// transaction, and the canary stays unrun. The awaits that yield fail the delivery ([handler-io-fails-loudly]).
+const ALLOWED = ["put", "put-many", "get", "get-many", "list", "delete", "delete-many", "getAlarm", "setAlarm", "deleteAlarm", "sql", "kv.get", "kv.put", "kv.delete", "transactionSync", "lifecycle.jobs.push", "Blob.text", "crypto.subtle.digest"];
 
-it("[storage-await-no-macrotask] no storage await a handler can make outlasts a macrotask queued as it started; most keep a transaction waiting beside it out, but a nested transaction(), sync(), getCurrentBookmark() and body reads let it in, unseen by the sentinel (#82)", async () => {
+it("[storage-awaits-allowed] the storage awaits a handler may make keep a transaction waiting beside it out, after each one, and its delivery is handled: none of them yields to the event loop", async () => {
   const shared = globalThis as { __probeBeside?: unknown };
   try {
     const result = await runInDurableObject(probe("st"), async (instance: { actor: { receive(e: unknown): Promise<{ status: string }> } }, state) => {
       state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
       const storage = state.storage as unknown as { transaction<T>(f: () => Promise<T>): Promise<T> };
-      // Beside writers, registered here outside any transaction as in [sentinel-ordering]: the handler requests the
+      // Beside writers, registered here outside any transaction as in [canary-ordering]: the handler requests the
       // first as it starts, and the next once one has run.
       const ran: boolean[] = [];
       const triggers: Array<() => void> = [];
       const writes: Array<Promise<unknown>> = [];
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 2; i++) {
         let trigger!: () => void;
         writes.push(
           new Promise<void>((r) => (trigger = r)).then(() =>
@@ -266,39 +266,29 @@ it("[storage-await-no-macrotask] no storage await a handler can make outlasts a 
       let requested = 0;
       shared.__probeBeside = { request: (n: number) => ((requested = n + 1), triggers[n]!()), ran: (n: number) => ran[n] === true };
       const receipt = await instance.actor.receive({ v: 1, id: "st-1", type: "probe.storage", version: 1, from: "@ingress", to: "Probe:st", correlationId: "st-1", causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "st" } });
-      await Promise.all(writes.slice(0, requested));
-      return { receipt, requested, seen: state.storage.sql.exec<{ crossed: string }>("SELECT crossed FROM storage_awaits").toArray().map((r) => JSON.parse(r.crossed)) };
+      // The first writer runs once the delivery has committed.
+      await writes[0];
+      return { receipt, requested, ran: ran[0] === true, seen: state.storage.sql.exec<{ seen: string }>("SELECT seen FROM storage_awaits").toArray().map((r) => JSON.parse(r.seen)) };
     });
     expect(result.receipt).toMatchObject({ status: "handled" });
-    expect(result.seen).toEqual([Object.fromEntries([...KEEP_OUT.map((api) => [api, { turn: false, beside: false }]), ...LET_IN.map((api) => [api, { turn: false, beside: true }])])]);
-    // One writer to start, one more for each await that let one in.
-    expect(result.requested).toBe(1 + LET_IN.length);
+    expect(result.seen).toEqual([Object.fromEntries(ALLOWED.map((api) => [api, { beside: false }]))]);
+    // Only the first writer was ever requested: none got in.
+    expect(result).toMatchObject({ requested: 1, ran: true });
   } finally {
     delete shared.__probeBeside;
   }
-  // The instrument works: in a transaction, the same sentinel has run once an await crosses a turn.
-  const crossed = await runInDurableObject(probe("st"), (_i, s) =>
-    (s.storage as unknown as { transaction<T>(f: () => Promise<T>): Promise<T> }).transaction(async () => {
-      let turned = false;
-      const sentinel = setTimeout(() => (turned = true), 0);
-      await scheduler.wait(1);
-      clearTimeout(sentinel);
-      return turned;
-    }),
-  );
-  expect(crossed).toBe(true);
 });
 
 // A beside writer (pi's session store, say) whose transaction is requested as the handler starts, or only once an I/O
-// callback arrives after the handler started; the handler awaits I/O, as one that fetches would. A macrotask queued as
-// the handler starts marks the first event-loop turn, where the runtime's own sentinel fails the delivery (#80).
+// callback arrives after the handler started; the handler awaits I/O, as one that fetches would. The canary, requested
+// before the handler runs, is ahead of either: at the handler's first yield it fails the delivery (#80, #82).
 for (const io of ["wait", "fetch"] as const) {
   for (const beside of ["pending", "after-io"] as const) {
     const what =
       beside === "pending"
-        ? "a transaction requested beside the handler as it starts runs nested, and is told it committed, before a macrotask queued as the handler started; the failed delivery's rollback still takes its row"
-        : "a transaction that an I/O callback arriving after the handler started begins runs after a macrotask queued as the handler started, so after the failed delivery's rollback, and commits";
-    it(`[sentinel-ordering] ${what} (the handler awaits ${io === "wait" ? "scheduler.wait(1)" : "a fetch"})`, async () => {
+        ? "a transaction requested beside the handler as it starts waits behind the canary, so it runs after the failed delivery's rollback, and commits"
+        : "a transaction that an I/O callback arriving after the handler started begins runs after the failed delivery's rollback, and commits";
+    it(`[canary-ordering] ${what} (the handler awaits ${io === "wait" ? "scheduler.wait(1)" : "a fetch"})`, async () => {
       const gate = globalThis as { __probeGate?: unknown };
       const name = `order-${io}-${beside}`;
       const yieldTo = (): Promise<unknown> => (io === "wait" ? scheduler.wait(1) : SELF.fetch("https://probe/other").then((r) => r.text()));
@@ -324,7 +314,6 @@ for (const io of ["wait", "fetch"] as const) {
           const handlerDone = new Promise<void>((r) => (thrown = r));
           gate.__probeGate = {
             then: (_resolve: () => void, reject: (err: Error) => void) => {
-              setTimeout(() => log.push("sentinel"), 0);
               if (beside === "pending") start();
               else
                 void yieldTo().then(() => {
@@ -344,19 +333,14 @@ for (const io of ["wait", "fetch"] as const) {
           const receipt = await instance.actor.receive({ v: 1, id: `${name}-1`, type: "probe.outcome", version: 1, from: `Probe:${name}`, to: `Probe:${name}`, correlationId: `${name}-1`, causationId: null, attempt: 1, sentAt: Date.now(), payload: { key: "slow-order", status: "confirmed" } });
           await written;
           await handlerDone;
-          return { receipt, log, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
+          const handlerRow = state.storage.sql.exec("SELECT 1 FROM outcomes WHERE key = 'slow-order'").toArray().length;
+          return { receipt, log, handlerRow, rows: state.storage.sql.exec<{ v: string }>("SELECT v FROM beside").toArray().map((r) => r.v) };
         });
         const at = (entry: string) => result.log.indexOf(entry);
-        expect(result.receipt).toMatchObject({ status: "failed", error: "Probe.probe.outcome: handlers may not await I/O; use ctx.effect" });
-        if (beside === "pending") {
-          expect(at("beside runs")).toBeLessThan(at("sentinel"));
-          expect(at("beside committed")).toBeLessThan(at("sentinel"));
-          expect(result.rows).toEqual([]);
-        } else {
-          expect(at("sentinel")).toBeLessThan(at("io callback"));
-          expect(at("io callback")).toBeLessThan(at("beside runs"));
-          expect(result.rows).toEqual(["pi"]);
-        }
+        // The delivery failed and rolled back; the writer's row survives it.
+        expect(result).toMatchObject({ receipt: { status: "failed", error: "Probe.probe.outcome: handlers may not await I/O; use ctx.effect" }, handlerRow: 0, rows: ["pi"] });
+        if (beside === "pending") expect(at("beside committed")).toBeLessThan(at("handler throws"));
+        else expect(at("io callback")).toBeLessThan(at("beside runs"));
       } finally {
         delete gate.__probeGate;
       }
@@ -369,7 +353,8 @@ const CTX_CLOSED = "Probe.probe.io: this handler's delivery has ended; its ctx c
 type ProbeIO = { tried: Record<string, string>; readable: { self: string; key: string; now: string }; ctx: { send(...a: unknown[]): void; effect(...a: unknown[]): void; sql: { exec(...a: unknown[]): unknown } } };
 /** What a probe.io handler recorded after its await (src/index.ts). */
 const probeIO = (key: string) => (globalThis as { __probeIO?: Record<string, ProbeIO> }).__probeIO?.[key];
-const ioCall = (key: string, io: "wait" | "timeout" | "fetch" | "storage" | "microtasks") => ingress(env, system, "Probe", "probe.io", { key, io }, { key });
+type IO = "wait" | "timeout" | "fetch" | "sync" | "bookmark" | "transaction" | "response-text" | "response-json" | "request-json" | "storage" | "microtasks";
+const ioCall = (key: string, io: IO) => ingress(env, system, "Probe", "probe.io", { key, io }, { key });
 /** What a probe.io delivery left in its instance's storage. */
 const leftBy = (key: string) =>
   runInDurableObject(probe(key), async (_i, s) => ({
@@ -382,8 +367,11 @@ const leftBy = (key: string) =>
   }));
 const NOTHING = { fired: [], effects: [], messages: 0, handled: 0, timers: [], stored: [] };
 
-for (const io of ["wait", "timeout", "fetch"] as const) {
-  it(`[handler-io-fails-loudly] a handler that awaits ${{ wait: "scheduler.wait(1)", timeout: "setTimeout(0)", fetch: "a fetch" }[io]} fails its delivery with "handlers may not await I/O", and nothing it wrote or queued commits`, async () => {
+// Every await that yields to the event loop. #80's timer sentinel caught the first three; the canary catches all (#82).
+const YIELDS = { wait: "scheduler.wait(1)", timeout: "setTimeout(0)", fetch: "a fetch", sync: "storage.sync()", bookmark: "getCurrentBookmark()", transaction: "a nested transaction()", "response-text": "a Response's text()", "response-json": "a Response's json()", "request-json": "a Request's json()" } as const;
+
+for (const io of Object.keys(YIELDS) as Array<keyof typeof YIELDS>) {
+  it(`[handler-io-fails-loudly] a handler that awaits ${YIELDS[io]} fails its delivery with "handlers may not await I/O", and nothing it wrote or queued commits`, async () => {
     const events = captureEvents();
     const key = `io-${io}`;
     const fetched = vi.fn(() => SELF.fetch("https://probe/other").then((r) => r.text()));
@@ -444,6 +432,103 @@ it("[handler-ctx-closed] once its delivery has ended, a handler's ctx refuses ev
   await settle(env, system);
   expect(await leftBy("closed-kept")).toEqual(before);
   expect(events.filter((e) => (e.kind === "sent" || e.kind === "effect.requested") && JSON.stringify(e).includes("late"))).toEqual([]);
+});
+
+type Receiver = { actor: { receive(e: unknown): Promise<{ status: string; error?: string }> } };
+const envelope = (type: string, to: string, from: string, payload: unknown) => ({ v: 1, id: `${to}-${type}`, type, version: 1, from, to, correlationId: `${to}-${type}`, causationId: null, attempt: 1, sentAt: Date.now(), payload });
+const refusedFor = (type: string) => `Probe.${type}: handlers may not await I/O; use ctx.effect`;
+
+it("[canary-every-path] the canary is on every path that runs a handler: a direct receive, an RPC delivery, a timer, the outbox drain to the same instance and to another, and a schedule's tick", async () => {
+  const events = captureEvents();
+  // probe.yield writes a row, then awaits storage.sync(), which only the canary catches, on its first attempt only.
+  const direct = await runInDurableObject(probe("yield-direct"), (instance: Receiver) => instance.actor.receive(envelope("probe.yield", "Probe:yield-direct", "@ingress", { key: "yield-direct" })));
+  expect(direct).toMatchObject({ status: "failed", error: refusedFor("probe.yield") });
+  // ingress calls the object's receive() over RPC.
+  expect(await ingress(env, system, "Probe", "probe.yield", { key: "yield-rpc" }, { key: "yield-rpc" })).toMatchObject({ status: "failed", error: refusedFor("probe.yield") });
+  // probe.relay passes a probe.yield on through a timer, or through the outbox, which the drain after its commit delivers.
+  for (const via of ["timer", "self", "other"] as const) {
+    expect(await ingress(env, system, "Probe", "probe.relay", { key: `yield-${via}`, via }, { key: `yield-${via}` })).toMatchObject({ status: "handled" });
+  }
+  expect(await fireTimers(env, system, "Probe", "yield-timer")).toBe(1);
+  // A schedule's tick: probe.tick.daily awaits storage.sync() on instances keyed "yield-…". The instance needs its
+  // runtime first.
+  expect(await ingress(env, system, "Probe", "probe.timer.cancel", { key: "none" }, { key: "yield-clock" })).toMatchObject({ status: "handled" });
+  await tick(env, system, "Probe", "yield-clock", "probe.tick.daily");
+  const failed = events.filter((e) => e.kind === "failed").map((e) => ({ type: e.type, from: e.from, to: e.to, reason: e.reason }));
+  expect(failed).toEqual(
+    expect.arrayContaining([
+      { type: "probe.yield", from: "@ingress", to: "Probe:yield-direct", reason: refusedFor("probe.yield") },
+      { type: "probe.yield", from: "@ingress", to: "Probe:yield-rpc", reason: refusedFor("probe.yield") },
+      { type: "probe.yield", from: "@timer", to: "Probe:yield-timer", reason: refusedFor("probe.yield") },
+      { type: "probe.yield", from: "Probe:yield-self", to: "Probe:yield-self", reason: refusedFor("probe.yield") },
+      { type: "probe.yield", from: "Probe:yield-other", to: "Probe:yield-other-other", reason: refusedFor("probe.yield") },
+      { type: "probe.tick.daily", from: "@clock", to: "Probe:yield-clock", reason: refusedFor("probe.tick.daily") },
+    ]),
+  );
+  expect(failed).toHaveLength(6);
+  // Each failed delivery rolled back. The retries (attempt 2) don't await, so they're handled: a timer's after
+  // fireTimers, a message's after settle. A tick isn't retried.
+  expect(await fireTimers(env, system, "Probe", "yield-timer")).toBe(1);
+  await settle(env, system);
+  const fired = (key: string) => runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key));
+  expect(await fired("yield-direct")).toEqual([]);
+  expect(await fired("yield-rpc")).toEqual([]);
+  expect(await fired("yield-timer")).toEqual(["yield-timer:2"]);
+  expect(await fired("yield-self")).toEqual(["yield-self:2"]);
+  expect(await fired("yield-other-other")).toEqual(["yield-other:2"]);
+  expect(await probe("yield-clock").ticks()).toEqual([]);
+});
+
+it("[canary-quiet] when the handler finishes first, the canary is a no-op transaction that runs once the delivery's transaction has ended, by the next turn after receive returns: it writes nothing, throws nothing and logs nothing", async () => {
+  const events = captureEvents();
+  // A first delivery constructs the instance and creates actord's tables.
+  expect(await runInDurableObject(probe("canary-quiet"), (instance: Receiver) => instance.actor.receive({ ...envelope("probe.outcome", "Probe:canary-quiet", "Probe:canary-quiet", { key: "warm", status: "confirmed" }), id: "warm" }))).toMatchObject({ status: "handled" });
+  events.length = 0;
+  const logged = [vi.spyOn(console, "log"), vi.spyOn(console, "warn"), vi.spyOn(console, "error")];
+  onTestFinished(() => logged.forEach((spy) => spy.mockRestore()));
+  const result = await runInDurableObject(probe("canary-quiet"), async (instance: Receiver, state) => {
+    // Every transaction the delivery requests, and how it settled. Only deliver and the canary request one here.
+    const calls: Array<{ settled?: string; value?: unknown }> = [];
+    const s = state.storage as unknown as { transaction: (f: () => Promise<unknown>) => Promise<unknown> };
+    const orig = s.transaction;
+    s.transaction = function (this: unknown, f: () => Promise<unknown>) {
+      const call: { settled?: string; value?: unknown } = {};
+      calls.push(call);
+      const p = orig.call(this, f);
+      p.then((value) => Object.assign(call, { settled: "resolved", value }), (err) => Object.assign(call, { settled: `rejected: ${(err as Error).message}` }));
+      return p;
+    };
+    // Rows per table: a first delivery (before the wrapper) creates actord's tables, so only the second is measured.
+    const rows = () => {
+      const tables = state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").toArray().map((t) => t.name);
+      return Object.fromEntries(tables.map((t) => [t, state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM "${t}"`).one().n]));
+    };
+    const before = rows();
+    let receipt: { status: string };
+    try {
+      receipt = await instance.actor.receive(envelope("probe.outcome", "Probe:canary-quiet", "Probe:canary-quiet", { key: "quiet", status: "confirmed" }));
+    } finally {
+      delete (s as { transaction?: unknown }).transaction;
+    }
+    // receive doesn't wait for the canary: it is queued behind whatever else waits for the object by then.
+    await new Promise((r) => setTimeout(r, 0));
+    const after = rows();
+    const changed = Object.fromEntries(Object.keys(after).filter((t) => after[t] !== before[t]).map((t) => [t, after[t]! - (before[t] ?? 0)]));
+    return { receipt, settled: calls.map((c) => c.settled), canaryValue: calls[1]?.value, changed };
+  });
+  // The delivery's own transaction and the canary both settled, the canary with nothing. The only rows written are the
+  // handler's and the inbox mark.
+  expect(result).toEqual({ receipt: { status: "handled", messageId: "Probe:canary-quiet-probe.outcome" }, settled: ["resolved", "resolved"], canaryValue: undefined, changed: { outcomes: 1, _actors_inbox: 1 } });
+  expect(events.map((e) => e.kind)).toEqual(["received", "handled"]);
+  // What was logged is those two events and nothing else.
+  expect(logged.flatMap((spy) => spy.mock.calls.map((args) => (JSON.parse(String(args[0])) as { kind: string }).kind))).toEqual(["received", "handled"]);
+});
+
+it("[abandoned-handler-limits] once the canary has failed its delivery, an abandoned handler can still write: a nested transaction it was awaiting runs after the rollback and commits, and its direct this.ctx.storage writes are accepted (its requestEffect: [request-effect-in-handler])", async () => {
+  expect(await ingress(env, system, "Probe", "probe.abandon", { key: "abandon" }, { key: "abandon" })).toMatchObject({ status: "failed", error: refusedFor("probe.abandon") });
+  await eventually(async () => expect((await leftBy("abandon")).stored).toEqual(["abandon:put"]));
+  // Its write through ctx rolled back with the delivery; the rest committed outside it.
+  expect(await leftBy("abandon")).toEqual({ ...NOTHING, fired: ["abandon:nested", "abandon:direct"], stored: ["abandon:put"] });
 });
 
 it("[restart-mid-effect] an attempt orphaned by a restart is in doubt without a key, and retried with one", async () => {
@@ -520,7 +605,7 @@ it("[lifecycle-alarm-not-held] another capability's job on the shared alarm runs
   hold.__probeHold = new Promise((r) => (open = r));
   try {
     // When it fires, it sends probe.held to "held-gate", whose delivery waits in validation until the hold opens:
-    // before its handler's transaction, so with no await in a handler for the #80 sentinel to fail.
+    // before its handler's transaction, so with no await in a handler for the canary to fail (#80, #82).
     await setTimer("held", "slow-1", 20);
     await probe("held").pingAt(Date.now() + 40); // the Pinger's job, due after actord's
     await new Promise((r) => setTimeout(r, 60));

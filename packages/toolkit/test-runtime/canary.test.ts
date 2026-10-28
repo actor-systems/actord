@@ -1,7 +1,8 @@
-// #82's experiment: can a "canary" transaction tell that a handler yielded to the event loop inside its delivery's
-// transaction, including the yields #80's setTimeout(0) sentinel misses? No runtime change: most of these probes run
-// deliver's shape directly on the object's storage (deliverLike), and [canary-real-deliver] puts a canary into the real
-// deliver from outside it. Measured in local workerd only.
+// #82's experiment, kept as pins of the workerd behaviour deliver's canary relies on: can a "canary" transaction tell
+// that a handler yielded to the event loop inside its delivery's transaction, including the yields #80's setTimeout(0)
+// sentinel missed? These probes run deliver's shape directly on the object's storage (deliverLike), with that former
+// sentinel beside the canary for comparison. The runtime's own canary is pinned in runtime.test.ts ([canary-ordering],
+// [beside-transaction-nested], [handler-io-fails-loudly], [canary-every-path]). Measured in local workerd only.
 import { env } from "cloudflare:workers";
 import { SELF, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
@@ -16,11 +17,11 @@ type Options = { canary: "outer" | "inner" | "none"; failOn: "sentinel" | "canar
 type Seen = { canary(): boolean; turn(): boolean };
 
 /**
- * deliver's shape without the runtime: a transaction around a handler; #80's sentinel, a setTimeout(0) queued as the
- * handler starts; and a no-op canary transaction. `canary` says where the canary is requested: "outer" from the code
- * that requested the delivery's transaction, synchronously right after it (the brief's candidate), "inner" inside that
- * transaction just before the handler is called. Both detectors record whether they ran while the handler was
- * pending; the one `failOn` names then fails the delivery from inside its transaction, as deliver's sentinel does.
+ * deliver's shape without the runtime: a transaction around a handler; #80's former sentinel, a setTimeout(0) queued as
+ * the handler starts; and a no-op canary transaction. `canary` says where the canary is requested: "outer" from the
+ * code that requested the delivery's transaction, synchronously right after it (the issue's first candidate), "inner"
+ * inside that transaction just before the handler is called (where deliver requests it). Both detectors record whether
+ * they ran while the handler was pending; the one `failOn` names then fails the delivery from inside its transaction.
  */
 async function deliverLike(storage: Storage, { canary: placement, failOn }: Options, log: string[], handler: (seen: Seen) => Promise<void>) {
   let open = false;
@@ -67,7 +68,7 @@ async function deliverLike(storage: Storage, { canary: placement, failOn }: Opti
 
 const before = (log: string[], a: string, b: string) => log.indexOf(a) !== -1 && log.indexOf(b) !== -1 && log.indexOf(a) < log.indexOf(b);
 
-// The awaits that yield: the six #80's sentinel misses ([storage-await-no-macrotask]), and three it catches.
+// The awaits that yield: the six #80's former sentinel missed, and three it caught.
 const MISSES = ["transaction", "getCurrentBookmark", "sync", "Response.text", "Response.json", "Request.json"];
 const CAUGHT = ["scheduler.wait(1)", "setTimeout(0)", "fetch"];
 const yields = (s: Storage): Record<string, () => Promise<unknown>> => ({
@@ -135,10 +136,10 @@ it("[canary-placement] a canary requested beside the delivery's transaction runs
   expect(out.stale).toContain("first's canary (next closed)");
 });
 
-// The awaits a handler may make (Runtime.md), as [storage-await-no-macrotask] lists them, and microtasks.
+// The awaits a handler may make (Runtime.md), as [storage-awaits-allowed] lists them, and microtasks.
 const ALLOWED = ["microtasks", "put", "put-many", "get", "get-many", "list", "delete", "delete-many", "getAlarm", "setAlarm", "deleteAlarm", "sql", "kv.get", "kv.put", "kv.delete", "transactionSync", "lifecycle.jobs.push", "Blob.text", "crypto.subtle.digest"];
 
-it("[canary-catalogue] the inner canary runs exactly when a writer waiting beside the handler gets into its transaction, and ahead of it: during every await #80's sentinel catches and every one it misses, and never during microtasks or the storage awaits handlers may make", async () => {
+it("[canary-catalogue] the inner canary runs exactly when a writer waiting beside the handler gets into its transaction, and ahead of it: during every await #80's former timer sentinel caught and every one it missed, and never during microtasks or the storage awaits handlers may make", async () => {
   const out = await runInDurableObject(probe("canary-cat"), async (instance: { pingAt(t: number): Promise<void> }, state) => {
     const s = state.storage;
     s.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
@@ -215,7 +216,7 @@ it("[canary-catalogue] the inner canary runs exactly when a writer waiting besid
   }
 });
 
-it("[canary-writer-fate] when the inner canary fails the delivery, every writer that gets into a handler's transaction runs after its rollback and commits: today's sentinel lets those writers in first, and its rollback takes their rows", async () => {
+it("[canary-writer-fate] when the inner canary fails the delivery, every writer that gets into a handler's transaction runs after its rollback and commits: #80's former timer sentinel let those writers in first, and its rollback took their rows", async () => {
   const out = await runInDurableObject(probe("canary-fate"), async (_i, state) => {
     const s = state.storage;
     s.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
@@ -280,8 +281,8 @@ it("[canary-writer-fate] when the inner canary fails the delivery, every writer 
       expect({ receipt: r.receipt, kept: r.kept }, tag).toEqual({ receipt: IO_REFUSED, kept: true });
       if (when !== "outside-before") expect(before(r.log, "canary (open)", "transaction ended") && before(r.log, "transaction ended", "writer runs"), tag).toBe(true);
     } else {
-      // Today: the sentinel fails only the awaits it catches; a miss fails with the handler's own error. A writer
-      // requested inside the handler's turns gets in and loses its row, unless it asked after a nested transaction().
+      // The former sentinel failed only the awaits it caught; a miss failed with the handler's own error. A writer
+      // requested inside the handler's turns got in and lost its row, unless it asked after a nested transaction().
       const lost = (when === "starting" || when === "during") && !(y === "transaction" && when === "during");
       expect({ receipt: r.receipt, kept: r.kept }, tag).toEqual({ receipt: CAUGHT.includes(y) ? IO_REFUSED : HANDLER_FAILED, kept: !lost });
       if (lost) expect(before(r.log, "writer committed", "transaction ended"), tag).toBe(true);
@@ -346,10 +347,10 @@ const envelopeFor = (name: string, id: string, key: string) => ({ v: 1, id, type
 const INJECTED = "the injected canary ran while the delivery was open";
 
 /**
- * Puts a canary into the real deliver without changing the runtime: deliver's transaction (the one whose closure checks
- * _actors_inbox) gets a no-op transaction requested first thing inside it, and is raced against it. If the canary runs
- * while deliver's closure is still running, the closure fails with INJECTED, so the delivery rolls back. Every other
- * transaction passes through. With `canary` false, only the wrapper is added (a baseline for [canary-overhead]).
+ * Puts one more canary into the real deliver, which has its own since #82: deliver's transaction (the one whose closure
+ * checks _actors_inbox) gets a no-op transaction requested first thing inside it, and is raced against it. Every other
+ * transaction passes through. With `canary` false, only the wrapper is added: [canary-overhead]'s baseline. (#82's
+ * Phase 1, before the runtime had a canary, used this to show a canary in the real deliver: 27c3f4e.)
  */
 function injectCanary(s: Storage, canary: boolean, log?: string[]): () => void {
   const orig = s.transaction;
@@ -374,78 +375,10 @@ function injectCanary(s: Storage, canary: boolean, log?: string[]): () => void {
   return () => void delete (s as unknown as { transaction?: unknown }).transaction;
 }
 
-it("[canary-real-deliver] with a canary put into the real deliver, [beside-transaction-nested]'s known misses and [sentinel-ordering]'s already-waiting writer fail the delivery from the canary, and the waiting writer commits after the rollback", async () => {
-  const gate = globalThis as { __probeGate?: unknown };
-  const microtasks = async (n: number) => {
-    for (let i = 0; i < n; i++) await Promise.resolve();
-  };
-  // What the slow probe.outcome handler awaits after it starts the writer, before it throws ([beside-transaction-nested]).
-  const cases: Record<string, (s: Storage) => Promise<unknown>> = {
-    microtasks: () => microtasks(500),
-    io: () => scheduler.wait(1),
-    sync: (s) => microtasks(10).then(() => s.sync()),
-    body: () => microtasks(10).then(() => new Response("x").text()),
-    transaction: (s) => microtasks(10).then(() => s.transaction(async () => {})),
-    bookmark: (s) => microtasks(10).then(() => s.getCurrentBookmark()),
-    // [sentinel-ordering]'s "pending" writer, with the handler awaiting a fetch.
-    fetch: () => SELF.fetch("https://probe/other").then((r) => r.text()),
-  };
-  const results: Record<string, { receipt: { status: string; error?: string }; kept: boolean; handlerRow: number; log: string[] }> = {};
-  try {
-    for (const [what, wait] of Object.entries(cases)) {
-      const name = `canary-real-${what}`;
-      results[what] = await runInDurableObject(probe(name), async (instance: Receiver, state) => {
-        state.storage.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
-        const db = new DurableObjectSqliteDatabase(state.storage);
-        const log: string[] = [];
-        let start!: () => void;
-        const written = new Promise<void>((r) => (start = r)).then(() =>
-          db
-            .transaction(async (t) => {
-              log.push("writer runs");
-              await t.run("INSERT INTO beside (v) VALUES ('pi')");
-            })
-            .then(() => log.push("writer committed")),
-        );
-        let thrown!: () => void;
-        const handlerDone = new Promise<void>((r) => (thrown = r));
-        gate.__probeGate = {
-          then: (_resolve: () => void, reject: (err: Error) => void) => {
-            start();
-            void wait(state.storage).then(() => {
-              log.push("handler throws");
-              reject(new Error(HANDLER_FAILED));
-              thrown();
-            });
-          },
-        };
-        const restore = injectCanary(state.storage, true, log);
-        let receipt: { status: string; error?: string };
-        try {
-          receipt = await instance.actor.receive(envelopeFor(name, `${name}-1`, "slow-canary"));
-        } finally {
-          restore();
-        }
-        await written;
-        await handlerDone;
-        return { receipt, kept: state.storage.sql.exec("SELECT v FROM beside").toArray().length === 1, handlerRow: state.storage.sql.exec("SELECT key FROM outcomes").toArray().length, log };
-      });
-    }
-  } finally {
-    delete gate.__probeGate;
-  }
-  // Microtasks only: unchanged from [beside-transaction-nested]. The canary runs after the rollback, then the writer.
-  expect(results.microtasks).toMatchObject({ receipt: { status: "failed", error: HANDLER_FAILED }, kept: true, handlerRow: 0, log: ["handler throws", "canary (closed)", "writer runs", "writer committed"] });
-  for (const what of ["io", "sync", "body", "transaction", "bookmark", "fetch"]) {
-    // Today the writer runs nested and its row is lost ([beside-transaction-nested], [sentinel-ordering]). With the canary,
-    // the canary runs first and fails the delivery (ahead of the sentinel where it would catch it), and the writer commits.
-    expect(results[what], what).toMatchObject({ receipt: { status: "failed", error: INJECTED }, kept: true, handlerRow: 0, log: ["canary (open)", "writer runs", "writer committed", "handler throws"] });
-  }
-});
-
-// Run by hand (remove .skip; pass --silent=false to see what it logs): its medians are in #82. Local workerd's clock moves only at I/O, so it times
-// batches of 100 deliveries, over 20 rounds after 2 of warm-up, alternating which variant goes first.
-it.skip("[canary-overhead] one no-op canary transaction per delivery: a bare transaction, and the real deliver", async () => {
+// Run by hand (remove .skip; pass --silent=false to see what it logs): #82 has the medians it gave before the runtime
+// had a canary. Local workerd's clock moves only at I/O, so it times batches of 100 deliveries, over 20 rounds after 2
+// of warm-up, alternating which variant goes first.
+it.skip("[canary-overhead] one no-op canary transaction per delivery: on a bare transaction, and on top of the real deliver's own", async () => {
   const stats = (a: number[]) => {
     const sorted = [...a].sort((x, y) => x - y);
     return { median: (sorted[9]! + sorted[10]!) / 2, mean: a.reduce((x, y) => x + y, 0) / a.length, min: sorted[0], max: sorted.at(-1) };

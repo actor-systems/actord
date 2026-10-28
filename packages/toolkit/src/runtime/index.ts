@@ -8,7 +8,8 @@
 // - Atomic handling: the handler runs inside ctx.storage.transaction(). Its SQL writes, the inbox mark,
 //   its outgoing messages, and its effect intents commit together or not at all. A throw anywhere rolls
 //   everything back and the sender retries. The transaction holds the input gate, so keep handlers to
-//   storage work: anything slow belongs in an effect.
+//   storage work: anything slow belongs in an effect. A handler that yields to the event loop fails its
+//   delivery (#80); a canary transaction detects the yield (#82).
 // - Delivery: outgoing messages sit in a SQLite outbox and are delivered after commit, retried with
 //   backoff from actord's Lifecycle job until acknowledged or exhausted (at least once; receivers
 //   dedupe). Messages from one sender to one receiver keep their order except across retries.
@@ -436,15 +437,25 @@ const SCHEMA = [
 ];
 
 /**
- * A promise that rejects with `message` once a macrotask runs: setTimeout(0) runs at the next event-loop turn, after
- * the microtasks queued before it. Clear it once the work it guards has settled, so no timer is left behind.
+ * A no-op transaction that tells whether a handler yielded to the event loop inside its delivery's transaction (#82).
+ * Request it inside that transaction, synchronously, just before the handler is called. workerd queues a transaction
+ * requested during an open one's turns behind it, nested, in the order requested, and runs the queue once the open one
+ * yields. Nothing else can be queued there before the canary, so it runs at the handler's first yield, ahead of every
+ * writer that would otherwise run nested in the handler's transaction. `fired` then rejects with `message`. Call
+ * `close()` once the handler has settled: a canary still queued then runs after the transaction ends, and does nothing.
  */
-function sentinel(message: string): { fired: Promise<never>; clear(): void } {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const fired = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), 0);
-  });
-  return { fired, clear: () => clearTimeout(timer) };
+function canary(storage: { transaction<T>(closure: () => Promise<T>): Promise<T> }, message: string): { fired: Promise<never>; close(): void } {
+  let open = true;
+  let refuse!: (err: Error) => void;
+  const fired = new Promise<never>((_resolve, reject) => (refuse = reject));
+  // The closure can't throw. The transaction itself fails only if the object's storage does, which the delivery's
+  // own transaction reports, so there is nothing to add here.
+  storage
+    .transaction(async () => {
+      if (open) refuse(new Error(message));
+    })
+    .catch(() => {});
+  return { fired, close: () => void (open = false) };
 }
 
 /** FNV-1a (64-bit) as base36: short, deterministic ids derived from causal position. */
@@ -519,13 +530,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
   // whoever waited asks again (a tool rerun finds the row by its key).
   const settleListeners = new Map<string, { key: string; resolvers: Array<(outcome: SettledOutcome) => void> }>();
   // Whether a handler is running synchronously at this instant (nothing else can be, so a requestEffect then is the
-  // handler's own), and whether a handler's transaction closure is running. workerd runs a transaction started from
-  // inside another's closure nested, at once. One started from elsewhere didn't start within 500 microtasks while the
-  // open one awaited only microtasks ([beside-transaction-nested] shows no more than that), and runs nested in it once
-  // the open one yields to the event loop (awaits anything that isn't a microtask: I/O, a timer). A handler that yields
-  // fails its delivery at that turn (#80, deliver's sentinel), but a transaction already requested beside it runs first
-  // ([sentinel-ordering]). So a requestEffect whose own transaction finds this set was called from inside a handler,
-  // or beside one that yielded. Both refuse it.
+  // handler's own), and whether a handler is pending in its transaction. A transaction requested during the handler's
+  // turns waits behind the handler's, and runs nested in it only if the handler yields to the event loop (awaits
+  // anything that isn't a microtask: I/O, a timer, sync(), a nested transaction). deliver's canary is first in that
+  // queue, and fails the delivery at that yield (#80, #82), so the others run after the rollback, when this is clear
+  // ([canary-ordering]). A requestEffect whose own transaction still finds it set ran nested in a handler's; it refuses.
   let inHandlerCall = false;
   let inHandlerTransaction = false;
   // Jobs probeNow asked to look at while a probe of theirs ran or their start hadn't returned: looked at once it does.
@@ -619,13 +628,13 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
         maybeFault(actorName, envelope.type, "before-handler");
         const context = handlerContext(envelope, pending, notes, cancels);
         inHandlerTransaction = true;
-        // Queued before the handler runs, so it fires at the next event-loop turn, ahead of any timer the handler sets. A
-        // handler still unsettled then awaited I/O (a fetch, a timer), and its transaction would stay open across turns,
-        // where other writers' transactions run nested in it and its rollback takes their rows (#80). Microtasks and most
-        // storage awaits (the KV calls, alarms, sql, kv, transactionSync, Lifecycle's jobs.push) keep those writers out.
-        // A nested transaction(), sync(), getCurrentBookmark() and a Request or Response body read let a waiting one in,
-        // yet finish before this fires, so it misses them ([storage-await-no-macrotask]; #82).
-        const turn = sentinel(`${actorName}.${envelope.type}: handlers may not await I/O; use ctx.effect`);
+        // Requested here, just before the handler, so it is first in this transaction's queue (canary above). A handler
+        // that yields to the event loop (a fetch, a timer, sync(), getCurrentBookmark(), a nested transaction, a body
+        // read) would keep its transaction open across turns, where other writers' transactions run nested in it and its
+        // rollback takes their rows (#80). The canary runs at that yield instead, and the delivery fails before any of
+        // them runs. Microtasks and the storage awaits handlers may make (the KV calls, alarms, sql, kv,
+        // transactionSync, Lifecycle's jobs.push) don't yield ([storage-awaits-allowed], [handler-io-fails-loudly]).
+        const yielded = canary(ctx.storage, `${actorName}.${envelope.type}: handlers may not await I/O; use ctx.effect`);
         try {
           inHandlerCall = true;
           let handled: void | Promise<void>;
@@ -634,11 +643,11 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
           } finally {
             inHandlerCall = false;
           }
-          // When the sentinel wins, the handler is abandoned: it may still be running. The race has marked its promise
+          // When the canary wins, the handler is abandoned: it may still be running. The race has marked its promise
           // handled, so a later rejection isn't reported as unhandled.
-          await Promise.race([handled, turn.fired]);
+          await Promise.race([handled, yielded.fired]);
         } finally {
-          turn.clear();
+          yielded.close();
           inHandlerTransaction = false;
           // The delivery is over for the handler: one still running (abandoned above) or holding its ctx can't use it.
           context.close();
@@ -887,8 +896,10 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
     const pending: Pending[] = [];
     const notes: Array<Omit<ActorEvent, "$actord">> = [];
     await ctx.storage.transaction(async () => {
-      // Nested in a handler's transaction (called after the handler awaited): its effect would run before that
-      // handler commits, or, in a self-delivery, wait on the drain delivering it. Refused; this nested one rolls back.
+      // Nested in a pending handler's transaction, its effect would run before that handler commits, or, in a
+      // self-delivery, wait on the drain delivering it. A backstop since #82: deliver's canary fails a handler at its
+      // first yield, ahead of this transaction, so one requested after an await runs after the rollback, and is
+      // accepted ([request-effect-in-handler]). Refused; this nested one rolls back.
       if (inHandlerTransaction) throw new Error(REQUESTED_IN_HANDLER);
       queueEffect(name, input, opts.key, { causationId: opts.causationId ?? null, correlationId: opts.correlationId ?? opts.key }, pending, notes);
       insertPending(pending);
