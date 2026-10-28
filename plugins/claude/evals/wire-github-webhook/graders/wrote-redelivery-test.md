@@ -1,5 +1,5 @@
 ---
-type: tool_used
-tool: Write
-input_match: '^(?=[\s\S]*\.test\.ts)(?=[\s\S]*[Xx]-[Gg]it[Hh]ub-[Dd]elivery)(?=[\s\S]*(duplicate|toHaveLength\(1\)|\bonce\b))'
+type: regex
+target: trace
+pattern: '"name":"(?:Write|Edit)","input":\{(?=[^\n]*?"file_path":"[^"\n]*\.test\.ts")(?=[^\n]*[Xx]-[Gg]it[Hh]ub-[Dd]elivery)(?=[^\n]*(?:duplicate|toHaveLength\(1\)|toBe\(1\)|toEqual\(\[|\bonce\b))'
 ---

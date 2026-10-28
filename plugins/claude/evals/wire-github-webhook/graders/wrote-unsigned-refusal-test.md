@@ -1,5 +1,5 @@
 ---
-type: tool_used
-tool: Write
-input_match: '^(?=[\s\S]*\.test\.ts)(?=[\s\S]*[Xx]-[Hh]ub-[Ss]ignature-256)(?=[\s\S]*\b401\b)'
+type: regex
+target: trace
+pattern: '"name":"(?:Write|Edit)","input":\{(?=[^\n]*?"file_path":"[^"\n]*\.test\.ts")(?=[^\n]*[Xx]-[Hh]ub-[Ss]ignature-256)(?=[^\n]*\b401\b)'
 ---
