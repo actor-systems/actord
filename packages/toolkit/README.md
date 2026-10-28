@@ -23,6 +23,7 @@ Or add it to an existing Worker project: `npm install -D @actord/toolkit zod`, t
 | `@actord/toolkit/system` | `defineSystem` and `message`: the typed declaration of actors, messages, routes, effects, and schedules |
 | `@actord/toolkit/runtime` | `actorRuntime(...)` for native Durable Object classes: an inbox that handles each message id once, transactional handlers, an outbox that delivers at least once, and effects that run after commit |
 | `@actord/toolkit/sources` | `handleWebhook` and `handleEmail`: the generated handlers for a system's webhook and email sources, and approvals by email reply |
+| `@actord/toolkit/decisions` | `decisionAdapters(system, { ai, inputs? })`: the adapters for decision (Clef) and extraction (Clairic) effects, over the Workers AI binding, with an optional R2 bucket for each request's input. It needs no peer dependency |
 | `@actord/toolkit/agents` | `agentRuntime(...)` for agent actors: a Pi session as a job effect, declared effects as its tools, budgets, and a Computer workspace with clone and push from the Durable Object. It loads Pi and `@cloudflare/computer`, optional peers that no other entry point imports |
 | `@actord/toolkit/testing` | workerd test helpers with `@cloudflare/vitest-plugin`: `settle`, `tick`, `injectFault`, `overrideEffect`, `overrideBudget`, `resetSeams` |
 | `@actord/toolkit/vitest` | `actorEvents()`, which records each test run's events to `.actord/events.ndjson` for `actord trace` |
@@ -40,6 +41,7 @@ Message payloads are Standard Schema validators (for example zod 4, an optional 
 | `actord diff [--base <ref>]` | Classifies changes against a commit as compatible, breaking, or risky, and ends with a deploy plan, never a deploy |
 | `actord test`, `actord verify` | Runs the workerd tests; `verify` adds typecheck, `check`, and claim classification and writes `.actord/evidence.json` |
 | `actord events`, `actord trace <id>` | Queries the local event log, and follows a message's causes and consequences |
+| `actord scorecard [--effect <name>]` | Reports how well each decision and extraction effect is calibrated, from the labels in the local event log |
 | `actord room`, `actord guard` | The views behind the Claude Code plugin's Room and its deploy guard |
 
 Every command takes `--json`. Read-only commands never contact Cloudflare.

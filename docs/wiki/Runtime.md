@@ -26,6 +26,8 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A running session keeps the instructions it started with | The text is stored on the session row when it starts. Decision 0019 |
 | A workspace's edits outlive its container and restarts, and local-only paths never reach the object | Computer's `Workspace` in the object's SQLite; `localOnly` is Computer's `ignore`. A command cut off by a lost container is reported as one that "may have partly run", and never run again by itself. Decision 0022 |
 | A push authenticates from the Durable Object, and the token never enters the container | `gitPushEffect`: the app's pinned `https` URL, Basic `x-access-token`, a token minted for each attempt and scrubbed from errors, and `factory/` branches only by default. Decision 0022 |
+| A shadow decision's answer is never delivered | `actord check` refuses a shadow decision with a `result` (`DECISION_SHADOW_RESULT`). The runtime never queues a result message for one, whatever its spec says, and its outbox row doesn't keep the answer, so `requestEffect` and an agent's tools get `confirmed` with no value. The answer is kept only in `_actors_decisions`, which handlers must not read to decide. At runtime an unknown `mode` is shadow. Decision 0020 |
+| A decision's result can't approve or deny | In every handler of a message type that is a decision's or an extraction's `result`, `ctx.approve` and `ctx.deny` throw, even if another effect shares that type. The guard goes by message type, so it can't see an answer a handler relays in a message of its own (Limitations). Decision 0020 |
 
 **Handlers may not await I/O.** Request I/O with `ctx.effect`, and handle its result message.
 
@@ -126,3 +128,109 @@ waits for a person. A session's `usd` counts the model cost pi-ai reports, not c
 counts container time itself. A handler that awaits I/O fails its delivery, on every attempt (#80). In each such
 delivery, a pi or Computer write that was already waiting to start still joins the handler's transaction, and rolls
 back with it. [Limitations](Limitations) has the rest.
+
+## Decisions and extractions
+
+A decision puts typed questions to Clef on Workers AI, and gets a probability for every allowed answer. An extraction
+asks Clairic for typed values, each with a confidence. Both are effects, keyed, retried, budgeted and traced like any
+other, and every answer is recorded for `actord scorecard` (decision 0020).
+
+- **The declaration.** Two effects from the runtime tests (`packages/toolkit/test-runtime/src/index.ts`), with fewer
+  fields:
+
+  ```ts
+  "decide.route": {
+    description: "Route an issue",
+    kind: "decision",
+    model: "@cf/cloudflare/clef-flash",
+    idempotency: "key",
+    result: "probe.decided",
+    questions: {
+      route: {
+        type: "choice",
+        instructions: "How should a software factory handle this issue?",
+        criteria: {
+          ready: "Clear enough to implement now",
+          needs_info: "Missing information the factory must ask for",
+          not_for_factory: "Needs a human: design, policy, or out of scope",
+        },
+      },
+      one_line: { type: "noul", instructions: "Is the issue only a one-line description with no acceptance criteria?" },
+      risk: {
+        type: "score",
+        instructions: "How risky is merging this change?",
+        criteria: ["No risk", "Low", "Medium", "High"],
+      },
+    },
+  },
+  "extract.facts": {
+    description: "Extract an issue's facts",
+    kind: "extraction",
+    model: "@cf/cloudflare/clairic",
+    idempotency: "key",
+    result: "probe.extracted",
+    fields: {
+      failing_check: { type: "text", instructions: "The verify check that failed" },
+      run_id: { type: "number", integer: true },
+      done_when: { type: "list", items: "text", instructions: "The acceptance criteria" },
+      reported_on: { type: "date", instructions: "The date the failure happened" },
+    },
+  },
+  ```
+
+  - A decision's `model` is `@cf/cloudflare/clef` or `@cf/cloudflare/clef-flash`. An extraction's is
+    `@cf/cloudflare/clairic`.
+  - `questions` and `fields` are Clef's and Clairic's own request vocabulary, passed through. A question is `noul`,
+    `choice` (each option described, or `null`) or `score` (levels, lowest first). A field takes Clairic's types and
+    options.
+  - The input is `{ state, referenceDate? }`, as in `ctx.effect("decide.route", { state: issue }, { key })`. `state`
+    is a string or structured data. Only an extraction sends `referenceDate`.
+  - Clairic guesses. Set `null_threshold` on a field where a guess is worse than nothing, and read `confidence` and
+    `p_null`.
+- **The wiring.** `decisionAdapters(system, { ai: env.AI, inputs? })`, from `@actord/toolkit/decisions`, returns an
+  adapter for every decision and extraction, by effect name. Put them in `RuntimeOptions.effects`:
+
+  ```ts
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Triage", handlers, {
+    effects: { ...decisionAdapters(system, { ai: this.env.AI, inputs: this.env.DECISION_INPUTS }), ...otherAdapters },
+  });
+  ```
+
+  - The Worker needs the Workers AI binding. `inputs` is an optional R2 bucket: each request body is written to
+    `decisions/inputs/<sha256>.json`, named by the hash of its own bytes.
+  - The subpath needs no peer dependency.
+  - A response that misses an answer, or answers with the wrong type, fails the effect, and isn't retried. A throw
+    from `ai.run` is retried under the effect's budget.
+  - The cost is `input_tokens` times the toolkit's price table. A response without `usage` reports no cost.
+- **The result.** The result message's `value` is `{ model, answers, truncated, inputDigest, inputRef, usage }`.
+  `answers` is the model's, verbatim: `answers.route.choice` and `answers.route.probabilities`, `answers.one_line.noul`,
+  or `answers.reported_on.value`, with its `confidence` and `p_null`.
+- **Records and labels.** Each answer that settles `confirmed` is recorded in `_actors_decisions` as
+  `<effect>:<key>`, with a `decision.recorded` event. An extraction's event never carries its values.
+  - `ctx.acted("decide.route:<key>", "routed:ready")` records what the actor did. A later call replaces it.
+  - `ctx.outcome("decide.route:<key>", { route: "needs_info", one_line: false, risk: 2 })` records what really was
+    so: an option for `choice`, a boolean for `noul`, a level index for `score`, and `true` (correct) or `false`
+    (wrong) for a field. Labels merge with earlier ones.
+  - Both are synchronous, like the other `ctx` methods. They throw for an unknown id, question, field, option or
+    level, so a labelling bug fails its handler. A label is checked against the effect as declared now.
+- **Shadow mode.** A decision with `mode: "shadow"` is recorded and never delivered. It declares no `result`
+  (`DECISION_SHADOW_RESULT`), and `requestEffect` answers it `confirmed` with no value. Its answer is only in
+  `_actors_decisions`: don't read that table to decide. At runtime an unknown `mode` is shadow, and `actord check`
+  refuses one.
+- **No approvals.** A decision never approves (spec §9.3). In a handler of a decision's or an extraction's result
+  message, `ctx.approve` and `ctx.deny` throw.
+- **`actord scorecard [--effect <name>] [--file <events.ndjson>]`** reads the local event log, as `trace` does. Per
+  effect, it prints the recorded, shadow, labelled and acted counts, then:
+  - for a `choice`, the accuracy, the Brier score, and how often each option was wrong when chosen;
+  - for a `noul`, the Brier score;
+  - for a `score`, the mean absolute error;
+  - for a field, the share labelled correct, and the correct count by confidence.
+
+  A statistic with no labels shows `-`. `--json` adds the calibration bins for `choice` and `noul`.
+- **Checks.** `actord check` reports a model of the wrong family; invalid questions or fields; a `mode` other than
+  `act` or `shadow`; a shadow decision with a `result`; a field of another kind; and `publishes: true`. It warns when
+  an act-mode decision or an extraction has no `result`, and on `idempotency: "none"`. Each has a `DECISION_*` code,
+  except invalid fields (`EXTRACTION_FIELDS_INVALID`).
+
+Not guaranteed: that a handler doesn't act on a decision's answer it relays in its own message, or on a shadow answer
+it reads from `_actors_decisions` itself. The scorecard sees local logs only. [Limitations](Limitations) has the rest.
