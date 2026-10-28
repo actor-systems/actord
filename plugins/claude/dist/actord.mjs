@@ -1177,6 +1177,10 @@ function normalize(system) {
     result: e.result ?? null,
     ...e.budget ? { budget: { ...e.budget.maxAttempts !== void 0 ? { maxAttempts: e.budget.maxAttempts } : {}, ...e.budget.timeoutMs !== void 0 ? { timeoutMs: e.budget.timeoutMs } : {} } } : {},
     kind: e.kind ?? "call",
+    model: e.model ?? null,
+    questions: e.questions ? e.questions : null,
+    fields: e.fields ? e.fields : null,
+    mode: e.kind === "decision" ? e.mode ?? "act" : e.mode ?? null,
     deadline: e.deadline ?? null,
     probe: e.probe ? { every: e.probe.every } : null,
     completes: e.completes ? { message: e.completes.message } : null,
@@ -1378,6 +1382,9 @@ function checkProject(project) {
             add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
       }
     }
+    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, add);
+    else if (e.questions !== null || e.fields !== null || e.mode !== null || e.model !== null)
+      add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${e.kind} effect but declares ${[e.model !== null && "model", e.questions !== null && "questions", e.fields !== null && "fields", e.mode !== null && "mode"].filter(Boolean).join(", ")}, which only a decision or an extraction uses`, `Set kind: "decision" or kind: "extraction", or remove the field.`);
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)
       add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
@@ -1518,6 +1525,64 @@ function sortDiagnostics(d) {
   const rank = (x) => x.severity === "error" ? 0 : 1;
   const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
   return d.sort((a, b) => rank(a) - rank(b) || cmp(a.code, b.code) || cmp(a.subject ?? "", b.subject ?? "") || cmp(a.message, b.message));
+}
+var CLEF_MODELS = ["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"];
+var CLAIRIC_MODEL = "@cf/cloudflare/clairic";
+var QUESTION_ID = /^[A-Za-z0-9_.-]{1,100}$/;
+var FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/;
+var FIELD_TYPES = ["text", "number", "date", "time", "datetime", "duration", "list", "estimate", "forecast"];
+var isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+function questionProblem(id2, q) {
+  if (!QUESTION_ID.test(id2)) return `question id "${id2}" doesn't match ${QUESTION_ID.source}`;
+  if (!isObject(q)) return `question ${id2} isn't an object`;
+  if (typeof q.instructions !== "string" || q.instructions.trim() === "") return `question ${id2} has no instructions`;
+  if (q.type === "noul") return null;
+  if (q.type === "choice") {
+    const n = isObject(q.criteria) ? Object.keys(q.criteria).length : 0;
+    return n >= 2 && n <= 255 ? null : `choice question ${id2} has ${n} options; Clef takes 2 to 255`;
+  }
+  if (q.type === "score") {
+    const n = Array.isArray(q.criteria) ? q.criteria.length : 0;
+    return n >= 2 && n <= 10 ? null : `score question ${id2} has ${n} levels; Clef takes 2 to 10`;
+  }
+  return `question ${id2} has type ${JSON.stringify(q.type)}; use noul, choice or score`;
+}
+function fieldProblem(name, f) {
+  if (!FIELD_NAME.test(name)) return `field name "${name}" doesn't match ${FIELD_NAME.source}`;
+  if (!isObject(f) || typeof f.type !== "string" || !FIELD_TYPES.includes(f.type)) return `field ${name} has type ${JSON.stringify(isObject(f) ? f.type : f)}; use ${FIELD_TYPES.join(", ")}`;
+  if (f.type === "list" && !["text", "number", "date"].includes(f.items)) return `list field ${name} needs items: "text", "number" or "date"`;
+  if ((f.type === "estimate" || f.type === "forecast") && (f.min === void 0 || f.max === void 0)) return `${f.type} field ${name} needs both min and max`;
+  if (f.decimals !== void 0 && !(Number.isInteger(f.decimals) && f.decimals >= 0 && f.decimals <= 6)) return `field ${name} has decimals ${String(f.decimals)}; use 0 to 6`;
+  if (f.null_threshold !== void 0 && !(typeof f.null_threshold === "number" && f.null_threshold > 0 && f.null_threshold <= 1)) return `field ${name} has null_threshold ${String(f.null_threshold)}; use a number above 0 and at most 1`;
+  if (f.horizon !== void 0 && !(Number.isInteger(f.horizon) && f.horizon >= 1 && f.horizon <= 64)) return `field ${name} has horizon ${String(f.horizon)}; use 1 to 64`;
+  return null;
+}
+function checkDecisionEffect(e, add) {
+  const decision = e.kind === "decision";
+  const label2 = decision ? "decision" : "extraction";
+  if (decision ? e.model === null || !CLEF_MODELS.includes(e.model) : e.model !== CLAIRIC_MODEL)
+    add("error", "DECISION_MODEL_UNKNOWN", e.name, `${e.name} is a ${label2} with model ${e.model === null ? "none" : `"${e.model}"`}`, `Use model: ${decision ? CLEF_MODELS.map((x) => `"${x}"`).join(" or ") : `"${CLAIRIC_MODEL}"`}.`);
+  if (decision) {
+    const entries = e.questions === null ? [] : Object.entries(e.questions);
+    const problem = e.questions === null ? "it declares no questions" : entries.length < 1 || entries.length > 64 ? `it declares ${entries.length} questions; Clef takes 1 to 64` : entries.map(([id2, q]) => questionProblem(id2, q)).find((p) => p !== null);
+    if (problem) add("error", "DECISION_QUESTIONS_INVALID", e.name, `${e.name}: ${problem}`, `Declare 1 to 64 questions, each noul, choice (2 to 255 options) or score (2 to 10 levels), with instructions.`);
+    if (e.mode === "shadow" && e.result)
+      add("error", "DECISION_SHADOW_RESULT", e.name, `${e.name} is a shadow decision but delivers ${e.result}; a shadow answer is recorded for the scorecard and never delivered`, `Remove result, or set mode: "act".`);
+    if (e.mode !== "shadow" && !e.result)
+      add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an act-mode decision with no result, so the actor would never see the answer`, `Add result: "<message>", or set mode: "shadow" to only record it.`);
+    if (e.fields !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a decision but declares fields, which only an extraction uses`, `Use questions, or make it an extraction.`);
+  } else {
+    const entries = e.fields === null ? [] : Object.entries(e.fields);
+    const problem = entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
+    if (problem) add("error", "EXTRACTION_FIELDS_INVALID", e.name, `${e.name}: ${problem}`, `Declare at least one field; see the Clairic field types and limits.`);
+    if (!e.result) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
+    for (const f of ["questions", "mode"])
+      if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is an extraction but declares ${f}, which only a decision uses`, `Remove ${f}, or make it a decision.`);
+  }
+  for (const f of ["deadline", "probe", "completes"])
+    if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${label2} but declares ${f}, which only a job uses`, `Remove ${f}: a ${label2} is answered within one request.`);
+  if (e.publishes === true) add("error", "DECISION_PUBLISHES", e.name, `${e.name} is a ${label2} and publishes; it only reads, so nothing public can come from it`, `Remove publishes: true.`);
+  if (e.idempotency === "none") add("warning", "DECISION_IDEMPOTENCY_NONE", e.name, `${e.name} declares idempotency: "none", but a ${label2} is a deterministic read`, `Use idempotency: "key"; a retry is always safe.`);
 }
 
 // src/model/diff.ts
@@ -1672,7 +1737,7 @@ function diffMessage(b, h, add) {
   }
 }
 var ACTOR_FIELDS = /* @__PURE__ */ new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends", "harness", "model", "instructions", "tools", "on", "returns"]);
-var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes", "input"]);
+var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "model", "questions", "fields", "mode", "deadline", "probe", "completes", "publishes", "input"]);
 var SOURCE_FIELDS = /* @__PURE__ */ new Set(["name", "kind", "path", "verify", "events", "message"]);
 function unclassified(what, b, h, classified, add) {
   const bv = b;
@@ -1699,6 +1764,14 @@ function diffEffect(b, h, add) {
   const s = h.name;
   if (b.kind !== h.kind)
     add("effect.kind", s, "risky", `Kind ${b.kind} \u2192 ${h.kind}; effects already in flight change how they settle (a job already waiting can't be settled by ctx.settleJob once the effect is a call, and waits out its deadline)`);
+  if ((b.model ?? null) !== (h.model ?? null))
+    add("effect.model", s, "risky", `Model ${b.model ?? "none"} \u2192 ${h.model ?? "none"}; answers change, and a decision's probabilities aren't comparable across models`);
+  if (show(b.questions ?? null) !== show(h.questions ?? null)) add("effect.questions", s, "risky", "The questions a decision asks changed; answers already recorded were to the old questions");
+  if (show(b.fields ?? null) !== show(h.fields ?? null)) add("effect.fields", s, "risky", "The fields an extraction returns changed; results already recorded have the old shape");
+  if ((b.mode ?? null) !== (h.mode ?? null)) {
+    if (h.mode === "act") add("effect.mode", s, "risky", `Mode ${b.mode ?? "none"} \u2192 act; the decision's answer is now delivered to the actor, which acts on it`);
+    else add("effect.mode", s, "compatible", `Mode ${b.mode ?? "none"} \u2192 ${h.mode ?? "none"}; the answer is recorded for the scorecard and no longer delivered`);
+  }
   if ((b.deadline ?? null) !== (h.deadline ?? null)) add("effect.deadline", s, "risky", `Deadline ${b.deadline ?? "none"} \u2192 ${h.deadline ?? "none"}; jobs already waiting keep the deadline they started with`);
   if (show(b.probe ?? null) !== show(h.probe ?? null))
     add("effect.probe", s, "risky", `Probe ${b.probe ? `every ${b.probe.every}` : "none"} \u2192 ${h.probe ? `every ${h.probe.every}` : "none"}; jobs already waiting keep the next look they booked`);
