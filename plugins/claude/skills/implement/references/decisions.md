@@ -203,6 +203,8 @@ Tests never call the real model, and never need Cloudflare credentials.
   [`test/fixtures/`](https://github.com/actor-systems/actord/tree/main/packages/toolkit/test/fixtures) show the real
   shapes; its [`test-runtime/src/index.ts`](https://github.com/actor-systems/actord/blob/main/packages/toolkit/test-runtime/src/index.ts)
   scripts them the same way (`stubAi`).
+- Build that override with `decisionAdapters`, never by hand: it checks each answer against its question and fails
+  the effect on a wrong shape, while a hand-written adapter's malformed answer is recorded with its value missing.
 - Set `remoteBindings: false` on `cloudflareTest` in `vitest.config.ts`. Workers AI has no local mode, so a declared
   `ai` binding is remote. Without the option, vitest opens a remote Workers AI session on whatever Cloudflare
   credentials it finds, and a decision no test overrides calls the real model; with no credentials, no test starts.
@@ -226,8 +228,10 @@ import { overrideEffect, resetSeams } from "@actord/toolkit/testing";
 import { afterEach, beforeEach } from "vitest";
 import system from "./system";
 
-// Clef's answer to decide.route.next's one question, in the recorded shape. A choice's probabilities name only its
-// options, the chosen one included; a score's name every level.
+// Clef's answer to decide.route.next's one question, in the recorded shape. Every answer names its `type`. A choice
+// has `choice` and `probabilities` over its options, the chosen one included. A noul has `noul`, the probability of
+// yes from 0 to 1: { type: "noul", noul: 0.9 }. A score has `score`, a level index, and `probabilities` over every
+// level: { type: "score", score: 2, probabilities: { "0": 0.1, "1": 0.2, "2": 0.7 } }.
 const clef: WorkersAI = {
   async run() {
     return {

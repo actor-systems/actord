@@ -79,6 +79,8 @@ export class ReleaseLedger extends DurableObject<Env> {
 
 Handlers may not await I/O. Each handler runs in one storage transaction, so it is synchronous: a `fetch`, timer, container or model call, or any await that yields, fails the delivery with `handlers may not await I/O; use ctx.effect`. Request the work with `ctx.effect(name, input, { key })` and handle the effect's declared result message. `ctx.sql`, `ctx.send` and the storage calls `get`, `put`, `list` and `delete` are fine.
 
+In workerd tests, `ingress()` and `receive()` return a receipt and don't throw on a rejection, so assert `status: "handled"` on each one a test relies on. A hand-built envelope's `to` is the instance's address, `"Actor:key"`; a bare actor name is rejected as `wrong_recipient`. An effect with no override runs its real adapter, so override every effect a test asserts on, one the change adds included.
+
 ## Capabilities
 
 The toolkit's wiki (<https://github.com/actor-systems/actord/wiki>: Runtime, Limitations and the other pages) covers each in full; name them rather than guessing an API.

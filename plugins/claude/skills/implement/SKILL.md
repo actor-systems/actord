@@ -52,7 +52,8 @@ Rules that hold for this whole skill:
 4. For every handler that requests an effect or calls a model, launch the `delivery-auditor` subagent on
    those files and resolve its findings, by changing code or by adding the fault test it proposes.
 5. Write tests in workerd (`references/runtime.md`, Testing). Tag each with the claim it establishes,
-   such as `[duplicate-delivery]`, and add or update the claim in `actord.claims.json`.
+   such as `[duplicate-delivery]`, and add or update the claim in `actord.claims.json`. Assert that each
+   receipt a test relies on is `handled`, and override every effect a test asserts on, a new one included.
 6. Run `actord check`, `actord graph --write`, and `actord test`, and fix what fails.
 
 Done when: the code builds; valid messages reach only declared handlers; malformed or unauthorized messages
