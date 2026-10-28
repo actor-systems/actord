@@ -25,6 +25,8 @@ export interface EffectCard {
 }
 export interface Scorecard {
   effects: EffectCard[];
+  /** decision.acted and decision.outcome events whose instance has no decision.recorded for their id in this log. */
+  orphanLabels: number;
 }
 
 const EDGES: Array<[number, number]> = [
@@ -54,22 +56,34 @@ interface Decision {
   acted: boolean;
 }
 
+/**
+ * A decision id, "<effect>:<key>", is unique only within one actor instance (effect keys are per instance), and the log
+ * holds every instance's events. So a record and its labels are keyed by the event's `actor` ("<Actor>:<key>", the
+ * instance) and the id: a label is always emitted by the instance that holds its record.
+ */
+const instanceKey = (e: LoggedEvent, decision: string) => `${e.actor}\u0000${decision}`;
+
 export function scorecard(events: LoggedEvent[], opts: { effect?: string } = {}): Scorecard {
   const decisions = new Map<string, Decision>();
+  // Records first, so a label finds its record wherever it sits in the file. The first record per id counts.
   for (const e of events) {
     const d = e.detail;
-    if (!d || typeof d.decision !== "string") continue;
-    if (e.kind === "decision.recorded" && !decisions.has(d.decision)) {
-      const answers = isRecord(d.answers) ? (d.answers as Record<string, Record<string, unknown>>) : {};
-      decisions.set(d.decision, { detail: d, answers, label: null, acted: false });
-    } else if (e.kind === "decision.acted") {
-      const x = decisions.get(d.decision);
-      if (x) x.acted = true;
-    } else if (e.kind === "decision.outcome") {
-      const x = decisions.get(d.decision);
-      // actual is the merged outcome so far: the latest event is the complete label set.
-      if (x && isRecord(d.actual)) x.label = d.actual;
-    }
+    if (e.kind !== "decision.recorded" || !d || typeof d.decision !== "string") continue;
+    const id = instanceKey(e, d.decision);
+    if (decisions.has(id)) continue;
+    const answers = isRecord(d.answers) ? (d.answers as Record<string, Record<string, unknown>>) : {};
+    decisions.set(id, { detail: d, answers, label: null, acted: false });
+  }
+  let orphanLabels = 0;
+  for (const e of events) {
+    const d = e.detail;
+    if ((e.kind !== "decision.acted" && e.kind !== "decision.outcome") || !d || typeof d.decision !== "string") continue;
+    const x = decisions.get(instanceKey(e, d.decision));
+    if (!x) {
+      if (!opts.effect || e.effect === opts.effect) orphanLabels++;
+    } else if (e.kind === "decision.acted") x.acted = true;
+    // actual is the merged outcome so far: the latest event is the complete label set.
+    else if (isRecord(d.actual)) x.label = d.actual;
   }
   const byEffect = new Map<string, Decision[]>();
   for (const x of decisions.values()) {
@@ -92,7 +106,7 @@ export function scorecard(events: LoggedEvent[], opts: { effect?: string } = {})
         questions: [...ids.entries()].map(([id, type]) => question(id, type, list)),
       };
     });
-  return { effects };
+  return { effects, orphanLabels };
 }
 
 function question(id: string, type: string, list: Decision[]): QuestionCard {
