@@ -27,7 +27,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A workspace's edits outlive its container and restarts, and local-only paths never reach the object | Computer's `Workspace` in the object's SQLite; `localOnly` is Computer's `ignore`. A command cut off by a lost container is reported as one that "may have partly run", and never run again by itself. Decision 0022 |
 | A push authenticates from the Durable Object, and the token never enters the container | `gitPushEffect`: the app's pinned `https` URL, Basic `x-access-token`, a token minted for each attempt and scrubbed from errors, and `factory/` branches only by default. Decision 0022 |
 | A shadow decision's answer is never delivered | `actord check` refuses a shadow decision with a `result` (`DECISION_SHADOW_RESULT`). The runtime never queues a result message for one, whatever its spec says, and its outbox row doesn't keep the answer, so `requestEffect` and an agent's tools get `confirmed` with no value. The answer is kept only in `_actors_decisions`, which handlers must not read to decide, and in its `decision.recorded` event. At runtime an unknown `mode` is shadow. Decision 0020 |
-| A decision's result can't approve or deny | In every handler of a message type that is a decision's or an extraction's `result`, `ctx.approve` and `ctx.deny` throw, even if another effect shares that type. The guard goes by message type, so it can't see an answer a handler relays in a message of its own (Limitations). Decision 0020 |
+| A decision's result can't approve or deny | In every handler of a message type that is a decision's or an extraction's `result`, `ctx.approve` and `ctx.deny` throw, even if another effect shares that type (`actord check` warns, `DECISION_RESULT_SHARED`). `ActorRuntime.decide` throws in any handler. The guard goes by message type, so it can't see an answer a handler relays in a message of its own (Limitations). Decision 0020 |
 
 **Handlers may not await I/O.** Request I/O with `ctx.effect`, and handle its result message.
 
@@ -199,14 +199,19 @@ other, and every answer is recorded for `actord scorecard` (decision 0020).
   - The Worker needs the Workers AI binding. `inputs` is an optional R2 bucket: each request body is written to
     `decisions/inputs/<sha256>.json`, named by the hash of its own bytes.
   - The subpath needs no peer dependency.
-  - A response that misses an answer, or answers with the wrong type, fails the effect, and isn't retried. A throw
-    from `ai.run` is retried under the effect's budget.
-  - The cost is `input_tokens` times the toolkit's price table. A response without `usage` reports no cost.
+  - A response that misses an answer, or answers with the wrong type, fails the effect, and isn't retried. A
+    `choice` or `score` needs probabilities over its declared options or levels, with the chosen option's (`choice`)
+    or every level's (`score`). A field's answer needs its `type`, and a `value` of that type, or `null`. A throw from
+    `ai.run` is retried under the effect's budget.
+  - The cost is `input_tokens` times the toolkit's price table, reported even when the answers are then rejected. A
+    response without `usage`, or without a finite `input_tokens`, reports no cost.
 - **The result.** The result message's `value` is `{ model, answers, truncated, inputDigest, inputRef, usage }`.
   `answers` is the model's, verbatim: `answers.route.choice` and `answers.route.probabilities`, `answers.one_line.noul`,
   or `answers.reported_on.value`, with its `confidence` and `p_null`.
 - **Records and labels.** Each answer that settles `confirmed` is recorded in `_actors_decisions` as
-  `<effect>:<key>`, with a `decision.recorded` event. An extraction's event never carries its values.
+  `<effect>:<key>`, with a `decision.recorded` event. An extraction's event never carries its values. The id is unique
+  per actor instance: two instances can each record `decide.route:77`. Label a decision in the instance that recorded
+  it.
   - `ctx.acted("decide.route:<key>", "routed:ready")` records what the actor did. A later call replaces it.
   - `ctx.outcome("decide.route:<key>", { route: "needs_info", one_line: false, risk: 2 })` records what really was
     so: an option for `choice`, a boolean for `noul`, a level index for `score`, and `true` (correct) or `false`
@@ -218,7 +223,9 @@ other, and every answer is recorded for `actord scorecard` (decision 0020).
   `_actors_decisions` and its `decision.recorded` event: don't read that table to decide. At runtime an unknown `mode`
   is shadow, and `actord check` refuses one.
 - **No approvals.** A decision never approves (spec §9.3). In a handler of a decision's or an extraction's result
-  message, `ctx.approve` and `ctx.deny` throw.
+  message, `ctx.approve` and `ctx.deny` throw. `ActorRuntime.decide` throws in any handler, as `requestEffect` does. An
+  agent's `on` may still start or stop a session from a decision's result: withdrawing the old session's approvals is
+  the runtime's, not the decision's, and isn't refused.
 - **`actord scorecard [--effect <name>] [--file <events.ndjson>]`** reads the local event log, as `trace` does. Per
   effect, it prints the recorded, shadow, labelled and acted counts, then:
   - for a `choice`, the accuracy, the Brier score, and how often each option was wrong when chosen;
@@ -227,10 +234,16 @@ other, and every answer is recorded for `actord scorecard` (decision 0020).
   - for a field, the share labelled correct, and the correct count by confidence.
 
   A statistic with no labels shows `-`. `--json` adds the calibration bins for `choice` and `noul`.
+  - A record and its labels are matched by instance (the event's `actor`) and id, so two instances' decisions with the
+    same key are two records.
+  - It reports the log's unreadable lines, and labels with no `decision.recorded` for their instance in the log, in
+    `--json` (`unparseable`, `orphanLabels`) and in the text.
 - **Checks.** `actord check` reports a model of the wrong family; invalid questions or fields; a `mode` other than
   `act` or `shadow`; a shadow decision with a `result`; a field of another kind; and `publishes: true`. It warns when
-  an act-mode decision or an extraction has no `result`, and on `idempotency: "none"`. Each has a `DECISION_*` code,
-  except invalid fields (`EXTRACTION_FIELDS_INVALID`).
+  an act-mode decision or an extraction has no `result` (unless every actor that requests it uses it only as an agent
+  tool); when its `result` type is also another effect's, or is routed from another sender, which turns off
+  `ctx.approve` in those handlers; and on `idempotency: "none"`. Each has a `DECISION_*` code, except invalid fields
+  (`EXTRACTION_FIELDS_INVALID`).
 
 Not guaranteed: that a handler doesn't act on a decision's answer it relays in its own message, or on a shadow answer
 it reads from `_actors_decisions` itself. The scorecard sees local logs only. [Limitations](Limitations) has the rest.

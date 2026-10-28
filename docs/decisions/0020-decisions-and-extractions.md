@@ -35,26 +35,38 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
    - `mode` is a decision's only. `model` is required on both.
 3. **The adapters.** `decisionAdapters(system, { ai, inputs? })`, from `@actord/toolkit/decisions`, returns one
    `EffectAdapter` per decision or extraction effect, by name, over the Workers AI binding (`ai.run`).
-   - **Validation.** Every declared question must be answered with its declared type: a `choice` with one of its
-     options, a `noul` with a number from 0 to 1, a `score` with a number from 0 to its top level. A `choice` or
-     `score` needs finite `probabilities`. Every declared field must be answered with a `value` key, and a `type`, if
-     the answer gives one, must be the field's.
+   - **Validation of questions.** Every declared question must be answered with its declared type: a `choice` with
+     one of its options, a `noul` with a number from 0 to 1, a `score` with a number from 0 to its top level.
+     - **Probabilities.** A `choice` or `score` needs `probabilities`: a non-empty map of finite numbers.
+     - **Their keys.** A `choice`'s must include the chosen option, and a `score`'s every level (`"0"` to the top).
+       Neither may name an option or level the question doesn't declare.
+   - **Validation of fields.** Every declared field must be answered with its `type`, which must be the field's, and
+     a `value` key whose value fits that type:
+     - `number` and `duration`: a finite number;
+     - `list`: an array;
+     - `text`, `date`, `time` and `datetime`: a string;
+     - `estimate` and `forecast`: a number, or a string when the field's `min` is a date string;
+     - any type: `null`, which Clairic gives when the input doesn't determine the value.
+
+     A rejection names the field and what kind of value it got, never the value, which may be personal data. Spike 7
+     answered `text`, `number`, `list` and `date` live; the others follow the published `{ type, value }` shape.
    - **A malformed response is rejected, never retried.** The error names the question or field. The models are
      deterministic (spike 7), so a retry would get the same answer. A throw from `ai.run` (the network, a `429`, a
      `5xx`) is retried under the effect's budget, which is safe because the call is keyed and only reads.
-   - **Usage is reported before validation**, so a rejected call's cost still counts.
+   - **Usage is reported before validation.** It is read as soon as the response is an object, before `answers` is
+     looked for, so a rejected call's cost still counts.
    - **No peers.** The AI binding and the R2 bucket are typed structurally. The bundle-isolation test checks that
      `dist/decisions.mjs` imports neither `agents`, nor `@earendil-works/*`, nor `@cloudflare/computer`, nor `zod`, and
      that the runtime, system and sources bundles don't contain the adapters.
 4. **Rejections carry a flag (R4).** The adapters throw their own `EffectRejected`, with `rejected = true`. The runtime
-   recognizes a rejection by that flag, not by class identity (`src/runtime/index.ts:1219-1221`). Importing the
+   recognizes a rejection by that flag, not by class identity (`src/runtime/index.ts:1239-1241`). Importing the
    runtime's class would pull a copy of the runtime, and the Agents SDK, into `decisions.mjs`. So code that checks
    `instanceof` the runtime's `EffectRejected` gets `false` for an adapter's rejection.
 5. **The input is content-addressed (correction 5).**
    - `inputDigest` is the hex SHA-256 of the exact request body sent: `JSON.stringify` of `{ model, state, questions }`
      or `{ model, state, fields, reference_date? }`.
    - Given `inputs`, an R2 bucket, the adapter writes that body to `decisions/inputs/<inputDigest>.json` before each
-     call (`src/decisions/index.ts:90-93`), and `inputRef` names it. Identical requests share one object, and the
+     call (`src/decisions/index.ts:135-138`), and `inputRef` names it. Identical requests share one object, and the
      pointer doubles as the digest.
    - Without a bucket, `inputRef` is `null`, and the digest is still recorded.
    - Neither the record nor its events copy the input. The effect's outbox row keeps it, as every effect's row keeps
@@ -63,7 +75,7 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
    per million input tokens: Clef 0.24, Clef-flash 0.038, Clairic 0.10. These models have no output charge
    (spike 7).
    - **The cost** is `input_tokens` × price / 10⁶, reported as the effect's usage.
-   - **No usage, no cost.** A response with no `usage`, or no numeric `input_tokens`, reports no usage, and its record
+   - **No usage, no cost.** A response with no `usage`, or no finite `input_tokens`, reports no usage, and its record
      keeps `usage: null`. It is never reported as $0.
    - **Updating it.** Read the price on the model's Workers AI page, change the table and the test that pins it
      (`test/decisions.test.ts`, "prices the three models"), rebuild the plugin dists, whose toolkit tarball carries the
@@ -72,6 +84,8 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
    SQLite, in `_actors_decisions`, in the same transaction that settles its effect, and `decision.recorded` is emitted.
    - **The row.** One per decision id, `<effect>:<key>`: its kind, model, mode, input digest and pointer, `truncated`,
      usage, the full `answers`, and later its labels.
+   - **A decision id is unique per actor instance.** Effect keys are per instance, so two instances of one actor (per
+     repository, say) can each record `decide.triage:77`. Each record is in its own instance's SQLite.
    - **`truncated`** is Clairic's flag. It is `null` for Clef, which truncates long `state` without saying so.
    - **The event** carries a summary. For a decision, it has each question's answer, probabilities and confidence. For
      an extraction, it has each field's confidence and `p_null`, and whether it is null. It never has an extracted
@@ -80,7 +94,8 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
      and `p_null` 0.32, though the issue never said when. So the record keeps `confidence` and `p_null` for every field,
      and a caller sets `null_threshold` where a guess is worse than nothing.
    - A failed or rejected call isn't recorded.
-8. **Labels.** Both calls are synchronous and part of the handler's transaction.
+8. **Labels.** Both calls are synchronous and part of the handler's transaction. A label names a record in the
+   labelling instance's own table, so it must be applied in the instance that recorded the decision.
    - **`ctx.acted(decisionId, action)`** records what the actor did, emitting `decision.acted`. A later call replaces
      the earlier action.
    - **`ctx.outcome(decisionId, actual)`** records what really was so, emitting `decision.outcome`. For a decision,
@@ -100,8 +115,8 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
    the scorecard and never delivered. Three places enforce it:
    - **`actord check`** refuses a shadow decision with a `result` (`DECISION_SHADOW_RESULT`).
    - **The runtime** never queues a result for a shadow decision, whatever its spec says. It notes `shadow decision:
-     its result <type> is never delivered` instead (`src/runtime/index.ts:1418-1422`).
-   - **The outbox row (R5)** doesn't keep a shadow answer (`src/runtime/index.ts:1142-1143`). That row is what
+     its result <type> is never delivered` instead (`src/runtime/index.ts:1438-1442`).
+   - **The outbox row (R5)** doesn't keep a shadow answer (`src/runtime/index.ts:1162-1163`). That row is what
      `requestEffect` and an agent's tools read, so `requestEffect` answers `confirmed` with no `value`, and an agent
      tool can't see the answer either.
 
@@ -120,9 +135,17 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
      switching a lane to `act` when its scorecard earns it, is factory code, later.
 10. **A decision can't approve (spec §9.3).** In a handler of a message type that is the `result` of a decision or an
     extraction, `ctx.approve` and `ctx.deny` throw "a decision's result can't approve or deny (spec §9.3)"
-    (`src/runtime/index.ts:529-533`, `773-785`).
+    (`src/runtime/index.ts:541-545`, `795-807`).
     - **The guard goes by message type.** Such a type loses `ctx.approve` and `ctx.deny` in every handler of it, even
-      if another effect shares it as its result.
+      if another effect shares it as its result, or another sender routes it. `actord check` warns of either
+      (`DECISION_RESULT_SHARED`).
+    - **`ActorRuntime.decide` is refused in a handler.** Called while a handler runs or is pending in its transaction,
+      it throws at once, as `requestEffect` does (`src/runtime/index.ts:1670`). Otherwise a handler of a decision's
+      result could approve by calling it, even without awaiting it, past the guard and outside its own transaction.
+    - **An agent's own withdrawals pass.** An agent's `start` and `stop` deny the replaced or stopped session's parked
+      approvals. That is the runtime withdrawing the session's own requests, not a decision deciding them, and an
+      agent's `on` may start a session from a decision's result. So they take an internal path that skips the guard
+      (`WITHDRAW_APPROVAL`, `src/runtime/index.ts:810`), and `ctx.deny` still throws there.
     - **The limit.** A handler can still pass a decision's answer on in a message of its own, and that message's
       handler can approve. The runtime can't follow the answer into the handler's own messages, so nothing refuses
       that approval. The event log's causation ids still link it back to the result message, which `actord trace`
@@ -146,7 +169,11 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
       - `DECISION_PUBLISHES`: either declared `publishes: true`.
     - **Warnings:**
       - `DECISION_RESULT_MISSING`: an act-mode decision, or an extraction, with no `result`, which the actor would
-        never hear from.
+        never hear from. It doesn't fire when every actor that requests the effect lists it in its agent `tools`: a
+        tool's answer is its return value.
+      - `DECISION_RESULT_SHARED`: a decision's or an extraction's `result` type is also another effect's `result`, or is
+        routed from any sender other than the receiver itself. Either turns off `ctx.approve` and `ctx.deny` in those
+        handlers (decision 10). The final review added it (its Recommendation 4).
       - `DECISION_IDEMPOTENCY_NONE`: `idempotency: "none"` on a deterministic read, where a retry is always safe.
 12. **Diff (R2).** A change of `model`, `questions` or `fields` is risky: answers already recorded were to the old
     declaration, and probabilities aren't comparable across models. `mode` going to `act` is risky, since the answer
@@ -166,14 +193,21 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
     - **Per effect.** Spike 7's Clef and Clef-flash agreed on the answer but not on the certainty (0.92 against
       0.71), so a threshold tuned on one model doesn't carry over. A card is per effect, and an effect names one model
       at a time.
-    - **The counts:** recorded, shadow, labelled and acted, per effect. The first `decision.recorded` per id counts; the
-      latest `decision.outcome` holds its labels.
+    - **By instance.** A decision id is unique only within its actor instance (decision 7), and the log holds every
+      instance's events. So a record and its labels are keyed by the event's `actor` (`<Actor>:<key>`) and the id. Two
+      instances' decisions with the same key are two records, and a label counts only for its own instance's record.
+    - **The counts:** recorded, shadow, labelled and acted, per effect. The first `decision.recorded` per instance and
+      id counts; the latest `decision.outcome` holds its labels. Records are read before labels, so a label finds its
+      record wherever it sits in the file.
+    - **What it can't count.** It reports the log's unreadable lines (`unparseable`) and the labels with no
+      `decision.recorded` for their instance and id in the log (`orphanLabels`), in `--json` and in the text. A lost
+      line may have held a record, and an orphan label is left out of every statistic.
     - **`choice`:** accuracy (the top option against the label); the multi-class Brier score, the sum over options of
       (p − y)², with y 1 for the labelled option and 0 for the others, averaged over decisions; calibration bins over
       the top option's probability, with the share that was right; and `wrongWhenChosen`, how often each option was
       wrong when it was the top one. A `choice` answer without probabilities counts toward accuracy and
-      `wrongWhenChosen` only, and is skipped by the Brier score and the bins. The adapter rejects such an answer, so it
-      can't come from a real response.
+      `wrongWhenChosen` only, and is skipped by the Brier score and the bins. The adapter rejects such an answer, or
+      one with empty probabilities, so it can't come from a real response.
     - **`noul`:** the Brier score, (p − y)² averaged, with y 1 for a `true` label and 0 for `false`; and bins over p,
       with the share labelled `true`.
     - **`score`:** the mean absolute error between the score and the labelled level.
