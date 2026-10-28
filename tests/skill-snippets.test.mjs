@@ -34,28 +34,46 @@ const files = [
   ...markdownIn(join(codex, "skills")),
 ].sort();
 
-// Fenced ts/typescript blocks whose first line is `// actord:check [name]`.
+// Fenced ts/typescript blocks whose first line is `// actord:check [name]`. Tolerates indented fences, CRLF and
+// info strings (```ts title=x). A marker line outside a matched block, or a repeated sibling name, is an error.
 function blocksOf(file) {
+  const text = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   const out = [];
-  const re = /^```(?:ts|typescript)\n([\s\S]*?)^```$/gm;
-  for (const m of readFileSync(file, "utf8").matchAll(re)) {
-    const first = /^\/\/ actord:check(?: ([A-Za-z0-9_-]+))?[ \t]*$/.exec(
+  const re =
+    /^[ \t]*```(?:ts|typescript)\b[^\n]*\n([\s\S]*?)^[ \t]*```[ \t]*$/gm;
+  for (const m of text.matchAll(re)) {
+    const first = /^\s*\/\/ actord:check(?: ([A-Za-z0-9_-]+))?[ \t]*$/.exec(
       m[1].split("\n", 1)[0],
     );
-    if (first)
-      out.push({
-        name: first[1],
-        code: m[1],
-        line:
-          readFileSync(file, "utf8").slice(0, m.index).split("\n").length + 1,
-      });
+    if (!first) continue;
+    // 1-based file line of the block's first code line (the marker).
+    const line = text
+      .slice(0, m.index + m[0].indexOf("\n") + 1)
+      .split("\n").length;
+    out.push({ name: first[1], code: m[1], line, n: out.length + 1 });
   }
+  const markers = text
+    .split("\n")
+    .filter((l) => /^\s*\/\/ actord:check\b/.test(l)).length;
+  assert.equal(
+    markers,
+    out.length,
+    `${relative(repo, file)}: an // actord:check line is not the first line of a ts/typescript fenced block`,
+  );
+  const names = out.map((b) => b.name).filter(Boolean);
+  assert.equal(
+    new Set(names).size,
+    names.length,
+    `${relative(repo, file)}: duplicate // actord:check sibling name`,
+  );
   return out;
 }
 
 // Types for the Workers runtime are not a dependency of the toolkit, so the snippets get the small slice they use.
+// The stub is deliberately CLOSED (no index signatures): a typo like ctx.storge must fail. Extend it explicitly when
+// a snippet needs another member.
 const workersStub = `declare module "cloudflare:workers" {
-  export class DurableObject<E = unknown> {
+  export class DurableObject<E = Env> {
     constructor(ctx: DurableObjectState, env: E);
     ctx: DurableObjectState;
     env: E;
@@ -68,12 +86,13 @@ interface DurableObjectState {
   storage: {
     sql: import("@actord/toolkit/runtime").SqlStorageLike;
     transaction<T>(closure: () => Promise<T>): Promise<T>;
-    [k: string]: any;
+    setAlarm(scheduledTime: number | Date): Promise<void>;
+    getAlarm(): Promise<number | null>;
+    deleteAlarm(): Promise<void>;
   };
   blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
-  [k: string]: any;
 }
-interface Env { [k: string]: any }
+interface Env {}
 `;
 
 const exportsMap = JSON.parse(
@@ -131,28 +150,34 @@ test("the no-await rule is stated where handlers are written", () => {
   );
 });
 
-test("every // actord:check block typechecks against the built toolkit types", () => {
-  assert.ok(
-    existsSync(join(toolkit, "dist/types/runtime/index.d.ts")),
+// Compiles blocks (as returned by blocksOf, tagged with file) in one temp project; returns tsc's status and report.
+function compileSnippets(units) {
+  const missing = Object.values(paths)
+    .flat()
+    .filter((t) => t.includes("/dist/types/") && !existsSync(t));
+  assert.deepEqual(
+    missing,
+    [],
     "build first: npm run build -w @actord/toolkit",
   );
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "actord-snippets-")));
   try {
     const origin = new Map();
     writeFileSync(join(dir, "workers.d.ts"), workersStub);
-    files.forEach((file, fi) => {
-      const slug = relative(repo, file).replace(/[^A-Za-z0-9]+/g, "-");
-      const sub = join(dir, String(fi));
-      let n = 0;
-      for (const b of blocksOf(file)) {
-        mkdirSync(sub, { recursive: true });
-        const name = b.name ? `${b.name}.ts` : `snippet-${slug}-${++n}.ts`;
-        const target = join(sub, name);
-        writeFileSync(target, b.code);
-        origin.set(target, `${relative(repo, file)}:${b.line}`);
-      }
-    });
-    if (origin.size === 0) return;
+    const dirs = new Map();
+    for (const u of units) {
+      if (!dirs.has(u.file)) dirs.set(u.file, join(dir, String(dirs.size)));
+      const sub = dirs.get(u.file);
+      mkdirSync(sub, { recursive: true });
+      const slug = u.file.replace(/[^A-Za-z0-9]+/g, "-");
+      const target = join(
+        sub,
+        u.name ? `${u.name}.ts` : `snippet-${slug}-${u.n}.ts`,
+      );
+      writeFileSync(target, u.code);
+      origin.set(target, u);
+    }
+    assert.ok(origin.size > 0, "no // actord:check blocks found to compile");
     writeFileSync(
       join(dir, "tsconfig.json"),
       JSON.stringify({
@@ -164,6 +189,8 @@ test("every // actord:check block typechecks against the built toolkit types", (
           strict: true,
           noEmit: true,
           skipLibCheck: true,
+          verbatimModuleSyntax: true,
+          noUncheckedIndexedAccess: true,
           allowImportingTsExtensions: true,
           types: ["node"],
           typeRoots: [join(repo, "node_modules/@types")],
@@ -177,6 +204,7 @@ test("every // actord:check block typechecks against the built toolkit types", (
       ["-p", join(dir, "tsconfig.json"), "--pretty", "false"],
       { encoding: "utf8" },
     );
+    assert.ifError(tsc.error);
     const report = (tsc.stdout + tsc.stderr)
       .split("\n")
       .filter(Boolean)
@@ -187,15 +215,41 @@ test("every // actord:check block typechecks against the built toolkit types", (
           m &&
           [...origin].find(([target]) =>
             target.endsWith(m[1].replace(/^(\.\.\/)+/, "")),
-          );
-        return at ? `${at[1]} (+${m[2]}): ${m[3]}` : l;
+          )?.[1];
+        return at
+          ? `${at.file} block #${at.n} (line ${at.line + Number(m[2]) - 1}): ${m[3]}`
+          : l;
       });
-    assert.equal(
-      tsc.status,
-      0,
-      `snippets do not compile:\n${report.join("\n")}`,
-    );
+    return { status: tsc.status, report };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+test("every // actord:check block typechecks against the built toolkit types", () => {
+  const units = files.flatMap((f) =>
+    blocksOf(f).map((b) => ({ ...b, file: relative(repo, f) })),
+  );
+  const { status, report } = compileSnippets(units);
+  assert.equal(status, 0, `snippets do not compile:\n${report.join("\n")}`);
+});
+
+test("the harness is strict: a misspelled Workers member fails to compile", () => {
+  const code = [
+    "// actord:check",
+    'import { DurableObject } from "cloudflare:workers";',
+    "export class A extends DurableObject {",
+    "  f() { return this.ctx.storge; }",
+    "}",
+    "",
+  ].join("\n");
+  const { status, report } = compileSnippets([
+    { file: "self-test.md", n: 1, line: 1, code },
+  ]);
+  assert.notEqual(
+    status,
+    0,
+    "a typo'd ctx member compiled: the stub is too loose",
+  );
+  assert.match(report.join("\n"), /storge/);
 });

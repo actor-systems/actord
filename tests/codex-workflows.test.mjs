@@ -29,6 +29,10 @@ test("the implement and verify workflow.md copies are byte-identical", () => {
 });
 
 test("the design workflow.md stands alone", () => {
+  assert.notEqual(
+    workflow("evolve-actor-system"),
+    workflow("implement-actor-behavior"),
+  );
   const design = workflow("design-actor-system");
   for (const other of ["evolve-actor-system", "implement-actor-behavior"])
     assert.notEqual(design, workflow(other));
