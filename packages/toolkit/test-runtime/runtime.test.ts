@@ -467,8 +467,8 @@ it("[canary-every-path] the canary is on every path that runs a handler: a direc
   );
   expect(failed).toHaveLength(6);
   // Each failed delivery rolled back. The retries (attempt 2) don't await, so they're handled: a timer's after
-  // fireTimers, a message's after settle. A tick isn't retried.
-  expect(await fireTimers(env, system, "Probe", "yield-timer")).toBe(1);
+  // fireTimers (or the alarm, if its 1 s backoff has passed first), a message's after settle. A tick isn't retried.
+  await fireTimers(env, system, "Probe", "yield-timer");
   await settle(env, system);
   const fired = (key: string) => runInDurableObject(probe(key), (_i, s) => s.storage.sql.exec<{ key: string }>("SELECT key FROM fired ORDER BY rowid").toArray().map((r) => r.key));
   expect(await fired("yield-direct")).toEqual([]);
@@ -653,14 +653,16 @@ const setTimer = (key: string, tk: string, delayMs: number, fail = false, extra:
   ingress(env, system, "Probe", "probe.timer.set", { key: tk, delayMs, ...(fail ? { fail } : {}), ...extra }, { key });
 
 it("[timer-fires] a timer set in a handler arrives later as a message from @timer, and not before its delay", async () => {
+  // Drives only this instance: settle() drives every instance in the file, which under load can outlast the delay.
+  const drive = () => runInDurableObject(probe("tm"), (instance: { actor: { drive(): Promise<void> } }) => instance.actor.drive());
+  await setTimer("tm", "t1-later", 60_000);
   // Half a second, so a slow machine can't reach the delay before the next lines look.
   await setTimer("tm", "t1", 500);
-  await setTimer("tm", "t1-later", 60_000);
-  await settle(env, system); // drives the instance well before t1 is due
+  await drive(); // well before t1 is due
   expect(await probe("tm").fired()).toEqual([]);
   // Then, once it is due, a drive fires t1, and t1-later isn't due for another minute.
   await eventually(async () => {
-    await settle(env, system);
+    await drive();
     expect(await probe("tm").fired()).toEqual(["t1"]);
   });
   expect(await timerRows("tm")).toMatchObject([{ key: "t1-later", attempts: 0 }]);
@@ -799,15 +801,18 @@ it("[timer-delivery-retry] a timer whose handler fails is retried with backoff, 
 });
 
 it("[timer-arms-alarm] a timer wakes the object through its alarm, with no driver call", async () => {
-  await setTimer("tm8", "t8", 20);
+  // Two seconds, so the alarm can't fire it before the lines below look at the armed job, even on a loaded machine.
+  await setTimer("tm8", "t8", 2_000);
   const jobs = await runInDurableObject(probe("tm8"), (_i, s) =>
     s.storage.sql.exec<{ time: number }>("SELECT time FROM cf_agents_jobs WHERE capability = 'actord'").toArray());
   const [timer] = await timerRows("tm8");
   expect(jobs).toHaveLength(1);
   expect(jobs[0]!.time).toBeLessThanOrEqual(timer!.due_at);
-  await new Promise((r) => setTimeout(r, 40));
+  expect(await probe("tm8").fired()).toEqual([]);
+  // Once it is due, the alarm fires it: run here, unless the alarm already ran on its own.
+  await new Promise((r) => setTimeout(r, Math.max(0, timer!.due_at - Date.now()) + 20));
   await runDurableObjectAlarm(probe("tm8"));
-  expect(await probe("tm8").fired()).toEqual(["t8"]);
+  await eventually(async () => expect(await probe("tm8").fired()).toEqual(["t8"]));
 });
 
 it("[schedules-independent] each schedule ticks on its own message", async () => {

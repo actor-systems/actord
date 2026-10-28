@@ -325,9 +325,11 @@ export class Probe extends DurableObject<Env> {
       if (payload.twice) ctx.effect(payload.effect, { key: payload.key }, { key: payload.key });
       if (payload.fail) throw new Error("requested then failed");
     },
+    // A "slow-…" key writes its row, then awaits __probeGate inside its transaction: a delivery that fails there must
+    // take the row back ([canary-ordering]).
     "probe.outcome": async ({ payload }, ctx) => {
-      if (payload.key.startsWith("slow-")) await (globalThis as { __probeGate?: Promise<void> }).__probeGate;
       ctx.sql.exec("INSERT INTO outcomes (key, status, error, usage) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET status = excluded.status, error = excluded.error, usage = excluded.usage", payload.key, payload.status, payload.error ?? null, payload.usage ? JSON.stringify(payload.usage) : null);
+      if (payload.key.startsWith("slow-")) await (globalThis as { __probeGate?: Promise<void> }).__probeGate;
     },
     "probe.timer.set": ({ payload }, ctx) => {
       // `label` is what the timer delivers (and fired() records); it defaults to the timer's key.

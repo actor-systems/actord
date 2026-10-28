@@ -1,8 +1,8 @@
-// #82's experiment, kept as pins of the workerd behaviour deliver's canary relies on: can a "canary" transaction tell
-// that a handler yielded to the event loop inside its delivery's transaction, including the yields #80's setTimeout(0)
-// sentinel missed? These probes run deliver's shape directly on the object's storage (deliverLike), with that former
-// sentinel beside the canary for comparison. The runtime's own canary is pinned in runtime.test.ts ([canary-ordering],
-// [beside-transaction-nested], [handler-io-fails-loudly], [canary-every-path]). Measured in local workerd only.
+// #82's experiment, trimmed to the workerd behaviour deliver's canary relies on that no runtime pin shows. These run
+// deliver's shape directly on the object's storage (deliverLike). The runtime's own canary is pinned in runtime.test.ts:
+// [handler-io-fails-loudly] (every yield fails the delivery), [storage-awaits-allowed] (the allowed awaits don't),
+// [beside-transaction-nested] and [canary-ordering] (a writer requested as the handler starts commits after the
+// rollback), [canary-every-path] and [canary-quiet]. Measured in local workerd only.
 import { env } from "cloudflare:workers";
 import { SELF, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
@@ -13,43 +13,30 @@ type Storage = DurableObjectStorage;
 const IO_REFUSED = "Probe.probe.x: handlers may not await I/O; use ctx.effect";
 const HANDLER_FAILED = "the handler failed";
 
-type Options = { canary: "outer" | "inner" | "none"; failOn: "sentinel" | "canary" | "nothing" };
-type Seen = { canary(): boolean; turn(): boolean };
-
 /**
- * deliver's shape without the runtime: a transaction around a handler; #80's former sentinel, a setTimeout(0) queued as
- * the handler starts; and a no-op canary transaction. `canary` says where the canary is requested: "outer" from the
- * code that requested the delivery's transaction, synchronously right after it (the issue's first candidate), "inner"
- * inside that transaction just before the handler is called (where deliver requests it). Both detectors record whether
- * they ran while the handler was pending; the one `failOn` names then fails the delivery from inside its transaction.
+ * deliver's shape without the runtime: a transaction around a handler, and a no-op canary transaction. `canary` says
+ * where it is requested: "outer" from the code that requested the delivery's transaction, synchronously right after it
+ * (#82's first candidate), "inner" inside that transaction just before the handler is called (where deliver requests
+ * it). It records whether it ran while the handler was pending; with `fail`, it then fails the delivery from inside the
+ * transaction, as deliver does.
  */
-async function deliverLike(storage: Storage, { canary: placement, failOn }: Options, log: string[], handler: (seen: Seen) => Promise<void>) {
+async function deliverLike(storage: Storage, { canary: placement, fail }: { canary: "outer" | "inner" | "none"; fail: boolean }, log: string[], handler: () => Promise<void>) {
   let open = false;
-  let canaryRan = false;
-  let turned = false;
   let refuse!: (err: Error) => void;
   const refused = new Promise<never>((_r, reject) => (refuse = reject));
   const canaryFn = async () => {
     log.push(open ? "canary (open)" : "canary (closed)");
-    if (!open) return;
-    canaryRan = true;
-    if (failOn === "canary") refuse(new Error(IO_REFUSED));
+    if (open && fail) refuse(new Error(IO_REFUSED));
   };
   let canary: Promise<void> | undefined;
   const tx = storage.transaction(async () => {
     if (placement === "inner") canary = storage.transaction(canaryFn);
-    const sentinel = setTimeout(() => {
-      turned = true;
-      log.push("sentinel");
-      if (failOn === "sentinel") refuse(new Error(IO_REFUSED));
-    }, 0);
     open = true;
     log.push("handler starts");
     try {
-      await Promise.race([handler({ canary: () => canaryRan, turn: () => turned }), refused]);
+      await Promise.race([handler(), refused]);
     } finally {
       open = false;
-      clearTimeout(sentinel);
       log.push("handler settled");
     }
   });
@@ -67,10 +54,9 @@ async function deliverLike(storage: Storage, { canary: placement, failOn }: Opti
 }
 
 const before = (log: string[], a: string, b: string) => log.indexOf(a) !== -1 && log.indexOf(b) !== -1 && log.indexOf(a) < log.indexOf(b);
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-// The awaits that yield: the six #80's former sentinel missed, and three it caught.
-const MISSES = ["transaction", "getCurrentBookmark", "sync", "Response.text", "Response.json", "Request.json"];
-const CAUGHT = ["scheduler.wait(1)", "setTimeout(0)", "fetch"];
+// Every await that yields to the event loop. #80's timer sentinel caught the last three, and missed the first six.
 const yields = (s: Storage): Record<string, () => Promise<unknown>> => ({
   transaction: () => s.transaction(async () => {}),
   getCurrentBookmark: () => s.getCurrentBookmark(),
@@ -83,16 +69,17 @@ const yields = (s: Storage): Record<string, () => Promise<unknown>> => ({
   fetch: () => SELF.fetch("https://probe/other").then((r) => r.text()),
 });
 
-it("[canary-placement] a canary requested beside the delivery's transaction runs only after it ends, whatever the handler awaits; one requested inside it, before the handler, runs while it is open, at the handler's yield", async () => {
+it("[canary-placement] a canary requested beside the delivery's transaction runs only after it ends, even when the handler awaits I/O or sync(); one requested inside it, just before the handler, runs while it is open, at the handler's yield; both hold inside blockConcurrencyWhile, and a leftover canary doesn't run inside the next delivery", async () => {
   const out = await runInDurableObject(probe("canary-place"), async (_i, state) => {
     const s = state.storage;
     const results: Record<string, string[]> = {};
-    for (const [name, wait] of Object.entries(yields(s))) {
+    const awaits = { "scheduler.wait(1)": () => scheduler.wait(1), "sync()": () => s.sync() };
+    for (const [name, wait] of Object.entries(awaits)) {
       for (const placement of ["outer", "inner"] as const) {
         for (const context of ["plain", "in blockConcurrencyWhile"] as const) {
           const log: string[] = [];
           const deliver = () =>
-            deliverLike(s, { canary: placement, failOn: "nothing" }, log, async () => {
+            deliverLike(s, { canary: placement, fail: false }, log, async () => {
               await wait();
               log.push("await returned");
             });
@@ -121,9 +108,9 @@ it("[canary-placement] a canary requested beside the delivery's transaction runs
     results.stale = log;
     return results;
   });
-  for (const name of [...MISSES, ...CAUGHT]) {
+  for (const name of ["scheduler.wait(1)", "sync()"]) {
     for (const context of ["plain", "in blockConcurrencyWhile"]) {
-      // Requested beside: never while the handler is open, even across 1 ms of I/O. It runs once the transaction ends.
+      // Requested beside: never while the handler is open. It runs once the transaction ends.
       const outer = out[`${name}/outer/${context}`]!;
       expect(outer, name).not.toContain("canary (open)");
       expect(before(outer, "transaction ended", "canary (closed)"), name).toBe(true);
@@ -136,191 +123,100 @@ it("[canary-placement] a canary requested beside the delivery's transaction runs
   expect(out.stale).toContain("first's canary (next closed)");
 });
 
-// The awaits a handler may make (Runtime.md), as [storage-awaits-allowed] lists them, and microtasks.
-const ALLOWED = ["microtasks", "put", "put-many", "get", "get-many", "list", "delete", "delete-many", "getAlarm", "setAlarm", "deleteAlarm", "sql", "kv.get", "kv.put", "kv.delete", "transactionSync", "lifecycle.jobs.push", "Blob.text", "crypto.subtle.digest"];
-
-it("[canary-catalogue] the inner canary runs exactly when a writer waiting beside the handler gets into its transaction, and ahead of it: during every await #80's former timer sentinel caught and every one it missed, and never during microtasks or the storage awaits handlers may make", async () => {
-  const out = await runInDurableObject(probe("canary-cat"), async (instance: { pingAt(t: number): Promise<void> }, state) => {
-    const s = state.storage;
-    s.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
-    const awaits: Record<string, () => unknown> = {
-      microtasks: async () => {
-        for (let i = 0; i < 500; i++) await Promise.resolve();
-      },
-      put: () => s.put("canary-probe", 1),
-      "put-many": () => s.put({ a: 1, b: 2 }),
-      get: () => s.get("canary-probe"),
-      "get-many": () => s.get(["a", "b"]),
-      list: () => s.list(),
-      delete: () => s.delete("a"),
-      "delete-many": () => s.delete(["b", "absent"]),
-      getAlarm: () => s.getAlarm(),
-      setAlarm: () => s.setAlarm(Date.now() + 86_400_000),
-      deleteAlarm: () => s.deleteAlarm(),
-      sql: () => s.sql.exec("SELECT 1").toArray(),
-      "kv.get": () => s.kv.get("canary-probe"),
-      "kv.put": () => s.kv.put("canary-probe-kv", 1),
-      "kv.delete": () => s.kv.delete("canary-probe-kv"),
-      transactionSync: () => s.transactionSync(() => s.sql.exec("SELECT 1").toArray()),
-      "lifecycle.jobs.push": () => instance.pingAt(Date.now() + 86_400_000),
-      "Blob.text": () => new Blob(["x"]).text(),
-      "crypto.subtle.digest": () => crypto.subtle.digest("SHA-256", new TextEncoder().encode("x")),
-      ...yields(s),
-    };
-    const results: Record<string, { seen: unknown; log: string[] }> = {};
-    for (const [api, call] of Object.entries(awaits)) {
-      const log: string[] = [];
-      const ran = { waiting: false, during: false };
-      const request: Record<string, () => void> = {};
-      // Registered here, outside any transaction, as in [storage-await-no-macrotask]. The handler requests `waiting`
-      // before the await (a microtask then lets it ask for its transaction), and `during` from a microtask that runs
-      // once the await's call has been made.
-      const written = (["waiting", "during"] as const).map((w) =>
-        new Promise<void>((r) => (request[w] = r)).then(() =>
-          s.transaction(async () => {
-            ran[w] = true;
-            log.push(`${w} writer runs`);
-            s.sql.exec("INSERT INTO beside (v) VALUES (?)", `${api}/${w}`);
-          }),
-        ),
-      );
-      let seen: unknown;
-      await deliverLike(s, { canary: "inner", failOn: "nothing" }, log, async (probe) => {
-        request.waiting!();
-        await Promise.resolve();
-        const pending = call();
-        queueMicrotask(request.during!);
-        await pending;
-        seen = { turn: probe.turn(), canary: probe.canary(), ...ran };
-      });
-      await Promise.all(written);
-      results[api] = { seen, log };
-    }
-    return results;
-  });
-  // After each await: had the sentinel run (turn), the canary, the writer requested before the await, the one requested
-  // during it? A nested transaction() lets the earlier writer in, but not one requested after the handler asked for it.
-  expect(Object.fromEntries(Object.entries(out).map(([api, r]) => [api, r.seen]))).toEqual({
-    ...Object.fromEntries(ALLOWED.map((api) => [api, { turn: false, canary: false, waiting: false, during: false }])),
-    ...Object.fromEntries(MISSES.map((api) => [api, { turn: false, canary: true, waiting: true, during: api !== "transaction" }])),
-    ...Object.fromEntries(CAUGHT.map((api) => [api, { turn: true, canary: true, waiting: true, during: true }])),
-  });
-  for (const [api, { log }] of Object.entries(out)) {
-    if (ALLOWED.includes(api)) {
-      // Unrun until the transaction has ended; then it goes first, still ahead of the writers.
-      expect(before(log, "transaction ended", "canary (closed)") && before(log, "canary (closed)", "waiting writer runs"), api).toBe(true);
-    } else {
-      expect(before(log, "canary (open)", "waiting writer runs"), api).toBe(true);
-      if (CAUGHT.includes(api)) expect(before(log, "canary (open)", "sentinel"), api).toBe(true);
-    }
-  }
-});
-
-it("[canary-writer-fate] when the inner canary fails the delivery, every writer that gets into a handler's transaction runs after its rollback and commits: #80's former timer sentinel let those writers in first, and its rollback took their rows", async () => {
+it("[canary-writer-fate] when the inner canary fails the delivery, a writer requested during the handler's await, for every await that yields, runs after the rollback and commits; one requested from outside before or after the delivery's transaction runs whole before or after it", async () => {
   const out = await runInDurableObject(probe("canary-fate"), async (_i, state) => {
     const s = state.storage;
     s.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
     s.sql.exec("CREATE TABLE IF NOT EXISTS mine (v TEXT)");
     const db = new DurableObjectSqliteDatabase(s);
+    const all = yields(s);
+    const cases = [...Object.keys(all).map((y) => [y, "during"] as const), ...["sync", "scheduler.wait(1)"].flatMap((y) => [[y, "outside-before"] as const, [y, "outside-after"] as const])];
     const results: Record<string, { receipt?: string; kept: boolean; mine: number; log: string[] }> = {};
-    for (const regime of ["sentinel", "canary"] as const) {
-      for (const [y, call] of Object.entries(yields(s))) {
-        for (const when of ["outside-before", "outside-after", "starting", "during"] as const) {
-          const tag = `${regime}/${y}/${when}`;
-          const log: string[] = [];
-          let request!: () => void;
-          // Registered outside any transaction; the write goes through chord's store, as pi's does.
-          const written = new Promise<void>((r) => (request = r)).then(() =>
-            db
-              .transaction(async (t) => {
-                log.push("writer runs");
-                await t.run(`INSERT INTO beside (v) VALUES ('${tag}')`);
-              })
-              .then(() => log.push("writer committed")),
-          );
-          let thrown!: () => void;
-          const handlerDone = new Promise<void>((r) => (thrown = r));
-          if (when === "outside-before") {
-            // Requested before the delivery's transaction, and given the microtasks chord takes to ask for its own.
-            request();
-            for (let i = 0; i < 10; i++) await Promise.resolve();
-          }
-          const options: Options = regime === "canary" ? { canary: "inner", failOn: "canary" } : { canary: "none", failOn: "sentinel" };
-          const receipt = deliverLike(s, options, log, async () => {
-            s.sql.exec("INSERT INTO mine (v) VALUES (?)", tag);
-            // As the handler starts, then 10 microtasks, as in [beside-transaction-nested]; or once the await's call is made.
-            if (when === "starting") request();
-            for (let i = 0; i < 10; i++) await Promise.resolve();
-            const pending = call();
-            if (when === "during") queueMicrotask(request);
-            await pending;
-            log.push("handler throws");
-            thrown();
-            throw new Error(HANDLER_FAILED);
-          });
-          if (when === "outside-after") request();
-          const r = await receipt;
-          await written;
-          await handlerDone;
-          results[tag] = { receipt: r.error, kept: s.sql.exec("SELECT 1 FROM beside WHERE v = ?", tag).toArray().length === 1, mine: s.sql.exec("SELECT 1 FROM mine WHERE v = ?", tag).toArray().length, log };
-        }
+    for (const [y, when] of cases) {
+      const tag = `${y}/${when}`;
+      const log: string[] = [];
+      let request!: () => void;
+      // Registered outside any transaction; the write goes through chord's store, as pi's does.
+      const written = new Promise<void>((r) => (request = r)).then(() =>
+        db
+          .transaction(async (t) => {
+            log.push("writer runs");
+            await t.run(`INSERT INTO beside (v) VALUES ('${tag}')`);
+          })
+          .then(() => log.push("writer committed")),
+      );
+      let thrown!: () => void;
+      const handlerDone = new Promise<void>((r) => (thrown = r));
+      if (when === "outside-before") {
+        // Requested before the delivery's transaction, and given the microtasks chord takes to ask for its own.
+        request();
+        for (let i = 0; i < 10; i++) await Promise.resolve();
       }
+      const receipt = deliverLike(s, { canary: "inner", fail: true }, log, async () => {
+        s.sql.exec("INSERT INTO mine (v) VALUES (?)", tag);
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        const pending = all[y]!();
+        // Requested once the await's call has been made.
+        if (when === "during") queueMicrotask(request);
+        await pending;
+        log.push("handler throws");
+        thrown();
+        throw new Error(HANDLER_FAILED);
+      });
+      if (when === "outside-after") request();
+      const r = await receipt;
+      await written;
+      await handlerDone;
+      results[tag] = { receipt: r.error, kept: s.sql.exec("SELECT 1 FROM beside WHERE v = ?", tag).toArray().length === 1, mine: s.sql.exec("SELECT 1 FROM mine WHERE v = ?", tag).toArray().length, log };
     }
     return results;
   });
+  expect(Object.keys(out)).toHaveLength(13);
   for (const [tag, r] of Object.entries(out)) {
-    const [regime, y, when] = tag.split("/") as ["sentinel" | "canary", string, string];
-    // The handler's own write always rolls back.
-    expect(r.mine, tag).toBe(0);
-    if (when === "outside-before") {
-      // Requested before the delivery's transaction: it runs first, whole, in both regimes.
-      expect(before(r.log, "writer committed", "handler starts"), tag).toBe(true);
-    }
-    if (regime === "canary") {
-      // Failed by the canary with #80's message, and every writer, whenever it asked, runs after the rollback.
-      expect({ receipt: r.receipt, kept: r.kept }, tag).toEqual({ receipt: IO_REFUSED, kept: true });
-      if (when !== "outside-before") expect(before(r.log, "canary (open)", "transaction ended") && before(r.log, "transaction ended", "writer runs"), tag).toBe(true);
-    } else {
-      // The former sentinel failed only the awaits it caught; a miss failed with the handler's own error. A writer
-      // requested inside the handler's turns got in and lost its row, unless it asked after a nested transaction().
-      const lost = (when === "starting" || when === "during") && !(y === "transaction" && when === "during");
-      expect({ receipt: r.receipt, kept: r.kept }, tag).toEqual({ receipt: CAUGHT.includes(y) ? IO_REFUSED : HANDLER_FAILED, kept: !lost });
-      if (lost) expect(before(r.log, "writer committed", "transaction ended"), tag).toBe(true);
-      if (when === "outside-after") expect(before(r.log, "transaction ended", "writer runs"), tag).toBe(true);
-    }
+    // Failed by the canary with #80's message; the handler's own write rolled back, and the writer's committed.
+    expect({ receipt: r.receipt, mine: r.mine, kept: r.kept }, tag).toEqual({ receipt: IO_REFUSED, mine: 0, kept: true });
+    if (tag.endsWith("/outside-before")) expect(before(r.log, "writer committed", "handler starts"), tag).toBe(true);
+    else expect(before(r.log, "canary (open)", "transaction ended") && before(r.log, "transaction ended", "writer runs"), tag).toBe(true);
   }
 });
 
-it("[canary-io-writer] a writer requested by an I/O callback: I/O started outside the transaction can't call back until the transaction ends, even across 30 ms; I/O the handler started calls back during its await and the writer gets in, unless the canary has failed the delivery first", async () => {
+it("[canary-io-writer] a writer requested by an I/O callback: I/O started outside the transaction can't call back until the transaction ends, even while the handler waits 2 s for its writer; I/O the handler started calls back during its await and the writer gets in, unless the canary has failed the delivery first", async () => {
   const out = await runInDurableObject(probe("canary-io"), async (_i, state) => {
     const s = state.storage;
     s.sql.exec("CREATE TABLE IF NOT EXISTS beside (v TEXT)");
     const results: Record<string, { receipt?: string; kept: boolean; log: string[] }> = {};
     for (const io of ["wait", "fetch"] as const) {
       for (const where of ["outside", "inside"] as const) {
-        for (const failOn of ["nothing", "canary"] as const) {
-          const tag = `${io}/${where}/${failOn}`;
+        for (const fail of [false, true]) {
+          const tag = `${io}/${where}/${fail ? "canary" : "nothing"}`;
           const log: string[] = [];
           let start!: () => void;
-          const started = new Promise<void>((r) => (start = r));
-          const written = started
+          let ran!: () => void;
+          const running = new Promise<void>((r) => (ran = r));
+          const written = new Promise<void>((r) => (start = r))
             .then(() => (io === "wait" ? scheduler.wait(1) : SELF.fetch("https://probe/other").then((r) => r.text())))
             .then(() => {
               log.push("I/O callback");
               return s.transaction(async () => {
                 log.push("writer runs");
                 s.sql.exec("INSERT INTO beside (v) VALUES (?)", tag);
+                ran();
               });
             });
+          let thrown!: () => void;
+          const handlerDone = new Promise<void>((r) => (thrown = r));
           // Started here, outside any transaction, just before the delivery; or by the handler, inside it.
           if (where === "outside") start();
-          const r = await deliverLike(s, { canary: failOn === "canary" ? "inner" : "none", failOn }, log, async () => {
+          // The handler waits for the writer to run (or 2 s), then fails, as in [beside-transaction-nested].
+          const r = await deliverLike(s, { canary: fail ? "inner" : "none", fail }, log, async () => {
             if (where === "inside") start();
-            await scheduler.wait(30);
-            log.push("handler awaited 30 ms");
+            await Promise.race([running, sleep(2_000)]);
+            log.push("handler waited");
+            thrown();
             throw new Error(HANDLER_FAILED);
           });
           await written;
+          await handlerDone;
           results[tag] = { receipt: r.error, kept: s.sql.exec("SELECT 1 FROM beside WHERE v = ?", tag).toArray().length === 1, log };
         }
       }
@@ -328,12 +224,14 @@ it("[canary-io-writer] a writer requested by an I/O callback: I/O started outsid
     return results;
   });
   for (const io of ["wait", "fetch"]) {
+    // Outside: held for the whole transaction, so the handler waits out its 2 s, fails, and the writer commits after.
     const outside = out[`${io}/outside/nothing`]!;
     expect({ receipt: outside.receipt, kept: outside.kept }, io).toEqual({ receipt: HANDLER_FAILED, kept: true });
     expect(before(outside.log, "transaction ended", "I/O callback"), io).toBe(true);
+    // Inside: the writer runs nested during the handler's await, and the handler's failure takes its row.
     const inside = out[`${io}/inside/nothing`]!;
     expect({ receipt: inside.receipt, kept: inside.kept }, io).toEqual({ receipt: HANDLER_FAILED, kept: false });
-    expect(before(inside.log, "writer runs", "handler awaited 30 ms"), io).toBe(true);
+    expect(before(inside.log, "writer runs", "handler waited"), io).toBe(true);
     for (const where of ["outside", "inside"]) {
       const canary = out[`${io}/${where}/canary`]!;
       expect({ receipt: canary.receipt, kept: canary.kept }, `${io}/${where}`).toEqual({ receipt: IO_REFUSED, kept: true });
