@@ -137,7 +137,7 @@ function claudeMd(name) {
 
 An actor system on Cloudflare Durable Objects, built with @actord/toolkit.
 - The declaration is \`system.ts\` (actors, messages, routes, effects). Actors live in \`src/actors/\`, contracts in \`src/messages/\`.
-- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; storage calls and microtasks are fine.
+- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; \`ctx.sql\`, microtasks and the storage calls \`get\`, \`put\`, \`list\` and \`delete\` are fine.
 - \`npx actord check\` validates what the compiler can't; \`npx actord graph\` prints the topology. \`npm run verify\` runs everything and writes \`.actord/evidence.json\`: run it before committing.
 - \`npm test\` runs workerd tests and records events in \`.actord/events.ndjson\`; \`npx actord trace <id>\` explains one.
 - When adding behavior, keep public read methods (names and return shapes) and existing tests as they are; prove the change with a new test.
@@ -176,7 +176,7 @@ Run \`npm run verify\` and read \`.actord/evidence.json\`. Report each claim as 
 This project uses the shared @actord/toolkit core on native Cloudflare Durable Objects.
 
 - Read \`system.ts\` for actors, messages, routes, effects and budgets; implementations live in \`src/actors/\`.
-- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; storage calls and microtasks are fine.
+- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; \`ctx.sql\`, microtasks and the storage calls \`get\`, \`put\`, \`list\` and \`delete\` are fine.
 - Run \`npx actord check\`, \`npx actord graph --write\`, and \`npm run verify\` after changes. Read the verdict in \`.actord/evidence.json\`.
 - Use \`npx actord trace <message-id>\` for local causal evidence. Say unknown beyond recorded coverage.
 - Preserve public read methods and existing tests while adding behavior. Add a test proving the requested change.
@@ -2652,8 +2652,10 @@ export default {
 import { actorEvents } from "@actord/toolkit/vitest";
 import { defineConfig } from "vitest/config";
 
+// remoteBindings: false keeps every binding local: Workers AI has no local mode, so once an "ai" binding is
+// declared its calls fail in the tests instead of opening a remote session on your Cloudflare credentials.
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } }), actorEvents()],
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, remoteBindings: false }), actorEvents()],
 });
 `,
     "tests/greeting.test.ts": `import { env } from "cloudflare:workers";
