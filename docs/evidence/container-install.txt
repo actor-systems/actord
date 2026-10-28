@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at b413bbb Rebuild both plugin distributions for R34
+== repository at 9a846ca Docs for plan 4: say where a shadow answer and an input are kept, and spell out the Brier scores
 == install Claude Code 2.1.312 from npm
 2.1.312 (Claude Code)
 == marketplace add + install
@@ -125,6 +125,7 @@ not installed
     "package/README.md",
     "package/dist/agents.mjs",
     "package/dist/cli.mjs",
+    "package/dist/decisions.mjs",
     "package/dist/runtime.mjs",
     "package/dist/sources.mjs",
     "package/dist/system.mjs",
@@ -133,6 +134,7 @@ not installed
     "package/dist/types/sources/approval-email.d.ts",
     "package/dist/types/agents/budget.d.ts",
     "package/dist/types/runtime/capability.d.ts",
+    "package/dist/types/runtime/decisions.d.ts",
     "package/dist/types/sources/email.d.ts",
     "package/dist/types/agents/git.d.ts",
     "package/dist/types/agents/index.d.ts",
