@@ -14,14 +14,14 @@ Projected token cost
 
 Per-component (rounded)
   component         always-on  on-invoke
-  design                  ~90       ~770
+  design                  ~90      ~1.2k
   inspect                ~110       ~490
   setup                   ~80       ~560
   start                   ~70       ~540
   evolve                 ~100       ~750
   reliability            ~160       ~760
   implement               ~70        ~1k
-  boundary-critic         ~70       ~450
+  boundary-critic         ~70       ~720
   delivery-auditor        ~60       ~630
 
   On-invoke cost is paid each time a skill or agent fires.
