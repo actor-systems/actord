@@ -234,9 +234,10 @@ it("[crash-after-mutation] a crash before commit is retried, and notifies once",
   `overrideEffectBudget(effect, { maxAttempts, timeoutMs })`. A later override of the same effect replaces the
   earlier one. `captureEvents()` returns a live array of every event. Call `resetSeams()` in `afterEach`.
 - `ingress()` and `receive()` return a receipt for a rejected message rather than throwing (`ingress()` throws only
-  for an undeclared actor or a missing binding), so assert `status: "handled"` on each one a test relies on. A hand-built envelope's `to` is the instance's address, `"Actor:key"` (such as
-  `"DigestWriter:main"`); a bare actor name is rejected as `wrong_recipient`. Prefer `ingress()` on a route from
-  `@ingress`; for a message another actor sends, drive that actor and `settle`.
+  for an undeclared actor or a missing binding), so assert `status: "handled"` on each one a test relies on. A
+  hand-built envelope's `to` is the instance's address, `"Actor:key"` (such as `"DigestWriter:main"`); a bare actor
+  name is rejected as `wrong_recipient`. Prefer `ingress()` on a route from `@ingress`; for a message another actor
+  sends, drive that actor and `settle`.
 - An effect with no override runs its real adapter. Override every effect a test asserts on, one the change adds
   included: a fixture written for an earlier effect doesn't capture a new one.
 - Storage persists across the tests in one file (each file starts empty), and effects dedupe by key per instance, so

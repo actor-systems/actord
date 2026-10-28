@@ -33,6 +33,8 @@ claude plugin eval plugins/claude ${case_args[@]+"${case_args[@]}"} --scaffold -
   "Bash(echo *)" "Bash(printf *)" "Bash(test *)" "Bash(python3 *)" "Bash(which *)" \
   --json "$out" 2>"$log"
 status=$?
+# A host file left by an earlier run of this label must not stand in for this one's.
+rm -f "$dir/$label.host.json"
 "$root/scripts/rerun-eval-workspaces.sh" "$out" "$dir/$label.host.json"
 # The workspaces are the host evidence's only source, so they go only once the re-run has recorded its rows.
 if [ "${ACTORD_EVAL_KEEP_WORKSPACES:-}" != 1 ]; then
