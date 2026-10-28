@@ -15,7 +15,9 @@ const Outcome = z.object({ key: z.string(), status: z.enum(["confirmed", "failed
 export default defineSystem({
   name: "factory",
   messages: {
-    "task.assigned": message({ version: 1, description: "Start work on an issue", payload: z.object({ issue: z.number().int(), title: z.string() }) }),
+    "task.assigned": message({ version: 1, description: "Work on an issue", payload: z.object({ issue: z.number().int(), title: z.string() }) }),
+    "repo.cloned": message({ version: 1, description: "The repo.clone outcome", payload: Outcome }),
+    "task.start": message({ version: 1, description: "Start a session on the cloned issue", payload: z.object({ issue: z.number().int(), title: z.string() }) }),
     "task.hint": message({ version: 1, description: "Steer the running session", payload: z.object({ text: z.string() }) }),
     "task.cancelled": message({ version: 1, description: "Stop the running session", payload: z.object({}) }),
     "task.done": message({ version: 1, description: "The session's result", payload: z.object({ branch: z.string(), summary: z.string().min(1) }) }),
@@ -39,19 +41,23 @@ export default defineSystem({
       }),
       model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", reasoning: "high" },
       instructions: "agents/coder.txt", // a file next to system.ts
-      effects: ["git.push"],
+      effects: ["repo.clone", "git.push"],
       tools: ["workspace.*", "git.push"], // workspace tools, and effects the model may request
-      on: { "task.assigned": "start", "task.hint": "steer", "task.cancelled": "stop" },
+      on: { "task.start": "start", "task.hint": "steer", "task.cancelled": "stop" },
       returns: "task.done", // the model's `finish` tool takes this message's payload
       budget: { usd: 2, turns: 40, wallClock: "45m" },
     },
   },
   effects: {
+    // Not a tool: the actor requests it before the session starts. A clone can outlast the default 30 s attempt.
+    "repo.clone": { description: "Clone the repository into the workspace", idempotency: "key", result: "repo.cloned", budget: { timeoutMs: 300_000, maxAttempts: 3 } },
     // A tool effect needs `input`: the model sees it as the tool's parameters.
     "git.push": { description: "Push the session's factory/ branch", idempotency: "key", input: z.object({ branch: z.string() }), result: "push.done" },
   },
   routes: [
     { from: "@ingress", message: "task.assigned", to: "Coder" },
+    { from: "Coder", message: "repo.cloned", to: "Coder" },
+    { from: "Coder", message: "task.start", to: "Coder" },
     { from: "@ingress", message: "task.hint", to: "Coder" },
     { from: "@ingress", message: "task.cancelled", to: "Coder" },
     // returns, agent.failed and agent.exhausted come from the actor to itself.
@@ -70,7 +76,7 @@ The class and the Worker's exports:
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle } from "agents/lifecycle";
 import { type AgentRuntime, agentRuntime, gitClone, gitPushEffect, withWorkspaceContainer } from "@actord/toolkit/agents";
-import type { Envelope } from "@actord/toolkit/runtime";
+import type { EffectAdapter, Envelope } from "@actord/toolkit/runtime";
 import instructions from "./agents/coder.txt"; // a wrangler Text module: .txt needs no rule
 import system from "./system";
 
@@ -86,12 +92,38 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS task (id INTEGER PRIMARY KEY CHECK (id = 1), issue INTEGER NOT NULL, title TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS results (branch TEXT NOT NULL, summary TEXT NOT NULL)");
   }
+
+  /**
+   * repo.clone's adapter: the clone awaits the network, so it runs as an effect, never in a handler, as gitPushEffect
+   * does. Not yet exercised by a test or an app; the factory's design will settle it (see "Cloning before the session").
+   */
+  readonly #clone: EffectAdapter<Record<string, never>, { dir: string }> = {
+    run: async (_input, { signal }) => {
+      const workspace = this.actor.workspace!;
+      // Keyed, so it may run again after a lost acknowledgment: a clone that already landed isn't repeated.
+      if (await workspace.fs.lstat(`${DIR}/.git`).catch(() => null)) return { dir: DIR };
+      signal.throwIfAborted();
+      await gitClone(workspace, { url: REPO, dir: DIR, token: () => installationToken(this.env) });
+      return { dir: DIR };
+    },
+  };
 
   // Typed: git.push reads this.actor.workspace inside the initializer.
   readonly actor: AgentRuntime = agentRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Coder", {
     // Every message except the `on` messages, which drive sessions. A tool effect's result handler is optional.
+    "task.assigned": ({ payload }, ctx) => {
+      ctx.sql.exec("INSERT INTO task (id, issue, title) VALUES (1, ?, ?) ON CONFLICT (id) DO NOTHING", payload.issue, payload.title);
+      ctx.effect("repo.clone", {}, { key: `clone:${payload.issue}` });
+    },
+    // The session starts on the clone's result, and only when it is confirmed: an `on` message can't be gated itself.
+    "repo.cloned": ({ payload }, ctx) => {
+      const task = ctx.sql.exec<{ issue: number; title: string }>("SELECT issue, title FROM task WHERE id = 1").toArray()[0];
+      if (payload.status !== "confirmed" || !task) return ctx.note("clone did not land; no session", { status: payload.status, error: payload.error });
+      ctx.send("task.start", { issue: task.issue, title: task.title });
+    },
     "task.done": ({ payload }, ctx) => {
       ctx.sql.exec("INSERT INTO results (branch, summary) VALUES (?, ?)", payload.branch, payload.summary);
     },
@@ -102,6 +134,7 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
     transcripts: this.env.TRANSCRIPTS, // each session's messages, at transcripts/<actor>/<key>/<session>.json
     container: this,
     effects: {
+      "repo.clone": this.#clone,
       "git.push": gitPushEffect({
         workspace: () => this.actor.workspace!,
         dir: DIR,
@@ -119,11 +152,6 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
-  }
-
-  /** A clone awaits the network, so it never runs in a handler: the Worker calls this before it sends task.assigned. */
-  async prepare(): Promise<void> {
-    await gitClone(this.actor.workspace!, { url: REPO, dir: DIR, token: () => installationToken(this.env) });
   }
 }
 ```
@@ -148,9 +176,12 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
   bucket, optional), `render(type, payload)` (the prompt an `on` message becomes; default: the type, then the payload
   as indented JSON), `effects`, and for a container, `container: this`.
 - wrangler: `"ai": { "binding": "AI" }` (sessions run on Workers AI), the R2 bucket, `nodejs_compat` (Computer's git
-  client imports `node:` modules), the Durable Object binding and `exports` entry, and with a container
-  `"containers": [{ "class_name": "Coder", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "./Dockerfile" } } }]`
-  (`AGENT_CONTAINER_CONFIG_MISSING`; wrangler rejects `image` for that policy).
+  client imports `node:` modules), the Durable Object binding and `exports` entry, and with a container the entry
+  below (`AGENT_CONTAINER_CONFIG_MISSING`; wrangler rejects `image` for that policy):
+
+  ```jsonc
+  "containers": [{ "class_name": "Coder", "scheduling_policy": "durable_object", "images": { "app": { "dockerfile": "./Dockerfile" } } }]
+  ```
 - The optional peers an agent app installs: `@earendil-works/pi-durable`, `@earendil-works/pi-ai` and
   `@earendil-works/chord` at 1.4.0, `@cloudflare/computer` at exactly 0.8.0, `@platformatic/vfs` 0.4.0 (Computer's
   git client loads it lazily, and fails without it), and `zod`. An app without agent actors installs none.
@@ -163,13 +194,26 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
 - `localOnly` is required with a container backend (`["**/node_modules"]` is the usual choice; `[]` syncs everything);
   each pattern starts with `/` or `**/`.
 - Container commands get only `HOME`, `OLDPWD`, `PATH`, `PWD` and the exec's own `env`, never the image's `ENV`.
-- `gitClone(workspace, { url, dir, ref?, token? })` clones in full, on the object's side. `gitPushEffect({ workspace,
-  dir, url, token, allow })` is a push effect's adapter: declare it `idempotency: "key"`. The URL is the app's, `https`
-  with no credentials in it. The token is minted per attempt, sent as Basic `x-access-token`, never enters the
-  container, and is scrubbed from errors.
+- `gitClone(workspace, { url, dir, ref?, token? })` clones one branch (`ref`) at full depth (never shallow), on the
+  object's side. It awaits the network, so it runs in an effect's adapter, never in a handler.
+- `gitPushEffect({ workspace, dir, url, token, allow })` is a push effect's adapter: declare it `idempotency: "key"`.
+  The URL is the app's, `https` with no credentials in it. The token is minted per attempt, sent as Basic
+  `x-access-token`, never enters the container, and is scrubbed from errors.
 - `allow` defaults to any valid `factory/` branch (the toolkit's `factoryBranch`, not exported), so an agent could
   push another issue's branch. Bind it to the instance's own branch, as above. A disallowed branch is
   `EffectRejected`.
+
+## Cloning before the session
+
+Not yet exercised by a test or an app; the factory's design will settle it. The example declares `repo.clone`, a
+keyed call effect whose adapter calls `gitClone`, as `gitPushEffect` wraps the push:
+
+1. `task.assigned` stores the task and requests `repo.clone` with `ctx.effect`.
+2. Its result, `repo.cloned`, starts the session only when it is `confirmed`, by sending `task.start` (the `on` start
+   message) to the actor itself. An `on` message goes straight to the agent runtime, so mapping `repo.cloned` to
+   `"start"` would start a session on a failed clone too.
+3. The adapter skips a clone whose `.git` is already there, so a retry after a lost acknowledgment doesn't repeat it.
+   A clone cut off partway can leave `.git` behind; the design has to settle that too.
 
 ## Testing
 

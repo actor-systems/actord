@@ -104,18 +104,21 @@ the effect's declared `result` message.
 - **How it fails.** Just before the handler runs, actord queues a no-op canary transaction first inside the handler's
   transaction. At the handler's first yield the canary runs and throws
   `<Actor>.<type>: handlers may not await I/O; use ctx.effect`. The transaction rolls back, and the delivery fails like
-  any other: retried with backoff and dead-lettered after 6 attempts (a timer is dropped with `retry.exhausted`). It
-  fails on every attempt, so the handler never succeeds.
+  any other. A message from another actor is retried with backoff and dead-lettered after 6 attempts; a timer is
+  dropped with `retry.exhausted`; `ingress` returns `failed` to its caller, and a webhook answers `500`. It fails on
+  every attempt, so the handler never succeeds.
 - **The canary in the log.** A `failed` event whose reason ends `handlers may not await I/O; use ctx.effect`. After
   it, every `ctx` method throws `<Actor>.<type>: this handler's delivery has ended; its ctx can't be used`,
   `ctx.sql.exec` included; `self`, `key` and `now` stay readable.
-- **The abandoned handler** keeps running once its await returns, and its direct `this.ctx.storage` writes still land.
-  See Limitations, "An abandoned handler can still write".
+- **The abandoned handler** keeps running once its await returns: a nested transaction it awaited, its
+  `this.actor.requestEffect` calls (their effects run), and its direct `this.ctx.storage` writes all still land, on
+  every attempt. See Limitations, "An abandoned handler can still write".
 - **What a handler may await.** Microtasks, and these storage calls: `get`, `put`, `list`, `delete`, the alarm calls,
   `ctx.sql`, `kv`, `transactionSync` and Lifecycle's `jobs.push`. None of them yields (`[storage-awaits-allowed]`).
   A synchronous handler is still the default.
-- `this.actor.requestEffect(...)` is for code outside handlers, such as an agent's tools. Called from a handler, it
-  throws.
+- `this.actor.requestEffect(...)` is for code outside handlers, such as an agent's tools. Called while a handler
+  runs, it throws; after an await that yields, the delivery has already failed and the call is accepted
+  (Limitations). It is never a way around the rule.
 
 ## The handler's `ctx`
 

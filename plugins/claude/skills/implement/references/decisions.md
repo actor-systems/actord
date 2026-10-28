@@ -17,7 +17,8 @@ export default defineSystem({
   name: "triage",
   messages: {
     "issue.filed": message({ version: 1, description: "An issue to triage", payload: z.object({ number: z.number().int(), text: z.string(), filedOn: z.string() }) }),
-    "issue.resolved": message({ version: 1, description: "What the issue turned out to be", payload: z.object({ number: z.number().int(), route: z.enum(["ready", "needs_info", "not_for_factory"]), runIdRight: z.boolean() }) }),
+    // One label per message, for one record ("<effect>:<key>"): what really was so.
+    "decision.labelled": message({ version: 1, description: "Label one recorded decision or extraction", payload: z.object({ decision: z.string(), actual: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])) }) }),
     // Each decision's result message is its own, routed only from Triage to itself.
     "issue.routed": message({ version: 1, description: "decide.route's outcome", payload: Outcome }),
     "issue.extracted": message({ version: 1, description: "extract.facts's outcome", payload: Outcome }),
@@ -68,7 +69,7 @@ export default defineSystem({
   },
   routes: [
     { from: "@ingress", message: "issue.filed", to: "Triage" },
-    { from: "@ingress", message: "issue.resolved", to: "Triage" },
+    { from: "@ingress", message: "decision.labelled", to: "Triage" },
     { from: "Triage", message: "issue.routed", to: "Triage" },
     { from: "Triage", message: "issue.extracted", to: "Triage" },
   ],
@@ -94,13 +95,13 @@ export class Triage extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS issues (number INTEGER PRIMARY KEY, route TEXT, run_id INTEGER)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS issues (number INTEGER PRIMARY KEY, text TEXT NOT NULL, route TEXT, run_id INTEGER)");
   }
 
   actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, system, "Triage", {
     "issue.filed": ({ payload }, ctx) => {
       const key = String(payload.number); // the record's id is "<effect>:<key>", per instance
-      ctx.sql.exec("INSERT INTO issues (number) VALUES (?) ON CONFLICT (number) DO NOTHING", payload.number);
+      ctx.sql.exec("INSERT INTO issues (number, text) VALUES (?, ?) ON CONFLICT (number) DO NOTHING", payload.number, payload.text);
       ctx.effect("decide.route", { state: payload.text }, { key });
       ctx.effect("decide.route.next", { state: payload.text }, { key });
       ctx.effect("extract.facts", { state: payload.text, referenceDate: payload.filedOn }, { key }); // only an extraction takes referenceDate
@@ -117,15 +118,17 @@ export class Triage extends DurableObject<Env> {
       const facts = Extracted.safeParse(payload.value);
       if (payload.status !== "confirmed" || !facts.success) return;
       const runId = facts.data.answers.run_id;
-      // Clairic guesses, and can misread a long number: act only on a confident value, and check it against the source.
-      if (runId.value !== null && runId.confidence >= 0.8) ctx.sql.exec("UPDATE issues SET run_id = ? WHERE number = ?", runId.value, Number(payload.key));
+      const text = ctx.sql.exec<{ text: string }>("SELECT text FROM issues WHERE number = ?", Number(payload.key)).toArray()[0]?.text ?? "";
+      // Clairic guesses, and can drop a digit of a long number: keep a confident value that appears in the issue's text.
+      if (runId.value !== null && runId.confidence >= 0.8 && text.includes(String(runId.value))) {
+        ctx.sql.exec("UPDATE issues SET run_id = ? WHERE number = ?", runId.value, Number(payload.key));
+      }
     },
-    // What really was so, for the scorecard. Labels merge, and throw for an unknown id, question, option or level.
-    "issue.resolved": ({ payload }, ctx) => {
-      const key = String(payload.number);
-      ctx.outcome(`decide.route:${key}`, { route: payload.route });
-      ctx.outcome(`decide.route.next:${key}`, { route: payload.route });
-      ctx.outcome(`extract.facts:${key}`, { run_id: payload.runIdRight });
+    // What really was so, for the scorecard, such as { decision: "decide.route:77", actual: { route: "needs_info" } }.
+    // ctx.outcome throws for an id with no record (a decision that failed, is in doubt, or hasn't settled yet), or an
+    // unknown question, option or level, and the delivery fails: one record per message keeps a bad label to itself.
+    "decision.labelled": ({ payload }, ctx) => {
+      ctx.outcome(payload.decision, payload.actual);
     },
   }, {
     // An adapter for every decision and extraction, by effect name. `inputs` (optional) keeps each request body in R2.
@@ -187,8 +190,8 @@ Clairic doesn't always come back empty when the input doesn't say: in spike 7 a 
 as the `referenceDate`, with confidence 0.97 and `p_null` 0.32, under the default `null_threshold` of 0.5.
 `null_threshold` is the probability of null above which the value is null, so lowering it turns more guesses into
 `null`. Set it on a field where a guess is worse than nothing, read `confidence` and `p_null`, and check an extracted
-id or long number against the source before acting on it. Limitations lists the rest: list confidences, forecasts, datetimes without an
-offset, Clef's silent truncation, the price table, and the R2 inputs bucket's contents.
+id or long number against the source before acting on it. Limitations lists the rest: list confidences, forecasts,
+datetimes without an offset, Clef's silent truncation, the price table, and the R2 inputs bucket's contents.
 
 ## Testing
 

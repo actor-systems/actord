@@ -191,21 +191,30 @@ same way (`parked: cancel interrupted N times without settling`). Handle it as a
 // actord:check
 import { env } from "cloudflare:workers";
 import { ingress } from "@actord/toolkit/runtime";
-import { expireApprovals, expireJobs, fireTimers, overrideEffect, resetSeams, settle, tick } from "@actord/toolkit/testing";
+import { captureEvents, expireApprovals, expireJobs, fireTimers, overrideEffect, resetSeams, settle, tick } from "@actord/toolkit/testing";
 import { afterEach, expect, it } from "vitest";
 import system from "./system";
 
 afterEach(() => resetSeams());
 
-it("[job-deadline-in-doubt] a run that never reports is in doubt, never released", async () => {
+it("[job-deadline-in-doubt] a run that never reports is in doubt at its deadline, and never released", async () => {
   overrideEffect("ci.run", { async start() { return { runId: 1 }; }, async probe() { return { done: false }; } }); // never finishes
+  const events = captureEvents();
   await ingress(env, system, "CiWatcher", "run.requested", { sha: "abc1234" }, { key: "abc1234" });
   await settle(env, system);
   expect(await fireTimers(env, system, "CiWatcher", "abc1234")).toBe(1); // the nudge
   expect(await expireJobs(env, system, "CiWatcher", "abc1234")).toBe(1);
   await settle(env, system);
+  expect(events.some((e) => e.kind === "effect.in_doubt" && e.effect === "ci.run" && e.reason === "deadline passed")).toBe(true);
+  expect(events.some((e) => e.kind === "effect.requested" && e.effect === "release.publish")).toBe(false); // in_doubt never releases
   expect(await expireApprovals(env, system, "CiWatcher", "abc1234")).toBe(0); // nothing was parked
-  await tick(env, system, "CiWatcher", "abc1234", "report.due");
+});
+
+it("[schedule-tick] a scheduled tick is delivered with its time", async () => {
+  await ingress(env, system, "CiWatcher", "run.requested", { sha: "def5678" }, { key: "def5678" }); // the instance must exist
+  const events = captureEvents();
+  await tick(env, system, "CiWatcher", "def5678", "report.due");
+  expect(events.some((e) => e.kind === "note" && e.reason === "daily report" && typeof e.detail?.scheduledFor === "number")).toBe(true);
 });
 ```
 
