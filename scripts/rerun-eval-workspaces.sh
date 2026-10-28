@@ -12,6 +12,11 @@ out="$2"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/home/.config"
+# Verification is local, so it runs under an allowlisted environment: node's directory and the system's tools on
+# PATH, an empty HOME and config directory, and TMPDIR. A Cloudflare credential under any name stays behind, so a
+# workspace whose tests open a remote binding (Workers AI) fails here instead of calling Cloudflare on the owner's
+# account. `actord verify` starts neither npm nor npx, so no npm settings are needed.
+clean=(env -i PATH="$(dirname "$(command -v node)"):/usr/bin:/bin" HOME="$work/home" XDG_CONFIG_HOME="$work/home/.config" TMPDIR="${TMPDIR:-/tmp}")
 rows="$work/rows.ndjson"
 : >"$rows"
 jq -r '.cases[] | .name as $c | (.arms // {}) | to_entries[] | .key as $arm | .value | to_entries[] | "\($c)\t\($arm)\t\(.key)\t\(.value.tracePath // "")"' "$result" |
@@ -27,10 +32,7 @@ jq -r '.cases[] | .name as $c | (.arms // {}) | to_entries[] | .key as $arm | .v
     copy="$work/$case-$arm-$index"
     rsync -a --exclude .git "$ws/" "$copy/"
     sandbox="$(jq -r '.verdict // "none"' "$copy/.actord/evidence.json" 2>/dev/null || echo none)"
-    # Without Cloudflare credentials: verification is local, so a workspace whose tests open a remote binding
-    # (Workers AI) fails here instead of calling Cloudflare on the owner's account.
-    (cd "$copy" && env -u CLOUDFLARE_API_TOKEN -u CLOUDFLARE_API_KEY -u CLOUDFLARE_EMAIL -u CLOUDFLARE_ACCOUNT_ID \
-      HOME="$work/home" XDG_CONFIG_HOME="$work/home/.config" node node_modules/.bin/actord verify --out .actord/evidence.host.json >/dev/null 2>&1)
+    (cd "$copy" && "${clean[@]}" node node_modules/.bin/actord verify --out .actord/evidence.host.json >/dev/null 2>&1)
     host="$(jq -c '{verdict, summary, tests: (.steps[] | select(.id == "tests") | .summary)}' "$copy/.actord/evidence.host.json" 2>/dev/null || echo null)"
     failed="$(jq -c '[.testResults[]?.assertionResults[]? | select(.status == "failed") | .fullName]' "$copy/.actord/vitest-results.json" 2>/dev/null || echo '[]')"
     printf '{"case":"%s","arm":"%s","run":%s,"sandbox":"%s","host":%s,"failedTests":%s}\n' "$case" "$arm" "$index" "$sandbox" "$host" "$failed" >>"$rows"

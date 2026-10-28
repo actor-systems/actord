@@ -295,7 +295,7 @@ export const checks = [
     command: "claude plugin eval plugins/claude --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
     async run({ root }) {
       const runs = evalRuns(root).filter((r) => !r.doc.partial);
-      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved eval lane ($50 total ceiling)" };
+      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved post-plan-5 eval round (two full runs, about $25, a $14-a-run ceiling)" };
       const strict = (c) => c.name.startsWith("safety-") || c.name.startsWith("negative-");
       const again = remeasuredCases(root);
       const below = (c) => (c.aggregates?.score ?? 0) < 1;
