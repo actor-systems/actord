@@ -81,6 +81,34 @@
 
 The usage was 897 input tokens (137 state, 486 schema) over 3 passes, about $0.00009 per call. Wall time was 852, 871 and 753 ms.
 
+## Through the binding
+
+A later session ran the calls through the AI binding the adapters use: a local `wrangler dev` Worker calling
+`env.AI.run`.
+
+- **The shapes.** For Clef-flash and Clairic, `env.AI.run` returned plain objects, identical in shape and values to the
+  REST calls above. `route` was 0.7106, 0.1192 and 0.1702 again, and Clairic's usage was 897 input tokens over 3
+  passes. Each call took about 333 ms.
+- **The all-types call.** Clairic was given a short CI report (`clairic-types-req.json`) with `reference_date:
+  "2026-10-28"`, and asked for one field of each type the first call didn't cover, plus `number`, `list` and `date`.
+  The usage was 785 input tokens (117 state, 668 schema) in 1 pass.
+
+| Field | Type | `value` | Also in the answer |
+| --- | --- | --- | --- |
+| `t` | `time` | `"02:00:00"`, a string | `guess`, `confidence` 0.9997, `p_null` |
+| `dt` | `datetime` | `"2026-10-27T19:15:45"`, a string, without the input's `Z` | `guess`, `confidence` 0.998, `p_null` |
+| `dur` | `duration` (`unit: "seconds"`) | `756`, a number: 12 min 36 s, correct | `guess`, `confidence` 0.994, `p_null` |
+| `est` | `estimate` (0 to 10, step 1) | `2`, a number | `mean` 2.39, `median`, `p10`, `p90`, `p_below`, `p_above`; no `confidence` |
+| `fc` | `forecast` (0 to 2000, `horizon: 3`, monthly) | `[650.7, 666.6, 709.0]`, an array, one number per step | `median`, `p10` and `p90` as arrays; `steps`, one `{ value, mean, median, p10, p90, p_below, p_above }` per step; no `confidence` |
+| `num` | `number` (`integer`) | `4045464511` | `guess`, `confidence` 0.12, `p_null` 0.001 |
+| `lst` | `list` (`items: "number"`) | the six monthly figures, exact | `confidences` per item, `confidence` 0.77 |
+| `dl` | `date` | `"2026-10-27"`, a string | `guess`, `confidence` 0.999999, `p_null` |
+
+- **A misread id.** The input's run id was 40454645115, eleven digits. Clairic returned 4045464511, ten digits, with
+  a digit dropped and no warning. Only its `confidence`, 0.12, was a sign. The first extraction above read the same
+  id correctly, at 0.67.
+- **A forecast's `value` is an array,** one entry per step: `horizon: 3` gave 3 numbers.
+
 ## What this changes
 
 - **Determinism.** Every response was byte-identical across its three runs. A decision or an extraction is a pure function of its request here, so a retry, or a replay keyed by the same input, gives the same answer.

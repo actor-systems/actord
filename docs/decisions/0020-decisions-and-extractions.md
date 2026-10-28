@@ -45,11 +45,15 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
      - `number` and `duration`: a finite number;
      - `list`: an array;
      - `text`, `date`, `time` and `datetime`: a string;
-     - `estimate` and `forecast`: a number, or a string when the field's `min` is a date string;
+     - `estimate`: a number, or a string when the field's `min` is a date string;
+     - `forecast`: an array, one entry per step, of numbers, or of strings when the field's `min` is a date string. Its
+       length isn't checked against `horizon`;
      - any type: `null`, which Clairic gives when the input doesn't determine the value.
 
-     A rejection names the field and what kind of value it got, never the value, which may be personal data. Spike 7
-     answered `text`, `number`, `list` and `date` live; the others follow the published `{ type, value }` shape.
+     A rejection names the field and what kind of value it got, never the value, which may be personal data. The
+     shapes are spike 7's: `text`, `number`, `list` and `date` from its first extraction, and `time`, `datetime`,
+     `duration`, `estimate` and `forecast` from a call through the binding (R10). A forecast's value there was an array
+     of 3 numbers for `horizon: 3`, with each step's detail in `steps`.
    - **A malformed response is rejected, never retried.** The error names the question or field. The models are
      deterministic (spike 7), so a retry would get the same answer. A throw from `ai.run` (the network, a `429`, a
      `5xx`) is retried under the effect's budget, which is safe because the call is keyed and only reads.
@@ -66,7 +70,7 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
    - `inputDigest` is the hex SHA-256 of the exact request body sent: `JSON.stringify` of `{ model, state, questions }`
      or `{ model, state, fields, reference_date? }`.
    - Given `inputs`, an R2 bucket, the adapter writes that body to `decisions/inputs/<inputDigest>.json` before each
-     call (`src/decisions/index.ts:135-138`), and `inputRef` names it. Identical requests share one object, and the
+     call (`src/decisions/index.ts:145-148`), and `inputRef` names it. Identical requests share one object, and the
      pointer doubles as the digest.
    - Without a bucket, `inputRef` is `null`, and the digest is still recorded.
    - Neither the record nor its events copy the input. The effect's outbox row keeps it, as every effect's row keeps

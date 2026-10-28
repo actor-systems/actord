@@ -87,10 +87,13 @@
   input doesn't say. In spike 7, `reported_on` came back as the `reference_date` it was given, with confidence 0.97
   and `p_null` 0.32, under the default `null_threshold` of 0.5, though the issue never said when. Set `null_threshold`
   on a field where a guess is worse than nothing, and read `confidence` and `p_null`. A list's confidence is low even
-  when the list is right (0.15 for an exact one), so it can't be compared with a scalar's. The adapter checks each
-  field's value against its type, but spike 7 exercised only `text`, `number`, `list` and `date` live. The checks for
-  `time`, `datetime`, `duration`, `estimate` and `forecast` follow the published schema: if Clairic answers one of
-  those differently, every such call is rejected, loudly. Tracked: none.
+  when the list is right (0.15 for an exact one), so it can't be compared with a scalar's.
+  - **An extracted identifier can be misread.** Through the binding, spike 7 got the 11-digit run id 40454645115 back
+    as 4045464511, a digit dropped, with no warning; only its confidence, 0.12, was low. Check an extracted id or long
+    number against the source before acting on it.
+  - **A forecast's value is a list, one entry per step** (`horizon: 3` gave 3), with each step's detail in `steps`.
+    The adapter accepts a list of numbers, or of date strings when the field's `min` is a date, of any length.
+  - **Tracked:** none.
 - **Clef truncates long `state` silently.** Text `state` too long for the context window is cut to fit, and the
   response doesn't say so. The window is 65,536 tokens for Clef, and 24,576 for Clef-flash on its model page. A Clef
   record's `truncated` is `null`. Clairic reports `truncated`, and its record keeps it. The input digest and the R2
