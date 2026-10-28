@@ -90,6 +90,7 @@ export const gates = [
     requires: [
       "g5.cli.unit",
       "g5.skills.lint",
+      "g5.skills.snippets",
       "g5.evals.static",
       "g5.inventory",
       "g5.starter.smoke",
@@ -264,6 +265,8 @@ export const checks = [
   command("g4.runtime.probe", "G4", "Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts", "npx --no-install vitest run --config vitest.runtime.config.ts", { cwd: "packages/toolkit" }),
   command("g5.cli.unit", "G5", "init, hooks (check-on-edit, evidence gate, heredoc note), claim classification", "npx --no-install vitest run test/g5.test.ts", { cwd: "packages/toolkit" }),
   command("g5.skills.lint", "G5", "Seven skills and two read-only critics follow the charter's authoring rules", "node --test tests/skills.test.mjs"),
+  // Built first (the snippets typecheck against packages/toolkit/dist/types), so it holds under --only too.
+  command("g5.skills.snippets", "G5", "Every // actord:check block in the plugin skills typechecks against the built toolkit", "npm run --silent build -w @actord/toolkit && node --test tests/skill-snippets.test.mjs"),
   command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
   {
     id: "g5.inventory",
