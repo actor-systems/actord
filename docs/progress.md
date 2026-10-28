@@ -44,8 +44,8 @@ local event log. A shadow decision is recorded and never delivered, and a decisi
 (decision 0020). Spike 7 read both models' schemas and called them live (`docs/evidence/spike-7-clef-clairic.md`).
 Verified, after the final review's fixes and R10 (a forecast's value is a list), from a plain clone at `273692a`:
 60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312).
-Every project regenerates its manifest once (`actord graph --write`). The plugin skills still teach the old style (plan 5). Plan 5 is next:
-the plugin skills, templates and eval scaffolds.
+Every project regenerates its manifest once (`actord graph --write`). The plugin skills still teach the old style
+(plan 5). Plan 5 is next: the plugin skills, templates and eval scaffolds.
 
 **#80 (handler I/O) is merged, and #82 replaces its timer with an exact canary on `fix/82-canary-detector`.
 Neither is released yet.**
