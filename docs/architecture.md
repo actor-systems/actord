@@ -128,6 +128,7 @@ can't bind its loopback port, so verification reports `blocked` there rather tha
 | [0020](decisions/0020-decisions-and-extractions.md) | Decisions and extractions: Clef and Clairic calls are recorded effects, and shadow never steers |
 | [0021](decisions/0021-approvals-by-email-reply.md) | Approvals by email: reply, never link, matched by a signed subject token |
 | [0022](decisions/0022-agent-workspaces.md) | Agent workspaces: Computer in the object, commands in a container, git from the object |
+| [0023](decisions/0023-skills-track-the-runtime.md) | Skills track the runtime: no new skills, code examples that compile, and eval scaffolds that run |
 
 ## Coding-host adapters
 

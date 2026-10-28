@@ -59,6 +59,12 @@ CI (`.github/workflows/verify.yml`) runs the offline lane on every push. Model-b
   tests run the built bundles; a fresh clone has none.
 - **One version.** Bump `packages/toolkit/package.json` and both plugin manifests together; a test fails if
   they differ.
+- **Skill code must compile.** A fenced `ts` block in a skill or agent whose first line is `// actord:check` is
+  typechecked against the built toolkit (`node --test tests/skill-snippets.test.mjs`, gate `g5.skills.snippets`).
+  `// actord:check system` names a block `system.ts` that sibling blocks in the same file import as `./system`.
+  Mark every example a reader will copy; leave a marker off only a sketch. The Codex `workflow.md` copies are
+  hand-copied: edit all twins (`tests/codex-workflows.test.mjs` fails if they drift), and rebuild with
+  `npm run build -w @actord/toolkit`.
 - **Record decisions.** A change to the design gets a record in `docs/decisions/`, linked from
   `docs/architecture.md` (a test checks every record is linked).
 - **Keep the docs true.** The README is the landing page; reference documentation lives in `docs/wiki/` and is
@@ -83,7 +89,7 @@ It runs `claude plugin eval plugins/claude --scaffold --no-publish --trust-plugi
 models (`claude-sonnet-5-5`, judged by `claude-haiku-5-5`), the cost ceiling, and the tool grants the cases
 need. It writes `docs/evidence/evals/<label>.json`, then re-runs each kept workspace's runtime tests on the host
 (`<label>.host.json`), because eval runs deny the loopback port workerd needs
-([decision 0004](docs/decisions/0004-workerd-and-the-eval-sandbox.md)). A full run costs about $10. Model-backed
+([decision 0004](docs/decisions/0004-workerd-and-the-eval-sandbox.md)). A full run of the 15 cases costs about $12–13. Model-backed
 runs spend real usage, so they're a separate, explicit lane, never part of `npm run verify`; record each run in
 [docs/evidence/evals/README.md](docs/evidence/evals/README.md).
 
