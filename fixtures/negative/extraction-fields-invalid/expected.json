@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "EXTRACTION_FIELDS_INVALID"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

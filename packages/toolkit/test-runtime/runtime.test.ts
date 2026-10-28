@@ -392,7 +392,9 @@ for (const io of ["storage", "microtasks"] as const) {
     overrideEffect("gateway.keyed", { run: async () => "ran" });
     const key = `pass-${io}`;
     expect(await ioCall(key, io)).toMatchObject({ status: "handled" });
-    expect(probeIO(key)?.tried).toEqual({ "sql.exec": "ok", send: "ok", effect: "ok", approve: "ok", deny: "ok", after: "ok", at: "ok", cancelTimer: "ok", settleJob: "ok", cancelJob: "ok", note: "ok" });
+    // The labels reach their lookup: this instance has recorded no decision to label.
+    const unrecorded = `no decision or extraction is recorded as "decide.route:${key}"`;
+    expect(probeIO(key)?.tried).toEqual({ "sql.exec": "ok", send: "ok", effect: "ok", approve: "ok", deny: "ok", after: "ok", at: "ok", cancelTimer: "ok", settleJob: "ok", cancelJob: "ok", note: "ok", acted: unrecorded, outcome: unrecorded });
     await settle(env, system);
     expect(await leftBy(key)).toMatchObject({
       fired: [`${key}:before`, `${key}:after`],
@@ -415,7 +417,7 @@ it("[handler-ctx-closed] once its delivery has ended, a handler's ctx refuses ev
   expect(await ioCall("closed-io", "wait")).toMatchObject({ status: "failed", error: IO_REFUSED });
   await eventually(async () => expect(probeIO("closed-io")).toBeDefined());
   const abandoned = probeIO("closed-io")!;
-  expect(abandoned.tried).toEqual({ "sql.exec": CTX_CLOSED, send: CTX_CLOSED, effect: CTX_CLOSED, approve: CTX_CLOSED, deny: CTX_CLOSED, after: CTX_CLOSED, at: CTX_CLOSED, cancelTimer: CTX_CLOSED, settleJob: CTX_CLOSED, cancelJob: CTX_CLOSED, note: CTX_CLOSED });
+  expect(abandoned.tried).toEqual({ "sql.exec": CTX_CLOSED, send: CTX_CLOSED, effect: CTX_CLOSED, approve: CTX_CLOSED, deny: CTX_CLOSED, after: CTX_CLOSED, at: CTX_CLOSED, cancelTimer: CTX_CLOSED, settleJob: CTX_CLOSED, cancelJob: CTX_CLOSED, note: CTX_CLOSED, acted: CTX_CLOSED, outcome: CTX_CLOSED });
   // Only what the handler is, not what it does, stays readable.
   expect(abandoned.readable).toEqual({ self: "Probe:closed-io", key: "closed-io", now: "number" });
   await settle(env, system);
@@ -778,9 +780,14 @@ it("[fire-timers-counts-fired] fireTimers counts the timers the drive fired, inc
   await setTimer("fcount", "bad", 60_000);
   expect(await fireTimers(env, system, "Probe", "fcount")).toBe(2);
   expect(await probe("fcount").fired()).toEqual(["ok"]);
-  // The failed one waits for its retry, so a second call right away fires it again.
-  expect((await timerRows("fcount")).map((r) => [r.key, r.attempts])).toEqual([["bad", 1]]);
-  expect(await fireTimers(env, system, "Probe", "fcount")).toBe(1);
+  // The failed one waits for its retry. A second call fires it again, unless the real alarm's 1 s retry got there
+  // first under load (it did in CI's clean clone, #77's report): either way it has been tried again by now.
+  expect((await timerRows("fcount")).map((r) => r.key)).toEqual(["bad"]);
+  const again = await fireTimers(env, system, "Probe", "fcount");
+  expect(again).toBeLessThanOrEqual(1);
+  const [bad] = await timerRows("fcount");
+  expect(bad!.attempts).toBeGreaterThanOrEqual(2);
+  expect(await probe("fcount").fired()).toEqual(["ok"]);
 });
 
 it("[timer-delivery-retry] a timer whose handler fails is retried with backoff, then dropped when attempts run out", async () => {

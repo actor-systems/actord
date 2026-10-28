@@ -1177,6 +1177,10 @@ function normalize(system) {
     result: e.result ?? null,
     ...e.budget ? { budget: { ...e.budget.maxAttempts !== void 0 ? { maxAttempts: e.budget.maxAttempts } : {}, ...e.budget.timeoutMs !== void 0 ? { timeoutMs: e.budget.timeoutMs } : {} } } : {},
     kind: e.kind ?? "call",
+    model: e.model ?? null,
+    questions: e.questions ? e.questions : null,
+    fields: e.fields ? e.fields : null,
+    mode: e.kind === "decision" ? e.mode ?? "act" : e.mode ?? null,
     deadline: e.deadline ?? null,
     probe: e.probe ? { every: e.probe.every } : null,
     completes: e.completes ? { message: e.completes.message } : null,
@@ -1378,6 +1382,9 @@ function checkProject(project) {
             add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} \u2192 ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
       }
     }
+    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, m, add);
+    else if (e.questions !== null || e.fields !== null || e.mode !== null || e.model !== null)
+      add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${e.kind} effect but declares ${[e.model !== null && "model", e.questions !== null && "questions", e.fields !== null && "fields", e.mode !== null && "mode"].filter(Boolean).join(", ")}, which only a decision or an extraction uses`, `Set kind: "decision" or kind: "extraction", or remove the field.`);
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)
       add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
@@ -1518,6 +1525,76 @@ function sortDiagnostics(d) {
   const rank = (x) => x.severity === "error" ? 0 : 1;
   const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
   return d.sort((a, b) => rank(a) - rank(b) || cmp(a.code, b.code) || cmp(a.subject ?? "", b.subject ?? "") || cmp(a.message, b.message));
+}
+var CLEF_MODELS = ["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"];
+var CLAIRIC_MODEL = "@cf/cloudflare/clairic";
+var QUESTION_ID = /^[A-Za-z0-9_.-]{1,100}$/;
+var FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/;
+var FIELD_TYPES = ["text", "number", "date", "time", "datetime", "duration", "list", "estimate", "forecast"];
+var isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+function questionProblem(id2, q) {
+  if (!QUESTION_ID.test(id2)) return `question id "${id2}" doesn't match ${QUESTION_ID.source}`;
+  if (!isObject(q)) return `question ${id2} isn't an object`;
+  if (typeof q.instructions !== "string" || q.instructions.trim() === "") return `question ${id2} has no instructions`;
+  if (q.type === "noul") return null;
+  if (q.type === "choice") {
+    const n = isObject(q.criteria) ? Object.keys(q.criteria).length : 0;
+    return n >= 2 && n <= 255 ? null : `choice question ${id2} has ${n} options; Clef takes 2 to 255`;
+  }
+  if (q.type === "score") {
+    const n = Array.isArray(q.criteria) ? q.criteria.length : 0;
+    return n >= 2 && n <= 10 ? null : `score question ${id2} has ${n} levels; Clef takes 2 to 10`;
+  }
+  return `question ${id2} has type ${JSON.stringify(q.type)}; use noul, choice or score`;
+}
+function fieldProblem(name, f) {
+  if (!FIELD_NAME.test(name)) return `field name "${name}" doesn't match ${FIELD_NAME.source}`;
+  if (!isObject(f) || typeof f.type !== "string" || !FIELD_TYPES.includes(f.type)) return `field ${name} has type ${JSON.stringify(isObject(f) ? f.type : f)}; use ${FIELD_TYPES.join(", ")}`;
+  if (f.type === "list" && !["text", "number", "date"].includes(f.items)) return `list field ${name} needs items: "text", "number" or "date"`;
+  if ((f.type === "estimate" || f.type === "forecast") && (f.min === void 0 || f.max === void 0)) return `${f.type} field ${name} needs both min and max`;
+  if (f.decimals !== void 0 && !(Number.isInteger(f.decimals) && f.decimals >= 0 && f.decimals <= 6)) return `field ${name} has decimals ${String(f.decimals)}; use 0 to 6`;
+  if (f.null_threshold !== void 0 && !(typeof f.null_threshold === "number" && f.null_threshold > 0 && f.null_threshold <= 1)) return `field ${name} has null_threshold ${String(f.null_threshold)}; use a number above 0 and at most 1`;
+  if (f.horizon !== void 0 && !(Number.isInteger(f.horizon) && f.horizon >= 1 && f.horizon <= 64)) return `field ${name} has horizon ${String(f.horizon)}; use 1 to 64`;
+  return null;
+}
+function checkDecisionEffect(e, m, add) {
+  const decision = e.kind === "decision";
+  const label2 = decision ? "decision" : "extraction";
+  const requesters = m.actors.filter((a) => a.effects.includes(e.name));
+  const toolOnly = requesters.length > 0 && requesters.every((a) => a.tools?.includes(e.name));
+  if (decision ? e.model === null || !CLEF_MODELS.includes(e.model) : e.model !== CLAIRIC_MODEL)
+    add("error", "DECISION_MODEL_UNKNOWN", e.name, `${e.name} is a ${label2} with model ${e.model === null ? "none" : `"${e.model}"`}`, `Use model: ${decision ? CLEF_MODELS.map((x) => `"${x}"`).join(" or ") : `"${CLAIRIC_MODEL}"`}.`);
+  if (decision) {
+    const entries = e.questions === null || Array.isArray(e.questions) ? [] : Object.entries(e.questions);
+    const problem = e.questions === null ? "it declares no questions" : Array.isArray(e.questions) ? "questions is a list; declare an object keyed by question id" : entries.length < 1 || entries.length > 64 ? `it declares ${entries.length} questions; Clef takes 1 to 64` : entries.map(([id2, q]) => questionProblem(id2, q)).find((p) => p !== null);
+    if (problem) add("error", "DECISION_QUESTIONS_INVALID", e.name, `${e.name}: ${problem}`, `Declare 1 to 64 questions, each noul, choice (2 to 255 options) or score (2 to 10 levels), with instructions.`);
+    if (e.mode !== "act" && e.mode !== "shadow")
+      add("error", "DECISION_MODE_INVALID", e.name, `${e.name} has mode ${JSON.stringify(e.mode)}; a typo here would silently act on the answer`, `Use mode: "act" or mode: "shadow".`);
+    if (e.mode === "shadow" && e.result)
+      add("error", "DECISION_SHADOW_RESULT", e.name, `${e.name} is a shadow decision but delivers ${e.result}; a shadow answer is recorded for the scorecard and never delivered`, `Remove result, or set mode: "act".`);
+    if (e.mode !== "shadow" && !e.result && !toolOnly)
+      add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an act-mode decision with no result, so the actor would never see the answer`, `Add result: "<message>", or set mode: "shadow" to only record it.`);
+    if (e.fields !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a decision but declares fields, which only an extraction uses`, `Use questions, or make it an extraction.`);
+  } else {
+    const entries = e.fields === null || Array.isArray(e.fields) ? [] : Object.entries(e.fields);
+    const problem = Array.isArray(e.fields) ? "fields is a list; declare an object keyed by field name" : entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
+    if (problem) add("error", "EXTRACTION_FIELDS_INVALID", e.name, `${e.name}: ${problem}`, `Declare at least one field; see the Clairic field types and limits.`);
+    if (!e.result && !toolOnly) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
+    for (const f of ["questions", "mode"])
+      if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is an extraction but declares ${f}, which only a decision uses`, `Remove ${f}, or make it a decision.`);
+  }
+  for (const f of ["deadline", "probe", "completes"])
+    if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${label2} but declares ${f}, which only a job uses`, `Remove ${f}: a ${label2} is answered within one request.`);
+  if (e.publishes === true) add("error", "DECISION_PUBLISHES", e.name, `${e.name} is a ${label2} and publishes; it only reads, so nothing public can come from it`, `Remove publishes: true.`);
+  if (e.result) {
+    const result2 = e.result;
+    const others = m.effects.filter((x) => x.name !== e.name && x.result === result2).map((x) => x.name);
+    const routed = m.routes.filter((r) => r.message === result2 && r.from !== r.to).map((r) => `${r.from} \u2192 ${r.to}`);
+    const ways = [...others.length > 0 ? [`the result of ${others.join(" and ")}`] : [], ...routed.length > 0 ? [`routed ${routed.join(", ")}`] : []];
+    if (ways.length > 0)
+      add("warning", "DECISION_RESULT_SHARED", e.name, `${e.name}'s result, ${result2}, is also ${ways.join(", and ")}, so ctx.approve and ctx.deny throw in every handler of ${result2}`, `Give ${e.name} a result message of its own, routed only from ${requesters.length === 1 ? requesters[0].name : "each requesting actor"} to itself.`);
+  }
+  if (e.idempotency === "none") add("warning", "DECISION_IDEMPOTENCY_NONE", e.name, `${e.name} declares idempotency: "none", but a ${label2} is a deterministic read`, `Use idempotency: "key"; a retry is always safe.`);
 }
 
 // src/model/diff.ts
@@ -1672,7 +1749,7 @@ function diffMessage(b, h, add) {
   }
 }
 var ACTOR_FIELDS = /* @__PURE__ */ new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends", "harness", "model", "instructions", "tools", "on", "returns"]);
-var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes", "input"]);
+var EFFECT_FIELDS = /* @__PURE__ */ new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "model", "questions", "fields", "mode", "deadline", "probe", "completes", "publishes", "input"]);
 var SOURCE_FIELDS = /* @__PURE__ */ new Set(["name", "kind", "path", "verify", "events", "message"]);
 function unclassified(what, b, h, classified, add) {
   const bv = b;
@@ -1699,6 +1776,14 @@ function diffEffect(b, h, add) {
   const s = h.name;
   if (b.kind !== h.kind)
     add("effect.kind", s, "risky", `Kind ${b.kind} \u2192 ${h.kind}; effects already in flight change how they settle (a job already waiting can't be settled by ctx.settleJob once the effect is a call, and waits out its deadline)`);
+  if ((b.model ?? null) !== (h.model ?? null))
+    add("effect.model", s, "risky", `Model ${b.model ?? "none"} \u2192 ${h.model ?? "none"}; answers change, and an answer's probabilities or confidences aren't comparable across models`);
+  if (show(b.questions ?? null) !== show(h.questions ?? null)) add("effect.questions", s, "risky", "The questions a decision asks changed; answers already recorded were to the old questions");
+  if (show(b.fields ?? null) !== show(h.fields ?? null)) add("effect.fields", s, "risky", "The fields an extraction returns changed; results already recorded have the old shape");
+  if ((b.mode ?? null) !== (h.mode ?? null)) {
+    if (h.mode === "act") add("effect.mode", s, "risky", `Mode ${b.mode ?? "none"} \u2192 act; the decision's answer is now delivered to the actor, which acts on it`);
+    else add("effect.mode", s, "compatible", `Mode ${b.mode ?? "none"} \u2192 ${h.mode ?? "none"}; the answer is recorded for the scorecard and no longer delivered`);
+  }
   if ((b.deadline ?? null) !== (h.deadline ?? null)) add("effect.deadline", s, "risky", `Deadline ${b.deadline ?? "none"} \u2192 ${h.deadline ?? "none"}; jobs already waiting keep the deadline they started with`);
   if (show(b.probe ?? null) !== show(h.probe ?? null))
     add("effect.probe", s, "risky", `Probe ${b.probe ? `every ${b.probe.every}` : "none"} \u2192 ${h.probe ? `every ${h.probe.every}` : "none"}; jobs already waiting keep the next look they booked`);
@@ -3000,7 +3085,7 @@ async function guard(cwd, command) {
   const summary = d.exitCode !== 0 ? `The declaration doesn't load, so there is no plan: ${d.data.notes[0] ?? "unknown error"}.` : d.data.changes.length === 0 ? `${d.data.head.system}: no architectural changes against ${d.data.base.source}.` : `${d.data.head.system}: ${plural(d.data.changes.length, "change")} against ${d.data.base.source} (${d.data.summary.breaking} breaking, ${d.data.summary.risky} risky${d.data.summary.irreversible ? ", IRREVERSIBLE steps" : ""}${d.data.summary.requiresApproval ? ", needs approval" : ""}).`;
   const changes = (d.data.changes ?? []).slice(0, 6).map((c) => `  ${c.kind} ${c.subject} [${c.compatibility}]`);
   const plan2 = (d.data.plan ?? []).slice(0, 6).map((s, i) => `  ${i + 1}. ${s.text}`);
-  const question = [
+  const question2 = [
     `This command would ${what}: ${command.length > 160 ? `${command.slice(0, 157)}...` : command}`,
     summary,
     ...changes.length ? ["Changes:", ...changes] : [],
@@ -3008,13 +3093,157 @@ async function guard(cwd, command) {
     "Claude Code's own permission check still runs after this. Run it?"
   ].join("\n");
   const refusal = `The actord Room held \`${command}\` (${what}) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (\`actord diff\`) and let them run it or approve it themselves.`;
-  return { data: { ...none, hold: true, question, refusal }, text: question, exitCode: 0 };
+  return { data: { ...none, hold: true, question: question2, refusal }, text: question2, exitCode: 0 };
+}
+
+// src/cli/commands/scorecard.ts
+import { relative as relative5 } from "node:path";
+
+// src/model/scorecard.ts
+var EDGES = [
+  [0, 0.5],
+  [0.5, 0.7],
+  [0.7, 0.9],
+  [0.9, 1]
+];
+var round4 = (n) => Math.round(n * 1e4) / 1e4;
+var mean = (xs) => xs.length === 0 ? null : round4(xs.reduce((a, b) => a + b, 0) / xs.length);
+var binOf = (p) => p >= 0.9 ? 3 : p >= 0.7 ? 2 : p >= 0.5 ? 1 : 0;
+var isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var num = (v) => typeof v === "number" && Number.isFinite(v);
+function bins(points) {
+  return EDGES.map(([from, to], i) => {
+    const inBin = points.filter((x) => binOf(x.p) === i);
+    return { from, to, n: inBin.length, meanP: mean(inBin.map((x) => x.p)) ?? 0, observed: mean(inBin.map((x) => x.hit ? 1 : 0)) ?? 0 };
+  });
+}
+var instanceKey = (e, decision) => `${e.actor}\0${decision}`;
+function scorecard(events2, opts = {}) {
+  const decisions = /* @__PURE__ */ new Map();
+  for (const e of events2) {
+    const d = e.detail;
+    if (e.kind !== "decision.recorded" || !d || typeof d.decision !== "string") continue;
+    const id2 = instanceKey(e, d.decision);
+    if (decisions.has(id2)) continue;
+    const answers = isRecord(d.answers) ? d.answers : {};
+    decisions.set(id2, { detail: d, answers, label: null, acted: false });
+  }
+  let orphanLabels = 0;
+  for (const e of events2) {
+    const d = e.detail;
+    if (e.kind !== "decision.acted" && e.kind !== "decision.outcome" || !d || typeof d.decision !== "string") continue;
+    const x = decisions.get(instanceKey(e, d.decision));
+    if (!x) {
+      if (!opts.effect || e.effect === opts.effect) orphanLabels++;
+    } else if (e.kind === "decision.acted") x.acted = true;
+    else if (isRecord(d.actual)) x.label = d.actual;
+  }
+  const byEffect = /* @__PURE__ */ new Map();
+  for (const x of decisions.values()) {
+    const name = String(x.detail.effect);
+    if (opts.effect && name !== opts.effect) continue;
+    byEffect.set(name, [...byEffect.get(name) ?? [], x]);
+  }
+  const effects = [...byEffect.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([effect, list2]) => {
+    const ids = /* @__PURE__ */ new Map();
+    for (const x of list2) for (const [id2, a] of Object.entries(x.answers)) if (!ids.has(id2) && typeof a.type === "string") ids.set(id2, a.type);
+    return {
+      effect,
+      model: String(list2.find((x) => typeof x.detail.model === "string")?.detail.model ?? ""),
+      recorded: list2.length,
+      shadow: list2.filter((x) => x.detail.mode === "shadow").length,
+      labelled: list2.filter((x) => x.label !== null).length,
+      acted: list2.filter((x) => x.acted).length,
+      questions: [...ids.entries()].map(([id2, type]) => question(id2, type, list2))
+    };
+  });
+  return { effects, orphanLabels };
+}
+function question(id2, type, list2) {
+  const pairs = list2.flatMap((x) => x.label && Object.hasOwn(x.label, id2) && Object.hasOwn(x.answers, id2) ? [{ a: x.answers[id2], label: x.label[id2] }] : []);
+  if (type === "choice") {
+    const rows2 = pairs.flatMap(({ a, label: label2 }) => {
+      const probs = isRecord(a.probabilities) ? Object.entries(a.probabilities).filter((kv) => num(kv[1])) : [];
+      const top = typeof a.choice === "string" ? a.choice : probs.reduce((best, kv) => best === null || kv[1] > best[1] ? kv : best, null)?.[0];
+      return top === void 0 ? [] : [{ probs, top, label: label2 }];
+    });
+    const chosen = /* @__PURE__ */ new Map();
+    for (const r of rows2) {
+      const w = chosen.get(r.top) ?? { chosen: 0, wrong: 0 };
+      chosen.set(r.top, w);
+      w.chosen++;
+      if (r.top !== r.label) w.wrong++;
+    }
+    const withP = rows2.filter((r) => r.probs.length > 0);
+    return {
+      id: id2,
+      type: "choice",
+      labelled: rows2.length,
+      accuracy: mean(rows2.map((r) => r.top === r.label ? 1 : 0)),
+      brier: mean(withP.map((r) => r.probs.reduce((s, [opt, p]) => s + (p - (opt === r.label ? 1 : 0)) ** 2, 0))),
+      bins: bins(withP.map((r) => ({ p: r.probs.find(([o]) => o === r.top)?.[1] ?? Math.max(...r.probs.map(([, p]) => p)), hit: r.top === r.label }))),
+      wrongWhenChosen: Object.fromEntries(chosen)
+    };
+  }
+  if (type === "noul") {
+    const rows2 = pairs.flatMap(({ a, label: label2 }) => num(a.noul) && typeof label2 === "boolean" ? [{ p: a.noul, y: label2 }] : []);
+    return { id: id2, type: "noul", labelled: rows2.length, brier: mean(rows2.map((r) => (r.p - (r.y ? 1 : 0)) ** 2)), bins: bins(rows2.map((r) => ({ p: r.p, hit: r.y }))) };
+  }
+  if (type === "score") {
+    const rows2 = pairs.flatMap(({ a, label: label2 }) => num(a.score) && num(label2) ? [Math.abs(a.score - label2)] : []);
+    return { id: id2, type: "score", labelled: rows2.length, meanAbsError: mean(rows2) };
+  }
+  const rows = pairs.flatMap(({ a, label: label2 }) => typeof label2 === "boolean" ? [{ c: num(a.confidence) ? a.confidence : null, ok: label2 }] : []);
+  return {
+    id: id2,
+    type: "field",
+    labelled: rows.length,
+    correct: mean(rows.map((r) => r.ok ? 1 : 0)),
+    byConfidence: EDGES.map(([from, to], i) => {
+      const inBin = rows.filter((r) => r.c !== null && binOf(r.c) === i);
+      return { from, to, n: inBin.length, correct: inBin.filter((r) => r.ok).length };
+    })
+  };
+}
+var pct = (n) => n === null ? "-" : String(n);
+function renderScorecard(card) {
+  if (card.effects.length === 0) return "No decisions or extractions recorded in this log.";
+  return card.effects.map((e) => {
+    const head = `${e.effect} (${e.model || "unknown model"}): ${e.recorded} recorded, ${e.shadow} shadow, ${e.labelled} labelled, ${e.acted} acted`;
+    const rows = e.questions.map((x) => {
+      if (x.type === "choice") return `  ${x.id.padEnd(14)} choice  n=${x.labelled}  accuracy ${pct(x.accuracy)}  brier ${pct(x.brier)}  wrong when chosen: ${Object.entries(x.wrongWhenChosen).map(([o, w]) => `${o} ${w.wrong}/${w.chosen}`).join(", ") || "-"}`;
+      if (x.type === "noul") return `  ${x.id.padEnd(14)} noul    n=${x.labelled}  brier ${pct(x.brier)}`;
+      if (x.type === "score") return `  ${x.id.padEnd(14)} score   n=${x.labelled}  mean abs error ${pct(x.meanAbsError)}`;
+      return `  ${x.id.padEnd(14)} field   n=${x.labelled}  correct ${pct(x.correct)}  by confidence: ${x.byConfidence.filter((b) => b.n > 0).map((b) => `[${b.from},${b.to}] ${b.correct}/${b.n}`).join(", ") || "-"}`;
+    });
+    return [head, ...rows].join("\n");
+  }).join("\n\n");
+}
+
+// src/cli/commands/scorecard.ts
+var plural2 = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+function scorecard2(cwd, opts) {
+  const { path, root } = eventsPath(cwd, opts.file);
+  if (!path) return { data: { projectRoot: null, file: null, unparseable: 0, effects: [], orphanLabels: 0 }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  const file = root ? relative5(root, path) : path;
+  const log = readEvents(path);
+  if (!log) return { data: { projectRoot: root, file, unparseable: 0, effects: [], orphanLabels: 0 }, text: "No decisions recorded: no local events yet. Run the tests to produce .actord/events.ndjson.", exitCode: 0 };
+  const card = scorecard(log.events, { effect: opts.effect });
+  const table = card.effects.length === 0 && opts.effect ? `No decisions or extractions recorded for effect ${opts.effect}.` : renderScorecard(card);
+  const gaps = [
+    ...log.unparseable > 0 ? [`${plural2(log.unparseable, "line", "lines")} of the log couldn't be read`] : [],
+    ...card.orphanLabels > 0 ? [`${plural2(card.orphanLabels, "label has", "labels have")} no decision.recorded in this log`] : []
+  ];
+  const text = gaps.length > 0 ? `${table}
+
+${gaps.join("; ")}.` : table;
+  return { data: { projectRoot: root, file, unparseable: log.unparseable, ...card }, text, exitCode: 0 };
 }
 
 // src/cli/commands/verify.ts
 import { spawnSync as spawnSync6 } from "node:child_process";
 import { mkdirSync as mkdirSync4, readFileSync as readFileSync12, writeFileSync as writeFileSync4 } from "node:fs";
-import { delimiter, dirname as dirname6, join as join13, relative as relative5, resolve as resolve7 } from "node:path";
+import { delimiter, dirname as dirname6, join as join13, relative as relative6, resolve as resolve7 } from "node:path";
 
 // src/model/claims.ts
 import { existsSync as existsSync13, readFileSync as readFileSync11 } from "node:fs";
@@ -3083,12 +3312,12 @@ function runBin(root, pkg, bin, args, extraEnv = {}) {
   return run2(process.execPath, [entry, ...args], root, extraEnv);
 }
 function runScript(root, script) {
-  const bins = [];
+  const bins2 = [];
   for (let dir = root; ; dir = dirname6(dir)) {
-    bins.push(join13(dir, "node_modules", ".bin"));
+    bins2.push(join13(dir, "node_modules", ".bin"));
     if (dirname6(dir) === dir) break;
   }
-  return run2("/bin/sh", ["-c", script], root, { PATH: [...bins, dirname6(process.execPath), process.env.PATH ?? ""].join(delimiter) });
+  return run2("/bin/sh", ["-c", script], root, { PATH: [...bins2, dirname6(process.execPath), process.env.PATH ?? ""].join(delimiter) });
 }
 var tail = (s, n = 15) => s.trimEnd().split("\n").slice(-n).join("\n");
 function runTests(root, profile) {
@@ -3178,7 +3407,7 @@ async function verify(cwd, opts) {
 `
   );
   const lines = [
-    `actord verify: ${evidence.system ?? "system"} \xB7 ${verdict.toUpperCase()} \xB7 evidence in ${relative5(cwd, outPath) || outPath}`,
+    `actord verify: ${evidence.system ?? "system"} \xB7 ${verdict.toUpperCase()} \xB7 evidence in ${relative6(cwd, outPath) || outPath}`,
     ...steps.map((s) => `  ${s.status === "pass" ? "\u2713" : s.status === "blocked" ? "\u2298" : "\u2717"} ${s.id.padEnd(9)} ${s.summary}`),
     ...error ? [`  \u2717 claims    ${error}`] : [],
     claims.length ? "" : "  (no actord.claims.json: nothing is claimed about delivery or effects)",
@@ -3238,6 +3467,8 @@ Commands:
          [--correlation C]     (the monitor's) exits quietly if this session already follows
          [--file F] [--exclusive] the project
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
+  scorecard [--effect <name>]  How well decision and extraction effects are calibrated, from the labels
+            [--file F]         (ctx.acted, ctx.outcome) in the local event log
   test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
   verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
          [--profile extended]  .actord/evidence.json (verdict pass, fail, or blocked)
@@ -3262,6 +3493,7 @@ var commands = {
   diff: ({ cwd, values }) => diff(cwd, { base: str(values.base), baseFile: str(values["base-file"]) }),
   events: ({ cwd, values }) => events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
   trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
+  scorecard: ({ cwd, values }) => scorecard2(cwd, { effect: str(values.effect), file: str(values.file) }),
   init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit), host: str(values.host) }),
   verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
   test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
@@ -3298,6 +3530,7 @@ async function main(argv, io = { out: process.stdout, err: process.stderr, cwd: 
         kind: { type: "string" },
         correlation: { type: "string" },
         file: { type: "string" },
+        effect: { type: "string" },
         adopt: { type: "boolean" },
         name: { type: "string" },
         toolkit: { type: "string" },

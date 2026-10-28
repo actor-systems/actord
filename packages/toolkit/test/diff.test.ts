@@ -122,6 +122,10 @@ describe("diffManifests: job and effect fields", () => {
     approval: "none",
     result: null,
     kind: "call",
+    model: null,
+    questions: null,
+    fields: null,
+    mode: null,
     deadline: null,
     probe: null,
     completes: null,
@@ -155,6 +159,27 @@ describe("diffManifests: job and effect fields", () => {
     ["description", effect(), effect({ description: "now described" }), ["effect.described:compatible"]],
   ] as const)("reports a change of %s", (_label, before, after, expected) => {
     expect(kinds(manifest(before), manifest(after))).toEqual(expected);
+  });
+
+  describe("decisions and extractions", () => {
+    const questions = { urgent: { type: "noul", instructions: "Is it urgent?" } };
+    const fields = { total: { type: "number" } };
+    const decision = effect({ kind: "decision", model: "@cf/cloudflare/clef", questions, mode: "act", result: "answered" });
+    const shadow = { ...decision, mode: "shadow" };
+    const extraction = effect({ kind: "extraction", model: "@cf/cloudflare/clairic", fields, result: "answered" });
+    it.each([
+      ["model", decision, { ...decision, model: "@cf/cloudflare/clef-flash" }, ["effect.model:risky"]],
+      ["mode shadow to act", shadow, decision, ["effect.mode:risky"]],
+      ["mode act to shadow", decision, shadow, ["effect.mode:compatible"]],
+      ["questions", decision, { ...decision, questions: { urgent: { type: "noul", instructions: "Is it on fire?" } } }, ["effect.questions:risky"]],
+      ["fields", extraction, { ...extraction, fields: { total: { type: "text" } } }, ["effect.fields:risky"]],
+    ] as const)("reports a change of %s", (_label, before, after, expected) => {
+      expect(kinds(manifest(before), manifest(after))).toEqual(expected);
+    });
+    it("the new fields are classified, never unclassified", () => {
+      const all = kinds(manifest(effect()), manifest(decision));
+      expect(all).not.toContain("effect.changed:risky");
+    });
   });
 
   it("names the old and new values", () => {

@@ -33,7 +33,19 @@ Cloudflare Container, registry-read egress through the toolkit's gateway, and cl
 `spike-4-long-run.md`, `spike-5-push.md`). Verified from a plain clone at `b413bbb`, after the final review's fixes:
 60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312).
 The setup skills still name Node 22.18, as `actord doctor` accepts, and the plugin skills still teach the old style:
-both are plan 5's. Plan 4 is next: Clef and Clairic effects.
+both are plan 5's.
+
+**Plan 4 (decisions and extractions) is delivered on `plan4/decisions`, not yet released.** Any actor can declare a
+`kind: "decision"` effect, which asks Clef or Clef-flash typed questions and gets a probability for every allowed
+answer, or a `kind: "extraction"` effect, which asks Clairic for typed values with confidence. `decisionAdapters`, from
+the new `@actord/toolkit/decisions`, runs them over the Workers AI binding. Every answer is recorded in
+`_actors_decisions`, `ctx.acted` and `ctx.outcome` label it, and the new `actord scorecard` reports calibration from the
+local event log. A shadow decision is recorded and never delivered, and a decision's result can't approve or deny
+(decision 0020). Spike 7 read both models' schemas and called them live (`docs/evidence/spike-7-clef-clairic.md`).
+Verified, after the final review's fixes and R10 (a forecast's value is a list), from a plain clone at `273692a`:
+60 pass, 0 fail, 1 blocked (`g6.mod.typecheck`: this machine has no mod declarations for its Claude Code, 2.1.312).
+Every project regenerates its manifest once (`actord graph --write`). The plugin skills still teach the old style
+(plan 5). Plan 5 is next: the plugin skills, templates and eval scaffolds.
 
 **#80 (handler I/O) is merged, and #82 replaces its timer with an exact canary on `fix/82-canary-detector`.
 Neither is released yet.**
@@ -76,9 +88,10 @@ Neither is released yet.**
   runtime: background effects (fixed head-of-line blocking), orphan recovery, ctx.approve/deny;
   `packages/toolkit/test-runtime` probe tests; `actord.claims.json` per example drives required test tags.
 
-- **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok at G5; ~740 after the eval fixes), 2 read-only critics, hooks
-  (check-on-edit, evidence-gate), userConfig, `actord init/verify/test/hook`, claims classification,
-  examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke, verify-blocked.
+- **G5 offline-complete** (verify 2026-10-24): 7 skills (always-on ~675 tok at G5; ~740 after the eval fixes),
+  2 read-only critics, hooks (check-on-edit, evidence-gate), userConfig, `actord init/verify/test/hook`, claims
+  classification, examples adopted, 12-case eval suite + offline scaffolds (lint-tested), starter smoke,
+  verify-blocked.
 
 - **G6 offline-complete** (verify 2026-10-24): the Room (`plugins/claude/hooks/room.tsx`, `types/index.d.ts`):
   `/actord-room` pane (Topology text/SVG, Mailboxes + trace, Contracts, Evidence; hotkeys 1–4, r), status

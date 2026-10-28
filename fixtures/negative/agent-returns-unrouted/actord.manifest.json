@@ -117,6 +117,7 @@
       "completes": null,
       "deadline": null,
       "description": "Open a pull request",
+      "fields": null,
       "idempotency": "key",
       "input": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -131,8 +132,11 @@
         "type": "object"
       },
       "kind": "call",
+      "mode": null,
+      "model": null,
       "name": "open-pr",
       "probe": null,
+      "questions": null,
       "reconcile": false,
       "result": null
     }

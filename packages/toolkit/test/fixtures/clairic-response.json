@@ -1,0 +1,96 @@
+{
+  "model": "clairic",
+  "answers": {
+    "failing_check": {
+      "type": "text",
+      "p_null": 0.06727045774459839,
+      "span": [
+        142,
+        159
+      ],
+      "guess": "g7.clean-checkout",
+      "confidence": 0.943854808807373,
+      "value": "g7.clean-checkout"
+    },
+    "commit": {
+      "type": "text",
+      "p_null": 0.06689061969518661,
+      "span": [
+        127,
+        134
+      ],
+      "guess": "5326650",
+      "confidence": 0.9810506701469421,
+      "value": "5326650"
+    },
+    "run_id": {
+      "type": "number",
+      "p_null": 0.002508664969354868,
+      "span": [
+        221,
+        232
+      ],
+      "source": "input",
+      "guess": 40454645115,
+      "confidence": 0.6706129004798811,
+      "value": 40454645115
+    },
+    "files": {
+      "type": "list",
+      "value": [
+        ".github/workflows/verify.yml",
+        "scripts/clean-checkout.sh lines"
+      ],
+      "spans": [
+        [
+          368,
+          396
+        ],
+        [
+          410,
+          441
+        ]
+      ],
+      "confidence": 0.00803403754768601
+    },
+    "done_when": {
+      "type": "list",
+      "value": [
+        "the ruling is recorded",
+        "a CI run's artifact contains both clean-checkout reports",
+        "npm run verify passes"
+      ],
+      "spans": [
+        [
+          256,
+          278
+        ],
+        [
+          280,
+          336
+        ],
+        [
+          338,
+          359
+        ]
+      ],
+      "confidence": 0.15239261651716898
+    },
+    "reported_on": {
+      "type": "date",
+      "p_null": 0.3158010244369507,
+      "guess": "2026-10-28",
+      "confidence": 0.9663599268199503,
+      "value": "2026-10-28"
+    }
+  },
+  "truncated": false,
+  "usage": {
+    "state_tokens": 137,
+    "image_tokens": 0,
+    "schema_tokens": 486,
+    "input_tokens": 897,
+    "output_tokens": 0,
+    "passes": 3
+  }
+}

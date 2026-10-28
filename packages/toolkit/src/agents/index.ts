@@ -57,11 +57,13 @@ import {
   emit,
   type HandlerContext,
   type Handlers,
+  type InternalContext,
   type InternalHandlers,
   type JobAdapter,
   type JobProbe,
   type Message,
   type RuntimeOptions,
+  WITHDRAW_APPROVAL,
 } from "../runtime/index.ts";
 import { jsonSchemaOf } from "../model/manifest.ts";
 import { type ActorName, type ActorSpec, type Duration, durationMs, type EffectName, type StandardResult, type StandardSchemaV1, type System } from "../system.ts";
@@ -772,9 +774,13 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
   }
 
   // ---- Handlers: the actor's `on` messages, its sessions' outcomes, and its tools' results ----
-  type Ctx = HandlerContext<System, string>;
+  type Ctx = HandlerContext<System, string> & InternalContext;
   const cancel = (c: Ctx, key: string) => c.cancelJob(SESSION as never, key);
-  /** Deny a stopped or replaced session's tool requests (keyed "<session>:<callId>") still waiting for a person. */
+  /**
+   * Deny a stopped or replaced session's tool requests (keyed "<session>:<callId>") still waiting for a person. Not
+   * through ctx.deny: a start or stop may come from a decision's result, whose handlers can't deny, and this is the
+   * runtime withdrawing the session's own requests, not the decision deciding them.
+   */
   const withdrawApprovals = (c: Ctx, row: SessionRow, reason: string) => {
     if (row.session === null) return; // no tool has run yet
     const parked = c.sql
@@ -784,7 +790,7 @@ export function agentRuntime<S extends AnySystem, A extends ActorName<S>>(
         `${row.session}:`,
       )
       .toArray();
-    for (const fx of parked) c.deny(fx.name as never, fx.key, reason);
+    for (const fx of parked) c[WITHDRAW_APPROVAL](fx.name, fx.key, reason);
   };
   const verbs: Record<string, (message: Message<System, string>, c: Ctx) => void> = {
     start(message, c) {

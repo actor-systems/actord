@@ -57,11 +57,15 @@
       "completes": null,
       "deadline": null,
       "description": "Publish a release note",
+      "fields": null,
       "idempotency": "key",
       "kind": "call",
+      "mode": null,
+      "model": null,
       "name": "publish",
       "probe": null,
       "publishes": true,
+      "questions": null,
       "reconcile": false,
       "result": null
     }

@@ -82,6 +82,70 @@
   deploy reached a busy agent object five minutes late, between two commands, and earlier objects stayed on their
   first version through several deploys. To roll new code to a running agent now, the object must restart (spike 4
   evicted it with `ctx.abort()`). Tracked: none.
+- **Clairic is a preview, and guesses.** Cloudflare marks Clairic a preview, so its interface can change, and
+  declarations pass its vocabulary through, so they would change with it. It doesn't always come back empty when the
+  input doesn't say. In spike 7, `reported_on` came back as the `reference_date` it was given, with confidence 0.97
+  and `p_null` 0.32, under the default `null_threshold` of 0.5, though the issue never said when. Set `null_threshold`
+  on a field where a guess is worse than nothing, and read `confidence` and `p_null`. A list's confidence is low even
+  when the list is right (0.15 for an exact one), so it can't be compared with a scalar's.
+  - **An extracted identifier can be misread.** Through the binding, spike 7 got the 11-digit run id 40454645115 back
+    as 4045464511, a digit dropped, with no warning; only its confidence, 0.12, was low. Check an extracted id or long
+    number against the source before acting on it.
+  - **A forecast's value is a list, one entry per step** (`horizon: 3` gave 3), with each step's detail in `steps`.
+    The adapter accepts a list of numbers, or of date strings when the field's `min` is a date, of any length.
+  - **A `datetime` loses its offset.** Spike 7's input said `2026-10-27T19:15:45Z`, and the value came back as
+    `2026-10-27T19:15:45`, with no `Z`. Treat an extracted datetime as having no time zone, and supply the zone yourself
+    when it matters.
+  - **Tracked:** none.
+- **Clef truncates long `state` silently.** Text `state` too long for the context window is cut to fit, and the
+  response doesn't say so. The window is 65,536 tokens for Clef, and 24,576 for Clef-flash on its model page. A Clef
+  record's `truncated` is `null`. Clairic reports `truncated`, and its record keeps it. The input digest and the R2
+  object record what was sent, not what the model read. Tracked: none.
+- **Prices are a table in the code.** The cost is `input_tokens` times `PRICE_PER_MILLION_INPUT_TOKENS` in
+  `@actord/toolkit/decisions`: $0.24 per million for Clef, $0.038 for Clef-flash, and $0.10 for Clairic. A price
+  change needs a toolkit release, and until then costs use the old price. A response without `usage`, or without a
+  finite `input_tokens`, reports no cost, and its record keeps `usage: null`. A sum of costs leaves it out rather than
+  counting $0. Tracked: none.
+- **The scorecard reads local logs only,** as `trace` does: `.actord/events.ndjson` from tests and local runs, or the
+  file given with `--file`. Production decisions are recorded in each actor's `_actors_decisions`, and nothing collects
+  them yet. Production ingestion is later. A line of the log that can't be read may have held a record, whose labels
+  then count for nothing. The scorecard reports how many lines it couldn't read, and how many labels have no record
+  for their instance in the log, but can't recover them. Tracked: none.
+- **A scorecard mixes models when an effect's model changes.** Cards are per effect. An effect whose `model` changed
+  puts both models' records in one card, under the first record's model, though their probabilities aren't
+  comparable. `actord diff` reports the change as risky. A new effect for the new model keeps them apart. Tracked:
+  none.
+- **The R2 inputs bucket holds every decision's full input.** Given `inputs`, the adapters write each request body,
+  `state` included, to `decisions/inputs/<sha256>.json`, for shadow decisions and extractions too. That is whatever
+  the actor passed, such as an issue's text or a CI log. The bucket needs restricted access and a retention policy, as
+  transcripts do; the toolkit sets neither. Tracked: none.
+- **A decision can't approve directly, but a handler can relay its answer.** In a handler of a decision's result
+  message, `ctx.approve` and `ctx.deny` throw. That handler can still put the answer in a message of its own, whose
+  handler can approve. The runtime can't follow the answer that far, so it refuses nothing. The event log's causation
+  ids link the approval back to the result message (`actord trace`), but nothing flags it. Don't build an approval on a
+  decision's answer (spec §9.3). The handler can't approve through `ActorRuntime.decide` instead: it throws in any
+  handler, as `requestEffect` does. Tracked: none.
+- **A handler can read a shadow answer with its own SQL.** The guarantee is that a shadow answer is never delivered:
+  not by a result message, not in its outbox row, and not through `requestEffect` or an agent's tool. A handler can
+  still `SELECT` it from `_actors_decisions` with `ctx.sql`. Handlers must not read that table to decide what to do.
+  Tracked: none.
+- **Extraction values are kept indefinitely.**
+  - **Where:** in `_actors_decisions`, with the full answers. An extraction's value is delivered, so it is also in its
+    effect's outbox row and in its result message's outbox row. Every effect's outbox row keeps its input too.
+  - **Deletion:** there is no retention or deletion path yet.
+  - **What follows:** treat the object's storage as holding whatever the extraction pulled out of its input.
+  - **Tracked:** none. A retention option is future work.
+- **An unknown `mode` is shadow at runtime.** A decision whose `mode` is neither `"act"` nor `"shadow"` is recorded and
+  never delivered. `actord check` refuses it (`DECISION_MODE_INVALID`), so this matters only when the check is
+  skipped. Tracked: none.
+- **Labels follow the current declaration.** `ctx.outcome` checks a label against the effect as declared now, not as
+  it was when the record was made. Once an effect is removed or changes kind, labelling any of its old records throws,
+  and so does labelling a question or field that was removed. See decision 0020. Tracked: none.
+- **The approval guard is per message type.** A message type that is any decision's or extraction's `result` loses
+  `ctx.approve` and `ctx.deny` in every handler of it, even when another effect, one that isn't a decision, shares it
+  as its result, or another sender routes it, to this actor or another. `actord check` warns of either
+  (`DECISION_RESULT_SHARED`). Give a decision a result message of its own, routed only from its actor to itself. See
+  decision 0020. Tracked: none.
 - **Inside Claude Code's default sandbox, workerd tests can't run** (the sandbox denies the loopback port
   Miniflare needs), so `actord verify` reports `blocked` there rather than passing (decision 0004).
 - **Measured contribution is modest and uneven.** Two release eval runs on this version: mean `Δ` +0.09 and

@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "DECISION_QUESTIONS_INVALID"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

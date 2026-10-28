@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "DECISION_MODEL_UNKNOWN"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

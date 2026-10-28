@@ -1,0 +1,10 @@
+{
+  "check": {
+    "exitCode": 1,
+    "codes": [
+      "DECISION_PUBLISHES"
+    ]
+  },
+  "typecheck": "pass",
+  "stale": false
+}

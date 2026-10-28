@@ -143,9 +143,9 @@ The project is brand new and has no users, so breaking changes are acceptable.
 | DeepSeek V4.1 Flash | Tool calling, 1M context. $0.30 per million input tokens, $1.20 per million output. |
 | GLM-5.3 Flash | Tool calling, 1M context. $0.15 per million input, $0.50 per million output. Reasoning cannot be turned off. |
 | Clef (27B), Clef-flash (9B), Clef-omni (30B MoE, images; audio and video unconfirmed) | Return a probability for each allowed answer to typed questions. |
-| Clairic (preview, Oct 19) | Extracts typed values. Returns empty rather than guessing, with a confidence score. |
+| Clairic (preview, Oct 19) | Extracts typed values. Returns empty rather than guessing, with a confidence score. *Amended (spike 7):* it does guess; see §9.1. |
 
-The exact request and response shapes for Clef and Clairic still need checking against Cloudflare's model pages.
+The exact request and response shapes for Clef and Clairic still need checking against Cloudflare's model pages. *Amended (2026-10-28):* spike 7 checked them (`docs/evidence/spike-7-clef-clairic.md`); §9.1 and decision 0020 have the differences.
 
 **The charter.**
 - Native Durable Objects, with native behaviour still reachable.
@@ -474,8 +474,15 @@ effects: {
 ```
 
 - A decision returns a probability per option.
-- An extraction returns typed values. Missing values come back empty, never guessed, each with a confidence score.
+- An extraction returns typed values. Missing values come back empty, never guessed, each with a confidence score. *Amended (spike 7):* Clairic does guess; see the note below.
 - Both are pure reads, so they are safe to retry.
+- **Amended (2026-10-28, plan 4, decision 0020; spike 7, `docs/evidence/spike-7-clef-clairic.md`):** §9 was written before the models' schemas were read, and the code follows the spike.
+  - **`questions`, not `question`.** A decision declares a map of question id to a typed question, `noul`, `choice` or `score`, each with its own `instructions` and `criteria`. The example's `question: { route: [...] }` becomes `questions: { route: { type: "choice", instructions, criteria: { ready: "…", needs_info: "…", not_for_factory: "…" } } }`.
+  - **`fields`, not `schema`.** An extraction declares a map of field name to a field in Clairic's own types and options. A Standard Schema can't express `null_threshold`, `decimals` or an estimate's range.
+  - **Clairic does guess.** Spike 7 got a date the input never gave, with confidence 0.97 and `p_null` 0.32. The record keeps `confidence` and `p_null` for every field, and callers set `null_threshold` where a guess is worse than nothing.
+  - **"Phase one ships shadow mode only" (§9.4) means the graduation machinery.** The toolkit supports both modes. Triage acts (§10), the merge-risk decision runs in shadow, and per-lane graduation is factory code, later.
+  - **The pointer to the full input is content-addressed:** `decisions/inputs/<sha256>.json` in R2, hashed over the exact request body. Identical inputs share one object, and the pointer doubles as the input digest.
+  - A shadow decision may not declare a `result` (`DECISION_SHADOW_RESULT`), and the runtime never delivers its answer. A handler of a decision's result message can't call `ctx.approve` or `ctx.deny`. `ctx.acted` and `ctx.outcome` label a record, and `actord scorecard` reads the labels from the local event log.
 
 ### 9.2 Decision records
 
@@ -500,7 +507,7 @@ Every decision is recorded with:
 - A decision effect has `mode: "shadow" | "act"`. In shadow mode it is recorded but cannot change the actor's path.
 - The factory's merge-risk decision (`decide.merge_risk`, Clef) runs in shadow mode from day one.
 - **Graduation.** A lane is a repo plus a kind of change. The owner switches a lane to `act` only when its scorecard earns it, with a threshold set per lane.
-- Phase one ships shadow mode only.
+- Phase one ships shadow mode only. *Amended (plan 4, decision 0020):* this means the graduation machinery; see §9.1's note.
 
 ## 10. Phase one
 
