@@ -57,7 +57,8 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
      call (`src/decisions/index.ts:90-93`), and `inputRef` names it. Identical requests share one object, and the
      pointer doubles as the digest.
    - Without a bucket, `inputRef` is `null`, and the digest is still recorded.
-   - Neither the record nor its events copy the input.
+   - Neither the record nor its events copy the input. The effect's outbox row keeps it, as every effect's row keeps
+     its input.
 6. **Prices are a table in the code.** `PRICE_PER_MILLION_INPUT_TOKENS` (`src/decisions/index.ts:12-16`) holds USD
    per million input tokens: Clef 0.24, Clef-flash 0.038, Clairic 0.10. These models have no output charge
    (spike 7).
@@ -107,7 +108,7 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
    **Why a shadow decision has no `result`.** A result message is how an effect's answer reaches the actor's handlers.
    A shadow decision with one would hand its answer to code that can act on it, and spec §9.4's "cannot change the
    actor's path" would rest on every handler ignoring it. With no result, nothing delivers it. The answer is kept only
-   in the record.
+   in the record and its `decision.recorded` event, for the scorecard.
 
    - **An unknown `mode` fails safe.** At runtime, any `mode` other than `"act"` or none is shadow
      (`decisionMode`, `src/runtime/decisions.ts:44-46`). `actord check` refuses it (`DECISION_MODE_INVALID`), because
@@ -126,8 +127,8 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
       handler can approve. The runtime can't follow the answer into the handler's own messages, so nothing refuses
       that approval. The event log's causation ids still link it back to the result message, which `actord trace`
       follows.
-    - A decision or extraction can't be declared `publishes: true` (`DECISION_PUBLISHES`), and publishing stays human-
-      gated as before.
+    - A decision or extraction can't be declared `publishes: true` (`DECISION_PUBLISHES`), and publishing stays
+      human-gated as before.
 11. **Check codes.** `actord check` reports, for a decision or an extraction:
     - **Errors:**
       - `DECISION_MODEL_UNKNOWN`: a decision whose `model` isn't a Clef id, or an extraction whose `model` isn't
@@ -167,12 +168,14 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
       at a time.
     - **The counts:** recorded, shadow, labelled and acted, per effect. The first `decision.recorded` per id counts; the
       latest `decision.outcome` holds its labels.
-    - **`choice`:** accuracy (the top option against the label); the multi-class Brier score (the sum over options of
-      (p − 1 for the labelled option, else 0)², averaged); calibration bins over the top option's probability, with
-      the share that was right; and `wrongWhenChosen`, how often each option was wrong when it was the top one. A
-      `choice` answer without probabilities counts toward accuracy and `wrongWhenChosen` only, and is skipped by the
-      Brier score and the bins. The adapter rejects such an answer, so it can't come from a real response.
-    - **`noul`:** the Brier score, (p − 1 if yes, else 0)², averaged, and bins over p with the share labelled `true`.
+    - **`choice`:** accuracy (the top option against the label); the multi-class Brier score, the sum over options of
+      (p − y)², with y 1 for the labelled option and 0 for the others, averaged over decisions; calibration bins over
+      the top option's probability, with the share that was right; and `wrongWhenChosen`, how often each option was
+      wrong when it was the top one. A `choice` answer without probabilities counts toward accuracy and
+      `wrongWhenChosen` only, and is skipped by the Brier score and the bins. The adapter rejects such an answer, so it
+      can't come from a real response.
+    - **`noul`:** the Brier score, (p − y)² averaged, with y 1 for a `true` label and 0 for `false`; and bins over p,
+      with the share labelled `true`.
     - **`score`:** the mean absolute error between the score and the labelled level.
     - **Fields:** the share labelled correct, and the correct count per confidence bin. A field answer without a
       confidence counts toward the share only.
@@ -185,7 +188,7 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
 - **Shadow as a runtime switch over a declared `result`.** Then the declaration would name a message that never comes.
   `actord check` makes the declaration say what happens.
 - **Keeping the input in the record or in its events.** An input can be large and personal. The digest and the R2
-  pointer identify it without copying it into the actor or the log.
+  pointer identify it without copying it into the record or the log.
 - **Keying the input object by effect and key.** Content addressing shares one object between identical requests.
 - **Importing the runtime's `EffectRejected`** into the adapters. It would bring the Agents SDK into `decisions.mjs`.
 - **A scorecard over production storage now.** It needs credentials and a way to reach every actor's records. The
@@ -200,6 +203,6 @@ the spike: plan 4's design corrections 1 to 5. Source paths below are relative t
 - **Old records are labelled against the new declaration** (decision 8). A change of an effect's questions can make
   its old records impossible to label.
 - **Data stays.** The R2 inputs bucket holds every decision's full input. Extraction values stay in
-  `_actors_decisions`, and an act-mode extraction's value also stays in its outbox rows. No retention or deletion path
-  exists yet. Limitations has the details.
+  `_actors_decisions`, and an extraction's value also stays in its outbox rows. No retention or deletion path exists
+  yet. Limitations has the details.
 - **Prices change only with a release** (decision 6).

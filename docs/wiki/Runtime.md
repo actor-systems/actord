@@ -26,7 +26,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | A running session keeps the instructions it started with | The text is stored on the session row when it starts. Decision 0019 |
 | A workspace's edits outlive its container and restarts, and local-only paths never reach the object | Computer's `Workspace` in the object's SQLite; `localOnly` is Computer's `ignore`. A command cut off by a lost container is reported as one that "may have partly run", and never run again by itself. Decision 0022 |
 | A push authenticates from the Durable Object, and the token never enters the container | `gitPushEffect`: the app's pinned `https` URL, Basic `x-access-token`, a token minted for each attempt and scrubbed from errors, and `factory/` branches only by default. Decision 0022 |
-| A shadow decision's answer is never delivered | `actord check` refuses a shadow decision with a `result` (`DECISION_SHADOW_RESULT`). The runtime never queues a result message for one, whatever its spec says, and its outbox row doesn't keep the answer, so `requestEffect` and an agent's tools get `confirmed` with no value. The answer is kept only in `_actors_decisions`, which handlers must not read to decide. At runtime an unknown `mode` is shadow. Decision 0020 |
+| A shadow decision's answer is never delivered | `actord check` refuses a shadow decision with a `result` (`DECISION_SHADOW_RESULT`). The runtime never queues a result message for one, whatever its spec says, and its outbox row doesn't keep the answer, so `requestEffect` and an agent's tools get `confirmed` with no value. The answer is kept only in `_actors_decisions`, which handlers must not read to decide, and in its `decision.recorded` event. At runtime an unknown `mode` is shadow. Decision 0020 |
 | A decision's result can't approve or deny | In every handler of a message type that is a decision's or an extraction's `result`, `ctx.approve` and `ctx.deny` throw, even if another effect shares that type. The guard goes by message type, so it can't see an answer a handler relays in a message of its own (Limitations). Decision 0020 |
 
 **Handlers may not await I/O.** Request I/O with `ctx.effect`, and handle its result message.
@@ -212,11 +212,11 @@ other, and every answer is recorded for `actord scorecard` (decision 0020).
     so: an option for `choice`, a boolean for `noul`, a level index for `score`, and `true` (correct) or `false`
     (wrong) for a field. Labels merge with earlier ones.
   - Both are synchronous, like the other `ctx` methods. They throw for an unknown id, question, field, option or
-    level, so a labelling bug fails its handler. A label is checked against the effect as declared now.
+    level, so a labelling bug fails its handler. `ctx.outcome` checks a label against the effect as declared now.
 - **Shadow mode.** A decision with `mode: "shadow"` is recorded and never delivered. It declares no `result`
-  (`DECISION_SHADOW_RESULT`), and `requestEffect` answers it `confirmed` with no value. Its answer is only in
-  `_actors_decisions`: don't read that table to decide. At runtime an unknown `mode` is shadow, and `actord check`
-  refuses one.
+  (`DECISION_SHADOW_RESULT`), and `requestEffect` answers it `confirmed` with no value. Its answer is kept only in
+  `_actors_decisions` and its `decision.recorded` event: don't read that table to decide. At runtime an unknown `mode`
+  is shadow, and `actord check` refuses one.
 - **No approvals.** A decision never approves (spec §9.3). In a handler of a decision's or an extraction's result
   message, `ctx.approve` and `ctx.deny` throw.
 - **`actord scorecard [--effect <name>] [--file <events.ndjson>]`** reads the local event log, as `trace` does. Per
