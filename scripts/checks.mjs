@@ -93,6 +93,7 @@ export const gates = [
       "g5.skills.snippets",
       "g5.evals.static",
       "g5.evals.scaffolds",
+      "g5.evals.scripts",
       "g5.inventory",
       "g5.starter.smoke",
       "g5.verify.blocked",
@@ -272,6 +273,7 @@ export const checks = [
   command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
   // Static: running every scaffold clones node_modules each time, about a minute even in parallel.
   command("g5.evals.scaffolds", "G5", "Every eval scaffold's paths resolve from its own location, and every source patch applies to its example", "node --test tests/eval-scaffolds.test.mjs"),
+  command("g5.evals.scripts", "G5", "The eval suite stops before spending when /tmp lacks room, and removes exactly the workspaces its run kept", "node --test tests/eval-scripts.test.mjs"),
   {
     id: "g5.inventory",
     gate: "G5",
@@ -295,7 +297,7 @@ export const checks = [
     command: "claude plugin eval plugins/claude --scaffold --no-publish --max-cost-usd … (owner-approved lane)",
     async run({ root }) {
       const runs = evalRuns(root).filter((r) => !r.doc.partial);
-      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting the owner-approved post-plan-5 eval round (two full runs, about $25, a $14-a-run ceiling)" };
+      if (!runs.length) return { status: "blocked", reason: "model-backed; awaiting an owner-approved eval round (two full runs)" };
       const strict = (c) => c.name.startsWith("safety-") || c.name.startsWith("negative-");
       const again = remeasuredCases(root);
       const below = (c) => (c.aggregates?.score ?? 0) < 1;

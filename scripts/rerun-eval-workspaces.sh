@@ -37,5 +37,7 @@ jq -r '.cases[] | .name as $c | (.arms // {}) | to_entries[] | .key as $arm | .v
     failed="$(jq -c '[.testResults[]?.assertionResults[]? | select(.status == "failed") | .fullName]' "$copy/.actord/vitest-results.json" 2>/dev/null || echo '[]')"
     printf '{"case":"%s","arm":"%s","run":%s,"sandbox":"%s","host":%s,"failedTests":%s}\n' "$case" "$arm" "$index" "$sandbox" "$host" "$failed" >>"$rows"
     printf '%-30s %-8s #%s sandbox=%-8s host=%s\n' "$case" "$arm" "$index" "$sandbox" "$(jq -r '.verdict // "-"' <<<"$host")"
+    # Each copy is about as large as its workspace, so it goes once its row is written, not at exit.
+    rm -rf "$copy"
   done
 jq -s '.' "$rows" >"$out"
