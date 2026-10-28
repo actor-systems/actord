@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: wire-github-webhook
+description: Turn a signed GitHub webhook into a message, refusing unsigned requests and redeliveries
+context:
+  scaffold_script: scaffold.sh

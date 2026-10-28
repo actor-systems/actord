@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: add-timer-retry
+description: Retry a failed external call later, with a timer the actor sets for itself
+context:
+  scaffold_script: scaffold.sh

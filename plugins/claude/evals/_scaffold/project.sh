@@ -3,5 +3,5 @@
 # Runs outside the agent's sandbox, from this repository (cases are evaluated in place: `claude plugin eval plugins/claude`).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "$here/../../.." && pwd)"
+repo="$(cd "$here/../../../.." && pwd)"
 "$repo/scripts/scaffold-project.sh" "$PWD" "$@" >/dev/null
