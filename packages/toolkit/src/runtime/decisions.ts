@@ -151,9 +151,10 @@ function checkField(id: string, effect: string, fields: Readonly<Record<string, 
  * ctx.outcome: what really was so, merged into the record's outcome (a question or field labelled again takes the
  * newer label). A decision's labels name declared questions: an option for choice, a boolean for noul, a level index
  * for score. An extraction's name declared fields: true (correct) or false (wrong). Anything else throws, so a
- * labelling bug fails its handler instead of skewing the scorecard.
+ * labelling bug fails its handler instead of skewing the scorecard. Returns the merged outcome, as written to the
+ * row, which decision.outcome carries: the latest event per decision matches the table.
  */
-export function labelOutcome(sql: SqlStorageLike, at: number, id: string, actual: unknown, specOf: (effect: string) => EffectSpec | undefined): Labelled {
+export function labelOutcome(sql: SqlStorageLike, at: number, id: string, actual: unknown, specOf: (effect: string) => EffectSpec | undefined): Labelled & { outcome: Record<string, unknown> } {
   const row = recorded(sql, id);
   const fx = specOf(row.effect);
   if (fx?.kind !== row.kind) throw new Error(`${id}: ${row.effect} is no longer declared as a ${row.kind}, so its labels can't be checked`);
@@ -166,5 +167,5 @@ export function labelOutcome(sql: SqlStorageLike, at: number, id: string, actual
   }
   const outcome = { ...(row.outcome === null ? {} : (JSON.parse(row.outcome) as Record<string, unknown>)), ...(actual as Record<string, unknown>) };
   sql.exec("UPDATE _actors_decisions SET outcome = ?, outcome_at = ? WHERE id = ?", JSON.stringify(outcome), at, id);
-  return { effect: row.effect, key: row.key };
+  return { effect: row.effect, key: row.key, outcome };
 }

@@ -214,12 +214,17 @@ it("[decision-labels] ctx.acted and ctx.outcome label a record and emit their ev
     expect.objectContaining({ actor: "Probe:lab-1", effect: "decide.route", effectKey: "lab-1", detail: { decision: "decide.route:lab-1", action: "routed:ready" } }),
     expect.objectContaining({ actor: "Probe:lab-1", effect: "extract.facts", effectKey: "lab-1", detail: { decision: "extract.facts:lab-1", action: "filed" } }),
   ]);
+  // Each decision.outcome carries the outcome as merged after its call (R6): route, labelled in one handler, is still
+  // there when one_line is labelled in a later one, so the latest event per decision matches the table.
   expect(of(events, "decision.outcome").map((e) => e.detail)).toEqual([
     { decision: "decide.route:lab-1", actual: { route: "needs_info" } },
-    { decision: "decide.route:lab-1", actual: { one_line: false, risk: 3 } },
-    { decision: "decide.route:lab-1", actual: { risk: 0 } },
+    { decision: "decide.route:lab-1", actual: { route: "needs_info", one_line: false, risk: 3 } },
+    { decision: "decide.route:lab-1", actual: { route: "needs_info", one_line: false, risk: 0 } },
     { decision: "extract.facts:lab-1", actual: { commit: true, run_id: false } },
   ]);
+  const latest = (id: string) => of(events, "decision.outcome").filter((e) => e.detail?.decision === id).at(-1)?.detail?.actual;
+  expect(latest("decide.route:lab-1")).toEqual(JSON.parse(decision.outcome!));
+  expect(latest("extract.facts:lab-1")).toEqual(JSON.parse(extraction.outcome!));
 
   const before = await records("lab-1");
   const bad: Array<[{ decision: string; action?: string; actual?: Record<string, string | number | boolean> }, RegExp]> = [
@@ -228,8 +233,11 @@ it("[decision-labels] ctx.acted and ctx.outcome label a record and emit their ev
     [{ decision: "lab-1", actual: { route: "ready" } }, /no decision or extraction is recorded as "lab-1"/],
     [{ decision: "decide.route:lab-1", action: "" }, /decide\.route:lab-1: an action must be a non-empty string/],
     [{ decision: "decide.route:lab-1", actual: { nope: "ready" } }, /decide\.route:lab-1: "nope" is not a question of decide\.route \(route, one_line, risk\)/],
-    // Valid labels before the bad one don't land either: the handler's writes roll back.
+    // A label is checked whole before anything is written: a valid question beside a bad one isn't written either.
     [{ decision: "decide.route:lab-1", actual: { route: "ready", nope: "ready" } }, /"nope" is not a question of decide\.route/],
+    // ctx.acted's write and its decision.acted lands, then ctx.outcome throws: the failed delivery rolls the write back
+    // and drops the event (the records and the event counts below are unchanged).
+    [{ decision: "decide.route:lab-1", action: "rolled-back", actual: { risk: 9 } }, /level from 0 to 3/],
     [{ decision: "decide.route:lab-1", actual: { route: "maybe" } }, /decide\.route:lab-1: question route's label must be one of its options \(ready, needs_info, not_for_factory\)/],
     [{ decision: "decide.route:lab-1", actual: { route: true } }, /question route's label must be one of its options/],
     [{ decision: "decide.route:lab-1", actual: { one_line: "yes" } }, /decide\.route:lab-1: question one_line is noul; label it true or false/],

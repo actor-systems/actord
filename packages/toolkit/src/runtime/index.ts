@@ -328,7 +328,8 @@ export interface HandlerContext<S extends AnySystem, A extends ActorName<S>> {
    * Label a recorded decision or extraction with what really was so, for the scorecard; labels merge into earlier
    * ones. A decision's map each question id to an option (choice), a boolean (noul) or a level index (score); an
    * extraction's map each field name to true (correct) or false (wrong). Throws for an unknown id, question, field,
-   * option or level, so the handler fails instead of skewing the scorecard. Part of this handler's transaction.
+   * option or level, so the handler fails instead of skewing the scorecard. Part of this handler's transaction. Its
+   * decision.outcome event carries the merged outcome, as the record now holds it.
    */
   outcome(decisionId: string, actual: Readonly<Record<string, string | number | boolean>>): void;
   /** Record a structured note in the event log (for inspection; no behavior). */
@@ -842,7 +843,7 @@ export function actorRuntime<S extends AnySystem, A extends ActorName<S>>(
       outcome(decisionId, actual) {
         live();
         const labelled = labelOutcome(sql, now(), decisionId, actual, effectSpecOf);
-        notes.push({ kind: "decision.outcome", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: labelled.effect, effectKey: labelled.key, detail: { decision: decisionId, actual: { ...actual } } });
+        notes.push({ kind: "decision.outcome", at: now(), actor: self, messageId: current.id, correlationId: current.correlationId, effect: labelled.effect, effectKey: labelled.key, detail: { decision: decisionId, actual: labelled.outcome } });
       },
       note(text, detail) {
         live();
