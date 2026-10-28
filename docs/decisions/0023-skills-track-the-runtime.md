@@ -17,12 +17,24 @@ other things that had also gone unnoticed.
    tokens after plan 5), and a model picks between seven skills better than between eleven. Skills load a reference
    only when the work needs it.
 2. **A `// actord:check` block must compile.** A fenced `ts` block in a skill or agent whose first line is
-   `// actord:check` is typechecked against the built `@actord/toolkit` types by `tests/skill-snippets.test.mjs`
-   (gate `g5.skills.snippets`, which builds the toolkit first). Code that is only a sketch carries no marker.
+   `// actord:check` is typechecked against the built `@actord/toolkit` types and the real Workers runtime types by
+   `tests/skill-snippets.test.mjs` (gate `g5.skills.snippets`, which builds the toolkit first). Code that is only a
+   sketch carries no marker.
    - **`// actord:check system`** names a block `system.ts`, which sibling blocks of the same file import as
      `./system`, so a reference can show a declaration once and the handlers that use it.
-   - **A closed `cloudflare:workers` stub** stands in for the Workers types, which the toolkit's own typecheck doesn't
-     need. Its `Env` is empty on purpose: an open index signature let a misspelled binding compile.
+   - **The runtime types are `wrangler types` output,** as in a user's project. The gate runs the repository's pinned
+     wrangler, offline and without credentials, on a config that declares the bindings the references read, so `env`
+     holds workerd's own `Ai`, `R2Bucket` and `SendEmail`, and a secret named in `secrets.required`.
+     `cloudflare:workers`, `DurableObjectState` and the `*.txt` module are workerd's declarations, and they are closed,
+     so a misspelled member or binding fails. A self-test pins that `env` holds workerd's types.
+   - Plan 5 first used a hand-written closed stub whose `Env` typed those bindings with the toolkit's own structural
+     types. That let `approvalEmail({ send: this.env.MAIL })` pass the gate and fail in a real project (TS2322:
+     workerd's `SendEmail` wasn't assignable to `SendEmailLike`; the final review's I1). The toolkit's `SendEmailLike`
+     now takes only the message it sends, and `test/runtime-types.test.ts` compiles that call against generated types.
+   - **`actord check` loads each `system` block.** The built CLI checks each `// actord:check system` block alone in a
+     temp project, under Node, and the gate fails on any error except `CONFIG_MISSING`,
+     `AGENT_CONTAINER_CONFIG_MISSING` and `AGENT_INSTRUCTIONS_MISSING`: a lone block has no `wrangler.jsonc`, container
+     config or instructions file beside it. A self-test shows it catches decision 5's `DECLARATION_LOAD_FAILED`.
    - A marker that isn't the first line of a fenced `ts` block, a repeated sibling name, or a file with no block where
      one is required fails the test, so a marker can't be silently lost.
    - The gate is wired in plan 5's last code task (R1), so the branch stayed green while the skills were rewritten.
@@ -48,11 +60,14 @@ other things that had also gone unnoticed.
    scaffold's paths from its own location and applies each patch to its example, in 0.3 s. Running every scaffold takes
    64 to 121 s, and the static check fails 12 tests on the old paths.
 7. **The host re-run needs no Cloudflare credentials, and a test never opens a remote model session (R5, R6).**
-   `scripts/rerun-eval-workspaces.sh` runs `actord verify` with the Cloudflare variables removed. A decision test that
+   `scripts/rerun-eval-workspaces.sh` runs `actord verify` under an allowlisted environment (`env -i` with `PATH`, an
+   empty `HOME` and config directory, and `TMPDIR`), so no credential reaches it under any name. A decision test that
    overrides the decision effect (`overrideEffect`) still opened a remote Workers AI session when the project declared
    an `ai` binding, which on a host would call the model with the owner's credentials. So the test project's vitest
    config sets `remoteBindings: false`; `implement/references/decisions.md` teaches both ("Testing a decision without
-   the model"), and `add-triage-decision` requires and grades them.
+   the model"), `implement/references/agents.md` teaches the setting for agent actors, and `add-triage-decision`
+   requires and grades both. The starter's `vitest.config.ts` sets `remoteBindings: false` from the start, so a
+   binding added later can't open a remote session from the tests.
 8. **Eval evidence: runs L and M are superseded (option A).** Decision 0010 says a run that measured a changed plugin
    is superseded. Plan 5 rewrote every skill and agent they measured, so `docs/evidence/evals/2026-10-25-release-{l,m}`
    moved to `superseded/` and the README says there is no current record. Until a new round,
@@ -71,7 +86,11 @@ other things that had also gone unnoticed.
 - **The agents reference's clone pattern** (a declared `repo.clone` call effect over `gitClone`) is labelled not yet
   exercised by a test; the factory design settles it (R3).
 - **`// actord:check` proves a block compiles, not that it is the right advice.** The reviews of plan 5 checked claims
-  by hand against the runtime, and found a wrong one in each of several references.
+  by hand against the runtime, and found a wrong one in each of several references. Test blocks are typechecked, not
+  run.
+- **`actord check` reads secrets from `vars` and `.dev.vars.example`, not wrangler's `secrets.required`.** The sources
+  reference teaches both, because `wrangler types` needs `secrets.required` in a clean clone; a project that lists a
+  secret only there still gets `SOURCE_SECRET_UNDECLARED` (a warning).
 - **No eval has measured the new skills.** Until the paid round, the plugin's measured effect is unknown.
 
 ## Rejected alternatives
