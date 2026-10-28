@@ -65,7 +65,7 @@ remove, not a guarantee to claim.
 | Webhook signature | `SELF.fetch` to the source's path with a wrong `X-Hub-Signature-256` | `401`, `source.rejected` (`signature`); nothing delivered |
 | Webhook redelivery | The same signed body and `X-GitHub-Delivery` twice | `202` both times; handled once (the second is `duplicate`) |
 | Webhook replay under a new delivery id | The same signed body with a new `X-GitHub-Delivery` | A new event: the handler's business-key check records it once |
-| Agent budget exhaustion | `scriptedModel(...)` in `options.model` that keeps calling tools; `overrideBudget(actor, { turns: 2 })`, or `{ wallClock: "50ms" }` | One `agent.exhausted` message whose `payload.budget` names the limit, and an `effect.failed` event on `agent.session` with `exhausted:<limit>`; at most one response past `turns`, two requests past `usd` |
+| Agent budget exhaustion | `scriptedModel(...)` in `options.model` that keeps calling tools; `overrideBudget(actor, { turns: 2 })`, or `{ wallClock: "50ms" }`. Set `remoteBindings: false` first (implement's `references/agents.md`, Testing), or the declared `ai` binding opens a remote session | One `agent.exhausted` message whose `payload.budget` names the limit, and an `effect.failed` event on `agent.session` with `exhausted:<limit>`; at most one response past `turns`, two requests past `usd` |
 | Shadow decision never delivered | `decisionAdapters(system, { ai: stub })` with a scripted answer; request the shadow effect; `settle` | `decision.recorded` with `mode: "shadow"`; no result message and no `sent` event; `requestEffect` gets `confirmed` with no value |
 
 Classify honestly:

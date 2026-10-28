@@ -62,10 +62,10 @@ export default defineSystem({
 });
 ```
 
-The actor, and the Worker entry that hands requests and mail to the sources:
+The actor, and the Worker entry that hands requests and mail to the sources (`worker.ts`):
 
 ```ts
-// actord:check
+// actord:check worker
 import { DurableObject } from "cloudflare:workers";
 import { Lifecycle } from "agents/lifecycle";
 import { actorRuntime, type EffectAdapter, type Envelope } from "@actord/toolkit/runtime";
@@ -133,7 +133,9 @@ In the app, type the Worker as `satisfies ExportedHandler<Env>`; `ForwardableEma
 Secrets go in `.dev.vars` locally (from `.dev.vars.example`, which names them) and `wrangler secret put` in
 production; plain values go in wrangler `vars`. `actord check` warns when a source's entry is in neither `vars` nor
 `.dev.vars.example` (`SOURCE_SECRET_UNDECLARED`, `SOURCE_ENV_UNDECLARED`), or `send_email` doesn't declare its `send`
-binding (`SOURCE_SEND_UNDECLARED`).
+binding (`SOURCE_SEND_UNDECLARED`). Name the secrets in wrangler's `secrets.required` too: a clean clone has no
+`.dev.vars`, so without it `wrangler types` leaves them out of `Env`, and `this.env.APPROVAL_SECRET` fails the
+typecheck in `actord verify`.
 
 ```
 # .dev.vars.example
@@ -144,6 +146,7 @@ APPROVAL_SECRET=
 ```jsonc
 // wrangler.jsonc (part)
 "vars": { "OWNER": "owner@example.com", "APPROVAL_FROM": "approvals@example.com", "AUTHSERV": "mx.cloudflare.net" },
+"secrets": { "required": ["GITHUB_WEBHOOK_SECRET", "APPROVAL_SECRET"] },
 "send_email": [{ "name": "MAIL", "allowed_destination_addresses": ["owner@example.com"] }]
 ```
 
@@ -180,9 +183,55 @@ APPROVAL_SECRET=
 
 ## Testing
 
-- A webhook test posts through the Worker's own `fetch` (`SELF.fetch` from `cloudflare:test`), with
-  `X-GitHub-Event`, `X-GitHub-Delivery`, and `X-Hub-Signature-256: sha256=<hex HMAC-SHA-256 of the body>`. The test's
-  wrangler config gives the secret in `vars`. The same delivery id twice proves the redelivery is a duplicate.
+- Give the tests their secrets in `vitest.config.ts`, with `miniflare.bindings` on `cloudflareTest`, never in
+  wrangler `vars`, which deploy: the test's values exist only under vitest.
+- A webhook test posts through the Worker's own `fetch` (the default export, or `SELF.fetch` from `cloudflare:test`)
+  with `X-GitHub-Event`, `X-GitHub-Delivery`, and `X-Hub-Signature-256: sha256=<hex HMAC-SHA-256 of the raw body>`.
+  The same delivery id twice proves the redelivery is a duplicate: `202` with `handled`, then `202` with `duplicate`.
 - An email test captures the request with `overrideEffect("notify.approval", approvalEmail({ send: fake, … }))`, then
-  builds the owner's reply for `handleEmail`.
-- `packages/toolkit/test-runtime/sources.test.ts` has both.
+  builds the owner's reply for `handleEmail`. The toolkit's own tests do both, in
+  [`test-runtime/sources.test.ts`](https://github.com/actor-systems/actord/blob/main/packages/toolkit/test-runtime/sources.test.ts).
+
+```ts
+// actord:check
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { actorEvents } from "@actord/toolkit/vitest";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.jsonc" },
+      remoteBindings: false,
+      miniflare: { bindings: { GITHUB_WEBHOOK_SECRET: "test-secret", APPROVAL_SECRET: "test-approval-secret" } },
+    }),
+    actorEvents(),
+  ],
+});
+```
+
+```ts
+// actord:check
+import { env } from "cloudflare:workers";
+import { expect, it } from "vitest";
+import worker from "./worker";
+
+const enc = new TextEncoder();
+const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
+
+/** A delivery as GitHub signs it: the hex HMAC-SHA-256 of the raw body, under the secret vitest.config.ts gives. */
+async function deliver(body: string, delivery: string): Promise<Response> {
+  const key = await crypto.subtle.importKey("raw", enc.encode("test-secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = `sha256=${hex(await crypto.subtle.sign("HMAC", key, enc.encode(body)))}`;
+  const headers = { "X-GitHub-Event": "issues", "X-GitHub-Delivery": delivery, "X-Hub-Signature-256": signature };
+  return worker.fetch(new Request("https://app.example/webhooks/github", { method: "POST", body, headers }), env);
+}
+
+it("[duplicate-delivery] a redelivered webhook is handled once", async () => {
+  const body = JSON.stringify({ action: "opened", issue: { number: 7, title: "Crash on start", body: null } });
+  const first = await deliver(body, "delivery-7");
+  expect([first.status, await first.text()]).toEqual([202, "handled"]);
+  const again = await deliver(body, "delivery-7"); // a redelivery keeps its X-GitHub-Delivery
+  expect([again.status, await again.text()]).toEqual([202, "duplicate"]);
+});
+```

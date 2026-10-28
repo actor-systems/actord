@@ -85,6 +85,7 @@ export { WorkspaceProxy } from "@actord/toolkit/agents";
 
 const REPO = "https://github.com/example/app.git"; // pinned by the app; never read from the workspace
 const DIR = "/workspace/app";
+const CLONED = `${DIR}/.git/actord-cloned`; // written by the clone adapter once gitClone returns
 declare function installationToken(env: Env): Promise<string>; // yours: a GitHub App token, minted per call
 
 export class Coder extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
@@ -103,10 +104,12 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
   readonly #clone: EffectAdapter<Record<string, never>, { dir: string }> = {
     run: async (_input, { signal }) => {
       const workspace = this.actor.workspace!;
-      // Keyed, so it may run again after a lost acknowledgment: a clone that already landed isn't repeated.
-      if (await workspace.fs.lstat(`${DIR}/.git`).catch(() => null)) return { dir: DIR };
+      // Keyed, so it may run again after a lost acknowledgment: a clone that finished isn't repeated. The marker is
+      // written only once gitClone returns, since a clone cut off partway leaves .git behind.
+      if (await workspace.fs.lstat(CLONED).catch(() => null)) return { dir: DIR };
       signal.throwIfAborted();
       await gitClone(workspace, { url: REPO, dir: DIR, token: () => installationToken(this.env) });
+      await workspace.fs.writeFile(CLONED, "");
       return { dir: DIR };
     },
   };
@@ -212,16 +215,36 @@ keyed call effect whose adapter calls `gitClone`, as `gitPushEffect` wraps the p
 2. Its result, `repo.cloned`, starts the session only when it is `confirmed`, by sending `task.start` (the `on` start
    message) to the actor itself. An `on` message goes straight to the agent runtime, so mapping `repo.cloned` to
    `"start"` would start a session on a failed clone too.
-3. The adapter skips a clone whose `.git` is already there, so a retry after a lost acknowledgment doesn't repeat it.
-   A clone cut off partway can leave `.git` behind; the design has to settle that too.
+3. The adapter writes a marker once `gitClone` returns, and skips a clone whose marker is there, so a retry after a
+   lost acknowledgment doesn't repeat it and a clone cut off partway is never confirmed.
+4. `gitClone` takes no signal, so an attempt cut off by its timeout (300 s here) keeps cloning, and the retry clones
+   into the same directory while it does. The design has to settle that too.
 
 ## Testing
 
+Tests never call the real model, and never need Cloudflare credentials.
+
 - `options.model: scriptedModel(turns | (request) => turn)` replaces Workers AI with a script, and reports the tokens
   and cost it gives. It is a test seam, not for production.
-- Containers don't run under `@cloudflare/vitest-plugin`: container tests run against a stub of `ctx.container`
-  (`ContainerStub` in `packages/toolkit/test-runtime/src/agent.ts`). `overrideBudget(actor, { usd, turns, wallClock:
-  "50ms" })` shrinks a budget.
+- Set `remoteBindings: false` on `cloudflareTest` in `vitest.config.ts`. Workers AI has no local mode, so the declared
+  `ai` binding is remote even when every session is scripted. Without the option, vitest opens a remote Workers AI
+  session on whatever Cloudflare credentials it finds, and a session no test scripts calls the real model; with no
+  credentials, no test starts. With it, that call fails locally (`Binding AI needs to be run remotely`) and never
+  reaches Cloudflare. `decisions.md` shows the same setting for decisions.
+- Containers don't run under `@cloudflare/vitest-plugin`: container tests run against a stub of `ctx.container`, as
+  the toolkit's own do ([`ContainerStub`](https://github.com/actor-systems/actord/blob/main/packages/toolkit/test-runtime/src/agent.ts)).
+  `overrideBudget(actor, { usd, turns, wallClock: "50ms" })` shrinks a budget.
+
+```ts
+// actord:check
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { actorEvents } from "@actord/toolkit/vitest";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, remoteBindings: false }), actorEvents()],
+});
+```
 
 ## Limits that matter here
 

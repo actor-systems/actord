@@ -1,6 +1,6 @@
 # Shared API and evidence conventions
 
-The single core is `@actord/toolkit`, built from this repository’s `packages/toolkit`. Both hosts run the same declaration, runtime, checks and event/claim model. Import declarations from `@actord/toolkit/system`, runtime helpers from `@actord/toolkit/runtime`, test seams from `@actord/toolkit/testing`, and event capture from `@actord/toolkit/vitest`.
+The single core is `@actord/toolkit`, built from the actord repository’s `packages/toolkit`. Both hosts run the same declaration, runtime, checks and event/claim model. Import declarations from `@actord/toolkit/system`, runtime helpers from `@actord/toolkit/runtime`, test seams from `@actord/toolkit/testing`, and event capture from `@actord/toolkit/vitest`.
 
 Commands run from the project directory: `actord doctor`, `check`, `graph --write`, `diff --base-file <manifest>`, `events --notable`, `trace <message-id> --file <events.ndjson>`, `test --profile extended`, and `verify`; use `--json` for machine output. The adapter supports `init <dir> --template release-radar|briefing-desk`. The shared starter is plain `init <dir>`.
 
@@ -83,9 +83,9 @@ In the supplied workerd test setup, Durable Object storage persists across tests
 
 ## Capabilities
 
-The toolkit docs (`docs/wiki/Runtime.md` and the other pages in the toolkit repository's `docs/wiki`) cover each in full; name them rather than guessing an API.
+The toolkit's wiki (<https://github.com/actor-systems/actord/wiki>: Runtime, Limitations and the other pages) covers each in full; name them rather than guessing an API.
 
-- **Timers and jobs.** `ctx.after(delay, type, payload, { key })`, `ctx.at(epochMs, …)` and `ctx.cancelTimer(key)` wake the same instance with a declared message; a `schedule` in `system.ts` delivers `{ at }` ticks on a cron. Long external work is a job effect, settled with `ctx.settleJob` and cancelled with `ctx.cancelJob`.
+- **Timers and jobs.** `ctx.after(delay, type, payload, { key })`, `ctx.at(epochMs, …)` and `ctx.cancelTimer(key)` wake the same instance with a declared message; an actor's `schedules` (`every` or `cron`, UTC) deliver `{ at }` ticks from `@clock`. Long external work is a job effect, settled with `ctx.settleJob` and cancelled with `ctx.cancelJob`.
 - **Sources.** A webhook or inbound email enters through `sources` in `system.ts`; its name is a route sender such as `@github`. Declare it there and route its messages like any other. Import `inboundEmail`, `webhook` and `approvalDecided` from `@actord/toolkit/system`.
 - **Agent actors.** An actor declared `kind: "agent"` runs Pi sessions in its own Durable Object, with an optional container workspace. Its failure and budget messages, `agentFailed` and `agentExhausted`, come from `@actord/toolkit/system`; the runtime is `@actord/toolkit/agents`.
 - **Decisions.** A decision or extraction is an effect (adapters in `@actord/toolkit/decisions`) that returns typed answers with probabilities or confidences. Confirmed answers are recorded for `actord scorecard`; label them later with `ctx.acted` and `ctx.outcome`.

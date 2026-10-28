@@ -28,5 +28,13 @@ scaffold for free: the paths it builds resolve, and each source patch applies to
 | `negative-cloudflare-kv` | negative | none | No actord skill fires |
 | `negative-typescript-bug` | negative | a TypeScript file | No actord skill fires |
 
+Two process graders are narrower than their prompts, on purpose:
+- `add-timer-retry`'s `timer-route-declared` requires an `@timer` route, though the prompt never says "timer". It
+  grades the mechanism: retrying with the effect's own backoff (a 10-minute `backoffMs`) would also slow every
+  delivery retry of that effect, and `settle` fast-forwards it.
+- `wire-github-webhook`'s `wrote-redelivery-test` looks for the delivery header and the assertion in one Write or
+  Edit of a `.test.ts`. A test that builds its headers in a helper file, or adds the case in a later Edit without
+  the header, fails it.
+
 There's no agent-actor case. An agent actor needs the optional Pi peers, and the scaffold can't install them
 offline.

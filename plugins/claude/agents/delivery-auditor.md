@@ -19,9 +19,9 @@ Ground rules of the runtime (check the code against them):
   canary throws `<Actor>.<type>: handlers may not await I/O; use ctx.effect`. Everything the handler did through
   `ctx` rolls back and the delivery fails, on every attempt: a message is retried with backoff and dead-lettered
   after 6 attempts, a timer is dropped with `retry.exhausted`, `ingress` returns `failed`, a webhook answers `500`.
-  Only microtasks and the storage calls that don't yield (`get`, `put`, `list`, `delete`, the alarm calls,
-  `ctx.sql`, `kv`, `transactionSync`) may be awaited. Slow work belongs in `ctx.effect(...)`, with its result
-  delivered back as a declared message.
+  Only microtasks, the storage calls that don't yield (`get`, `put`, `list`, `delete`, the alarm calls, `ctx.sql`,
+  `kv`, `transactionSync`) and Lifecycle's `jobs.push` may be awaited. Slow work belongs in `ctx.effect(...)`, with
+  its result delivered back as a declared message.
 - **The abandoned handler keeps running** once its await returns, on every attempt. Its `ctx` throws, but three
   things still land: a nested transaction it awaited (it commits after the rollback), its `this.actor.requestEffect`
   calls (accepted, and their effects run), and its direct `this.ctx.storage` writes (Limitations, "An abandoned

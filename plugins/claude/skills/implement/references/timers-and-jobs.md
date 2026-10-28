@@ -182,7 +182,8 @@ same way (`parked: cancel interrupted N times without settling`). Handle it as a
 - When it passes, the effect is denied with "approval expired", an `effect.denied` event is emitted, and the result
   message says `failed`, even for a job whose completion arrived early. `ctx.approve` and `ctx.deny` then return
   `false`, so a late approval does nothing.
-- Approvals parked by toolkit 0.2.x have no expiry time, and are treated as expired on the first wake after upgrading.
+- Approvals parked by a toolkit without approval expiry (npm's 0.2.0 and earlier) have no expiry time, and are
+  treated as expired on the first wake after upgrading.
 - To ask by email, see `sources.md`.
 
 ## Testing
