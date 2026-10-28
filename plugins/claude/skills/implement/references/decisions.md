@@ -204,7 +204,8 @@ Tests never call the real model, and never need Cloudflare credentials.
   shapes; its [`test-runtime/src/index.ts`](https://github.com/actor-systems/actord/blob/main/packages/toolkit/test-runtime/src/index.ts)
   scripts them the same way (`stubAi`).
 - Build that override with `decisionAdapters`, never by hand: it checks each answer against its question and fails
-  the effect on a wrong shape, while a hand-written adapter's malformed answer is recorded with its value missing.
+  the effect on a wrong shape. A hand-written adapter's malformed answer goes through unchecked: the handler and the
+  stored answers get it verbatim, and the `decision.recorded` event's summary leaves its value out.
 - Set `remoteBindings: false` on `cloudflareTest` in `vitest.config.ts`. Workers AI has no local mode, so a declared
   `ai` binding is remote. Without the option, vitest opens a remote Workers AI session on whatever Cloudflare
   credentials it finds, and a decision no test overrides calls the real model; with no credentials, no test starts.

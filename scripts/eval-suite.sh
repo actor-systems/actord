@@ -34,7 +34,14 @@ claude plugin eval plugins/claude ${case_args[@]+"${case_args[@]}"} --scaffold -
   --json "$out" 2>"$log"
 status=$?
 "$root/scripts/rerun-eval-workspaces.sh" "$out" "$dir/$label.host.json"
-[ "${ACTORD_EVAL_KEEP_WORKSPACES:-}" = 1 ] || "$root/scripts/remove-eval-workspaces.sh" "$out"
+# The workspaces are the host evidence's only source, so they go only once the re-run has recorded its rows.
+if [ "${ACTORD_EVAL_KEEP_WORKSPACES:-}" != 1 ]; then
+  if jq -e 'length > 0' "$dir/$label.host.json" >/dev/null 2>&1; then
+    "$root/scripts/remove-eval-workspaces.sh" "$out"
+  else
+    echo "eval-suite: no host re-run rows in $dir/$label.host.json, so the kept workspaces stay" >&2
+  fi
+fi
 jq -r '"\(.aggregates.casesPassed)/\(.aggregates.casesTotal) cases at threshold · score \(.aggregates.overallScore) · mean Δ \(.aggregates.meanDelta) · $\(.costUsd) · partial \(.partial)"' "$out"
 jq -r '.cases[] | "  \(.name)  with \(.aggregates.score)  without \(.aggregates.scoreWithout // "-")  Δ \(.aggregates.delta // "-")"' "$out"
 exit "$status"
