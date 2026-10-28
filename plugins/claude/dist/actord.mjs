@@ -2366,139 +2366,10 @@ function trace(cwd, id2, opts) {
   return { data: { projectRoot: root, ...t, coverage: { file, events: log.events.length, note } }, text: renderTrace(t, file), exitCode: t.found ? 0 : 1 };
 }
 
-// src/cli/commands/scorecard.ts
-import { relative as relative4 } from "node:path";
-
-// src/model/scorecard.ts
-var EDGES = [
-  [0, 0.5],
-  [0.5, 0.7],
-  [0.7, 0.9],
-  [0.9, 1]
-];
-var round4 = (n) => Math.round(n * 1e4) / 1e4;
-var mean = (xs) => xs.length === 0 ? null : round4(xs.reduce((a, b) => a + b, 0) / xs.length);
-var binOf = (p) => p >= 0.9 ? 3 : p >= 0.7 ? 2 : p >= 0.5 ? 1 : 0;
-var isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-var num = (v) => typeof v === "number" && Number.isFinite(v);
-function bins(points) {
-  return EDGES.map(([from, to], i) => {
-    const inBin = points.filter((x) => binOf(x.p) === i);
-    return { from, to, n: inBin.length, meanP: mean(inBin.map((x) => x.p)) ?? 0, observed: mean(inBin.map((x) => x.hit ? 1 : 0)) ?? 0 };
-  });
-}
-function scorecard(events2, opts = {}) {
-  const decisions = /* @__PURE__ */ new Map();
-  for (const e of events2) {
-    const d = e.detail;
-    if (!d || typeof d.decision !== "string") continue;
-    if (e.kind === "decision.recorded" && !decisions.has(d.decision)) {
-      const answers = isRecord(d.answers) ? d.answers : {};
-      decisions.set(d.decision, { detail: d, answers, label: null, acted: false });
-    } else if (e.kind === "decision.acted") {
-      const x = decisions.get(d.decision);
-      if (x) x.acted = true;
-    } else if (e.kind === "decision.outcome") {
-      const x = decisions.get(d.decision);
-      if (x && isRecord(d.actual)) x.label = d.actual;
-    }
-  }
-  const byEffect = /* @__PURE__ */ new Map();
-  for (const x of decisions.values()) {
-    const name = String(x.detail.effect);
-    if (opts.effect && name !== opts.effect) continue;
-    byEffect.set(name, [...byEffect.get(name) ?? [], x]);
-  }
-  const effects = [...byEffect.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([effect, list2]) => {
-    const ids = /* @__PURE__ */ new Map();
-    for (const x of list2) for (const [id2, a] of Object.entries(x.answers)) if (!ids.has(id2) && typeof a.type === "string") ids.set(id2, a.type);
-    return {
-      effect,
-      model: String(list2.find((x) => typeof x.detail.model === "string")?.detail.model ?? ""),
-      recorded: list2.length,
-      shadow: list2.filter((x) => x.detail.mode === "shadow").length,
-      labelled: list2.filter((x) => x.label !== null).length,
-      acted: list2.filter((x) => x.acted).length,
-      questions: [...ids.entries()].map(([id2, type]) => question(id2, type, list2))
-    };
-  });
-  return { effects };
-}
-function question(id2, type, list2) {
-  const pairs = list2.flatMap((x) => x.label && Object.hasOwn(x.label, id2) && x.answers[id2] ? [{ a: x.answers[id2], label: x.label[id2] }] : []);
-  if (type === "choice") {
-    const rows2 = pairs.flatMap(({ a, label: label2 }) => {
-      const probs = isRecord(a.probabilities) ? Object.entries(a.probabilities).filter((kv) => num(kv[1])) : [];
-      const top = typeof a.choice === "string" ? a.choice : probs.reduce((best, kv) => best === null || kv[1] > best[1] ? kv : best, null)?.[0];
-      return top === void 0 ? [] : [{ probs, top, label: label2 }];
-    });
-    const wrongWhenChosen = {};
-    for (const r of rows2) {
-      const w = wrongWhenChosen[r.top] ??= { chosen: 0, wrong: 0 };
-      w.chosen++;
-      if (r.top !== r.label) w.wrong++;
-    }
-    const withP = rows2.filter((r) => r.probs.length > 0);
-    return {
-      id: id2,
-      type: "choice",
-      labelled: rows2.length,
-      accuracy: mean(rows2.map((r) => r.top === r.label ? 1 : 0)),
-      brier: mean(withP.map((r) => r.probs.reduce((s, [opt, p]) => s + (p - (opt === r.label ? 1 : 0)) ** 2, 0))),
-      bins: bins(withP.map((r) => ({ p: r.probs.find(([o]) => o === r.top)?.[1] ?? Math.max(...r.probs.map(([, p]) => p)), hit: r.top === r.label }))),
-      wrongWhenChosen
-    };
-  }
-  if (type === "noul") {
-    const rows2 = pairs.flatMap(({ a, label: label2 }) => num(a.noul) && typeof label2 === "boolean" ? [{ p: a.noul, y: label2 }] : []);
-    return { id: id2, type: "noul", labelled: rows2.length, brier: mean(rows2.map((r) => (r.p - (r.y ? 1 : 0)) ** 2)), bins: bins(rows2.map((r) => ({ p: r.p, hit: r.y }))) };
-  }
-  if (type === "score") {
-    const rows2 = pairs.flatMap(({ a, label: label2 }) => num(a.score) && num(label2) ? [Math.abs(a.score - label2)] : []);
-    return { id: id2, type: "score", labelled: rows2.length, meanAbsError: mean(rows2) };
-  }
-  const rows = pairs.flatMap(({ a, label: label2 }) => typeof label2 === "boolean" ? [{ c: num(a.confidence) ? a.confidence : null, ok: label2 }] : []);
-  return {
-    id: id2,
-    type: "field",
-    labelled: rows.length,
-    correct: mean(rows.map((r) => r.ok ? 1 : 0)),
-    byConfidence: EDGES.map(([from, to], i) => {
-      const inBin = rows.filter((r) => r.c !== null && binOf(r.c) === i);
-      return { from, to, n: inBin.length, correct: inBin.filter((r) => r.ok).length };
-    })
-  };
-}
-var pct = (n) => n === null ? "-" : String(n);
-function renderScorecard(card) {
-  if (card.effects.length === 0) return "No decisions or extractions recorded in this log.";
-  return card.effects.map((e) => {
-    const head = `${e.effect} (${e.model || "unknown model"}): ${e.recorded} recorded, ${e.shadow} shadow, ${e.labelled} labelled, ${e.acted} acted`;
-    const rows = e.questions.map((x) => {
-      if (x.type === "choice") return `  ${x.id.padEnd(14)} choice  n=${x.labelled}  accuracy ${pct(x.accuracy)}  brier ${pct(x.brier)}  wrong when chosen: ${Object.entries(x.wrongWhenChosen).map(([o, w]) => `${o} ${w.wrong}/${w.chosen}`).join(", ") || "-"}`;
-      if (x.type === "noul") return `  ${x.id.padEnd(14)} noul    n=${x.labelled}  brier ${pct(x.brier)}`;
-      if (x.type === "score") return `  ${x.id.padEnd(14)} score   n=${x.labelled}  mean abs error ${pct(x.meanAbsError)}`;
-      return `  ${x.id.padEnd(14)} field   n=${x.labelled}  correct ${pct(x.correct)}  by confidence: ${x.byConfidence.filter((b) => b.n > 0).map((b) => `[${b.from},${b.to}] ${b.correct}/${b.n}`).join(", ") || "-"}`;
-    });
-    return [head, ...rows].join("\n");
-  }).join("\n\n");
-}
-
-// src/cli/commands/scorecard.ts
-function scorecard2(cwd, opts) {
-  const { path, root } = eventsPath(cwd, opts.file);
-  if (!path) return { data: { projectRoot: null, file: null, effects: [] }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
-  const file = root ? relative4(root, path) : path;
-  const log = readEvents(path);
-  if (!log) return { data: { projectRoot: root, file, effects: [] }, text: "No decisions recorded: no local events yet. Run the tests to produce .actord/events.ndjson.", exitCode: 0 };
-  const card = scorecard(log.events, { effect: opts.effect });
-  return { data: { projectRoot: root, file, ...card }, text: renderScorecard(card), exitCode: 0 };
-}
-
 // src/cli/commands/hook.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
 import { existsSync as existsSync10, readFileSync as readFileSync10 } from "node:fs";
-import { dirname as dirname4, join as join9, relative as relative5 } from "node:path";
+import { dirname as dirname4, join as join9, relative as relative4 } from "node:path";
 var RELEVANT2 = /(^|\/)(system\.ts|wrangler\.jsonc?|actord\.manifest\.json)$|\/src\/(actors|messages)\/|\/src\/index\.ts$/;
 var BUDGET_MS = 2e3;
 async function hook(name, stdin, env, out, err) {
@@ -2547,7 +2418,7 @@ async function checkOnEdit(input, env, out, err) {
   }
   if (result2.data.errors === 0) return 0;
   const context = `${result2.text}
-These are hard errors from \`actord check\` after editing ${relative5(root, file)}. Fix them, or explain why the declaration should change.`;
+These are hard errors from \`actord check\` after editing ${relative4(root, file)}. Fix them, or explain why the declaration should change.`;
   out.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: context } })}
 `);
   return 0;
@@ -3213,6 +3084,137 @@ async function guard(cwd, command) {
   ].join("\n");
   const refusal = `The actord Room held \`${command}\` (${what}) and nobody approved it. Don't retry or rephrase it: show the user the deploy plan (\`actord diff\`) and let them run it or approve it themselves.`;
   return { data: { ...none, hold: true, question: question2, refusal }, text: question2, exitCode: 0 };
+}
+
+// src/cli/commands/scorecard.ts
+import { relative as relative5 } from "node:path";
+
+// src/model/scorecard.ts
+var EDGES = [
+  [0, 0.5],
+  [0.5, 0.7],
+  [0.7, 0.9],
+  [0.9, 1]
+];
+var round4 = (n) => Math.round(n * 1e4) / 1e4;
+var mean = (xs) => xs.length === 0 ? null : round4(xs.reduce((a, b) => a + b, 0) / xs.length);
+var binOf = (p) => p >= 0.9 ? 3 : p >= 0.7 ? 2 : p >= 0.5 ? 1 : 0;
+var isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var num = (v) => typeof v === "number" && Number.isFinite(v);
+function bins(points) {
+  return EDGES.map(([from, to], i) => {
+    const inBin = points.filter((x) => binOf(x.p) === i);
+    return { from, to, n: inBin.length, meanP: mean(inBin.map((x) => x.p)) ?? 0, observed: mean(inBin.map((x) => x.hit ? 1 : 0)) ?? 0 };
+  });
+}
+function scorecard(events2, opts = {}) {
+  const decisions = /* @__PURE__ */ new Map();
+  for (const e of events2) {
+    const d = e.detail;
+    if (!d || typeof d.decision !== "string") continue;
+    if (e.kind === "decision.recorded" && !decisions.has(d.decision)) {
+      const answers = isRecord(d.answers) ? d.answers : {};
+      decisions.set(d.decision, { detail: d, answers, label: null, acted: false });
+    } else if (e.kind === "decision.acted") {
+      const x = decisions.get(d.decision);
+      if (x) x.acted = true;
+    } else if (e.kind === "decision.outcome") {
+      const x = decisions.get(d.decision);
+      if (x && isRecord(d.actual)) x.label = d.actual;
+    }
+  }
+  const byEffect = /* @__PURE__ */ new Map();
+  for (const x of decisions.values()) {
+    const name = String(x.detail.effect);
+    if (opts.effect && name !== opts.effect) continue;
+    byEffect.set(name, [...byEffect.get(name) ?? [], x]);
+  }
+  const effects = [...byEffect.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([effect, list2]) => {
+    const ids = /* @__PURE__ */ new Map();
+    for (const x of list2) for (const [id2, a] of Object.entries(x.answers)) if (!ids.has(id2) && typeof a.type === "string") ids.set(id2, a.type);
+    return {
+      effect,
+      model: String(list2.find((x) => typeof x.detail.model === "string")?.detail.model ?? ""),
+      recorded: list2.length,
+      shadow: list2.filter((x) => x.detail.mode === "shadow").length,
+      labelled: list2.filter((x) => x.label !== null).length,
+      acted: list2.filter((x) => x.acted).length,
+      questions: [...ids.entries()].map(([id2, type]) => question(id2, type, list2))
+    };
+  });
+  return { effects };
+}
+function question(id2, type, list2) {
+  const pairs = list2.flatMap((x) => x.label && Object.hasOwn(x.label, id2) && Object.hasOwn(x.answers, id2) ? [{ a: x.answers[id2], label: x.label[id2] }] : []);
+  if (type === "choice") {
+    const rows2 = pairs.flatMap(({ a, label: label2 }) => {
+      const probs = isRecord(a.probabilities) ? Object.entries(a.probabilities).filter((kv) => num(kv[1])) : [];
+      const top = typeof a.choice === "string" ? a.choice : probs.reduce((best, kv) => best === null || kv[1] > best[1] ? kv : best, null)?.[0];
+      return top === void 0 ? [] : [{ probs, top, label: label2 }];
+    });
+    const chosen = /* @__PURE__ */ new Map();
+    for (const r of rows2) {
+      const w = chosen.get(r.top) ?? { chosen: 0, wrong: 0 };
+      chosen.set(r.top, w);
+      w.chosen++;
+      if (r.top !== r.label) w.wrong++;
+    }
+    const withP = rows2.filter((r) => r.probs.length > 0);
+    return {
+      id: id2,
+      type: "choice",
+      labelled: rows2.length,
+      accuracy: mean(rows2.map((r) => r.top === r.label ? 1 : 0)),
+      brier: mean(withP.map((r) => r.probs.reduce((s, [opt, p]) => s + (p - (opt === r.label ? 1 : 0)) ** 2, 0))),
+      bins: bins(withP.map((r) => ({ p: r.probs.find(([o]) => o === r.top)?.[1] ?? Math.max(...r.probs.map(([, p]) => p)), hit: r.top === r.label }))),
+      wrongWhenChosen: Object.fromEntries(chosen)
+    };
+  }
+  if (type === "noul") {
+    const rows2 = pairs.flatMap(({ a, label: label2 }) => num(a.noul) && typeof label2 === "boolean" ? [{ p: a.noul, y: label2 }] : []);
+    return { id: id2, type: "noul", labelled: rows2.length, brier: mean(rows2.map((r) => (r.p - (r.y ? 1 : 0)) ** 2)), bins: bins(rows2.map((r) => ({ p: r.p, hit: r.y }))) };
+  }
+  if (type === "score") {
+    const rows2 = pairs.flatMap(({ a, label: label2 }) => num(a.score) && num(label2) ? [Math.abs(a.score - label2)] : []);
+    return { id: id2, type: "score", labelled: rows2.length, meanAbsError: mean(rows2) };
+  }
+  const rows = pairs.flatMap(({ a, label: label2 }) => typeof label2 === "boolean" ? [{ c: num(a.confidence) ? a.confidence : null, ok: label2 }] : []);
+  return {
+    id: id2,
+    type: "field",
+    labelled: rows.length,
+    correct: mean(rows.map((r) => r.ok ? 1 : 0)),
+    byConfidence: EDGES.map(([from, to], i) => {
+      const inBin = rows.filter((r) => r.c !== null && binOf(r.c) === i);
+      return { from, to, n: inBin.length, correct: inBin.filter((r) => r.ok).length };
+    })
+  };
+}
+var pct = (n) => n === null ? "-" : String(n);
+function renderScorecard(card) {
+  if (card.effects.length === 0) return "No decisions or extractions recorded in this log.";
+  return card.effects.map((e) => {
+    const head = `${e.effect} (${e.model || "unknown model"}): ${e.recorded} recorded, ${e.shadow} shadow, ${e.labelled} labelled, ${e.acted} acted`;
+    const rows = e.questions.map((x) => {
+      if (x.type === "choice") return `  ${x.id.padEnd(14)} choice  n=${x.labelled}  accuracy ${pct(x.accuracy)}  brier ${pct(x.brier)}  wrong when chosen: ${Object.entries(x.wrongWhenChosen).map(([o, w]) => `${o} ${w.wrong}/${w.chosen}`).join(", ") || "-"}`;
+      if (x.type === "noul") return `  ${x.id.padEnd(14)} noul    n=${x.labelled}  brier ${pct(x.brier)}`;
+      if (x.type === "score") return `  ${x.id.padEnd(14)} score   n=${x.labelled}  mean abs error ${pct(x.meanAbsError)}`;
+      return `  ${x.id.padEnd(14)} field   n=${x.labelled}  correct ${pct(x.correct)}  by confidence: ${x.byConfidence.filter((b) => b.n > 0).map((b) => `[${b.from},${b.to}] ${b.correct}/${b.n}`).join(", ") || "-"}`;
+    });
+    return [head, ...rows].join("\n");
+  }).join("\n\n");
+}
+
+// src/cli/commands/scorecard.ts
+function scorecard2(cwd, opts) {
+  const { path, root } = eventsPath(cwd, opts.file);
+  if (!path) return { data: { projectRoot: null, file: null, effects: [] }, text: `No actor project at ${cwd}; pass --file <events.ndjson>.`, exitCode: EXIT_NO_PROJECT };
+  const file = root ? relative5(root, path) : path;
+  const log = readEvents(path);
+  if (!log) return { data: { projectRoot: root, file, effects: [] }, text: "No decisions recorded: no local events yet. Run the tests to produce .actord/events.ndjson.", exitCode: 0 };
+  const card = scorecard(log.events, { effect: opts.effect });
+  const text = card.effects.length === 0 && opts.effect ? `No decisions or extractions recorded for effect ${opts.effect}.` : renderScorecard(card);
+  return { data: { projectRoot: root, file, ...card }, text, exitCode: 0 };
 }
 
 // src/cli/commands/verify.ts
