@@ -63,8 +63,16 @@ export interface ManifestEffect {
   result: string | null;
   /** Present only when the effect declares one. */
   budget?: { maxAttempts?: number; timeoutMs?: number };
-  /** "call" or "job". */
+  /** "call", "job", "decision" or "extraction". */
   kind: string;
+  /** A decision's or extraction's model; null for other kinds. */
+  model: string | null;
+  /** A decision's questions, verbatim; null for other kinds. */
+  questions: Record<string, unknown> | null;
+  /** An extraction's fields, verbatim; null for other kinds. */
+  fields: Record<string, unknown> | null;
+  /** A decision's mode ("act" by default); null for other kinds. */
+  mode: string | null;
   /** A job's deadline, such as "2h"; null when none is declared. */
   deadline: string | null;
   probe: { every: string } | null;
@@ -158,6 +166,10 @@ export function normalize(system: System): Manifest {
       result: e.result ?? null,
       ...(e.budget ? { budget: { ...(e.budget.maxAttempts !== undefined ? { maxAttempts: e.budget.maxAttempts } : {}), ...(e.budget.timeoutMs !== undefined ? { timeoutMs: e.budget.timeoutMs } : {}) } } : {}),
       kind: e.kind ?? "call",
+      model: e.model ?? null,
+      questions: e.questions ? (e.questions as Record<string, unknown>) : null,
+      fields: e.fields ? (e.fields as Record<string, unknown>) : null,
+      mode: e.kind === "decision" ? (e.mode ?? "act") : (e.mode ?? null),
       deadline: e.deadline ?? null,
       probe: e.probe ? { every: e.probe.every } : null,
       completes: e.completes ? { message: e.completes.message } : null,

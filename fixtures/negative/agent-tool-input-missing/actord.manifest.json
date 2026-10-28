@@ -124,10 +124,14 @@
       "completes": null,
       "deadline": null,
       "description": "Open a pull request",
+      "fields": null,
       "idempotency": "key",
       "kind": "call",
+      "mode": null,
+      "model": null,
       "name": "open-pr",
       "probe": null,
+      "questions": null,
       "reconcile": false,
       "result": null
     }

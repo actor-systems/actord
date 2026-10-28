@@ -139,10 +139,14 @@
       "completes": null,
       "deadline": null,
       "description": "Page the on-call",
+      "fields": null,
       "idempotency": "key",
       "kind": "call",
+      "mode": null,
+      "model": null,
       "name": "notify.pager",
       "probe": null,
+      "questions": null,
       "reconcile": false,
       "result": null
     }

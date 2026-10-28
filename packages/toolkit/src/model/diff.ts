@@ -200,7 +200,7 @@ function diffMessage(b: ManifestMessage, h: ManifestMessage, add: Add) {
  * route.removed report.
  */
 const ACTOR_FIELDS = new Set(["name", "binding", "kind", "purpose", "justification", "schedules", "effects", "budget", "receives", "sends", "harness", "model", "instructions", "tools", "on", "returns"]);
-const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "deadline", "probe", "completes", "publishes", "input"]);
+const EFFECT_FIELDS = new Set(["name", "description", "idempotency", "reconcile", "approval", "expires", "result", "budget", "kind", "model", "questions", "fields", "mode", "deadline", "probe", "completes", "publishes", "input"]);
 const SOURCE_FIELDS = new Set(["name", "kind", "path", "verify", "events", "message"]);
 
 /** Any other field that changed (one a later manifest adds, say) is reported as risky, never left silent. */
@@ -232,6 +232,14 @@ function diffEffect(b: ManifestEffect, h: ManifestEffect, add: Add) {
   // A job and a call settle by different rules, and an effect already in flight changes rules mid-way.
   if (b.kind !== h.kind)
     add("effect.kind", s, "risky", `Kind ${b.kind} → ${h.kind}; effects already in flight change how they settle (a job already waiting can't be settled by ctx.settleJob once the effect is a call, and waits out its deadline)`);
+  if ((b.model ?? null) !== (h.model ?? null))
+    add("effect.model", s, "risky", `Model ${b.model ?? "none"} → ${h.model ?? "none"}; answers change, and a decision's probabilities aren't comparable across models`);
+  if (show(b.questions ?? null) !== show(h.questions ?? null)) add("effect.questions", s, "risky", "The questions a decision asks changed; answers already recorded were to the old questions");
+  if (show(b.fields ?? null) !== show(h.fields ?? null)) add("effect.fields", s, "risky", "The fields an extraction returns changed; results already recorded have the old shape");
+  if ((b.mode ?? null) !== (h.mode ?? null)) {
+    if (h.mode === "act") add("effect.mode", s, "risky", `Mode ${b.mode ?? "none"} → act; the decision's answer is now delivered to the actor, which acts on it`);
+    else add("effect.mode", s, "compatible", `Mode ${b.mode ?? "none"} → ${h.mode ?? "none"}; the answer is recorded for the scorecard and no longer delivered`);
+  }
   if ((b.deadline ?? null) !== (h.deadline ?? null)) add("effect.deadline", s, "risky", `Deadline ${b.deadline ?? "none"} → ${h.deadline ?? "none"}; jobs already waiting keep the deadline they started with`);
   if (show(b.probe ?? null) !== show(h.probe ?? null))
     add("effect.probe", s, "risky", `Probe ${b.probe ? `every ${b.probe.every}` : "none"} → ${h.probe ? `every ${h.probe.every}` : "none"}; jobs already waiting keep the next look they booked`);

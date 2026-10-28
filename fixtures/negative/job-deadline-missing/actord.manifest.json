@@ -164,10 +164,14 @@
       },
       "deadline": null,
       "description": "Run CI for a ping",
+      "fields": null,
       "idempotency": "key",
       "kind": "job",
+      "mode": null,
+      "model": null,
       "name": "ci.run",
       "probe": null,
+      "questions": null,
       "reconcile": false,
       "result": null
     }

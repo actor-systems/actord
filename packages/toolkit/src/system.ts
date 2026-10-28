@@ -125,6 +125,29 @@ export function containerBackend(spec: { image: string; instance?: string }): Co
   return { ...spec, kind: "container" };
 }
 
+/** One question put to a Clef model. It answers each with a probability for every allowed answer. */
+export type ClefQuestion =
+  | { readonly type: "noul"; readonly instructions: string; readonly criteria?: { readonly true?: string; readonly false?: string } }
+  | { readonly type: "choice"; readonly instructions: string; readonly criteria: Readonly<Record<string, string | null>> }
+  | { readonly type: "score"; readonly instructions: string; readonly criteria: readonly string[] };
+
+/** One typed value a Clairic model extracts from text, with its confidence. */
+export interface ClairicField {
+  readonly type: "text" | "number" | "date" | "time" | "datetime" | "duration" | "list" | "estimate" | "forecast";
+  readonly instructions?: string;
+  readonly unit?: string;
+  readonly integer?: boolean;
+  readonly decimals?: number;
+  readonly items?: "text" | "number" | "date";
+  readonly min?: number | string;
+  readonly max?: number | string;
+  readonly step?: number | "month" | "year";
+  readonly scale?: "linear" | "log";
+  readonly null_threshold?: number;
+  readonly horizon?: number;
+  readonly interval?: "step" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year";
+}
+
 export interface EffectSpec {
   readonly description: string;
   /**
@@ -150,8 +173,18 @@ export interface EffectSpec {
    * "call" (the default): one request answered within the effect's timeout. "job": work that outlives a
    * request (an agent session, a CI run). The adapter's start() returns a handle; the job is settled once,
    * later, by its completion message, its probe, its deadline (in_doubt) or a cancel. See decision 0018.
+   * "decision": asks a Clef model questions and gets a probability for every allowed answer. "extraction":
+   * asks a Clairic model for typed values with confidence. Both are pure reads.
    */
-  readonly kind?: "call" | "job";
+  readonly kind?: "call" | "job" | "decision" | "extraction";
+  /** A decision's Clef model (`@cf/cloudflare/clef` or `@cf/cloudflare/clef-flash`), or an extraction's Clairic model (`@cf/cloudflare/clairic`). */
+  readonly model?: string;
+  /** For a decision: 1 to 64 questions by id. */
+  readonly questions?: Readonly<Record<string, ClefQuestion>>;
+  /** For an extraction: the values to extract, by name. */
+  readonly fields?: Readonly<Record<string, ClairicField>>;
+  /** For a decision: "act" (the default) delivers the answer; "shadow" records it for the scorecard and delivers nothing. */
+  readonly mode?: "act" | "shadow";
   /** Required for a job: how long it may wait before its outcome is in_doubt. */
   readonly deadline?: Duration;
   /** For a job: ask the adapter's probe(handle) this often until it reports done. */

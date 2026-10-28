@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parseCronExpression } from "cron-schedule";
 import type { Project } from "./load.ts";
 import { type ActorSpec, durationMs } from "../system.ts";
-import { MANIFEST_FILE, type Manifest, serializeManifest } from "./manifest.ts";
+import { MANIFEST_FILE, type Manifest, type ManifestEffect, serializeManifest } from "./manifest.ts";
 
 function cronParses(expr: string): boolean {
   try {
@@ -194,6 +194,9 @@ export function checkProject(project: Project): Diagnostic[] {
             add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
       }
     }
+    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, add);
+    else if (e.questions !== null || e.fields !== null || e.mode !== null || e.model !== null)
+      add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${e.kind} effect but declares ${[e.model !== null && "model", e.questions !== null && "questions", e.fields !== null && "fields", e.mode !== null && "mode"].filter(Boolean).join(", ")}, which only a decision or an extraction uses`, `Set kind: "decision" or kind: "extraction", or remove the field.`);
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
     if (e.idempotency === "none" && !e.reconcile)
       add("warning", "EFFECT_IN_DOUBT", e.name, `${e.name} has no idempotency key and no reconciliation: an attempt whose acknowledgment is lost is in doubt and must be reported as in_doubt, never retried blindly or reported as delivered`);
@@ -352,3 +355,68 @@ function sortDiagnostics(d: Diagnostic[]): Diagnostic[] {
   return d.sort((a, b) => rank(a) - rank(b) || cmp(a.code, b.code) || cmp(a.subject ?? "", b.subject ?? "") || cmp(a.message, b.message));
 }
 
+
+const CLEF_MODELS = ["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"];
+const CLAIRIC_MODEL = "@cf/cloudflare/clairic";
+const QUESTION_ID = /^[A-Za-z0-9_.-]{1,100}$/;
+const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$/;
+const FIELD_TYPES = ["text", "number", "date", "time", "datetime", "duration", "list", "estimate", "forecast"];
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A problem with one decision question, or null when it is valid. */
+function questionProblem(id: string, q: unknown): string | null {
+  if (!QUESTION_ID.test(id)) return `question id "${id}" doesn't match ${QUESTION_ID.source}`;
+  if (!isObject(q)) return `question ${id} isn't an object`;
+  if (typeof q.instructions !== "string" || q.instructions.trim() === "") return `question ${id} has no instructions`;
+  if (q.type === "noul") return null;
+  if (q.type === "choice") {
+    const n = isObject(q.criteria) ? Object.keys(q.criteria).length : 0;
+    return n >= 2 && n <= 255 ? null : `choice question ${id} has ${n} options; Clef takes 2 to 255`;
+  }
+  if (q.type === "score") {
+    const n = Array.isArray(q.criteria) ? q.criteria.length : 0;
+    return n >= 2 && n <= 10 ? null : `score question ${id} has ${n} levels; Clef takes 2 to 10`;
+  }
+  return `question ${id} has type ${JSON.stringify(q.type)}; use noul, choice or score`;
+}
+
+/** A problem with one extraction field, or null when it is valid. */
+function fieldProblem(name: string, f: unknown): string | null {
+  if (!FIELD_NAME.test(name)) return `field name "${name}" doesn't match ${FIELD_NAME.source}`;
+  if (!isObject(f) || typeof f.type !== "string" || !FIELD_TYPES.includes(f.type)) return `field ${name} has type ${JSON.stringify(isObject(f) ? f.type : f)}; use ${FIELD_TYPES.join(", ")}`;
+  if (f.type === "list" && !["text", "number", "date"].includes(f.items as string)) return `list field ${name} needs items: "text", "number" or "date"`;
+  if ((f.type === "estimate" || f.type === "forecast") && (f.min === undefined || f.max === undefined)) return `${f.type} field ${name} needs both min and max`;
+  if (f.decimals !== undefined && !(Number.isInteger(f.decimals) && (f.decimals as number) >= 0 && (f.decimals as number) <= 6)) return `field ${name} has decimals ${String(f.decimals)}; use 0 to 6`;
+  if (f.null_threshold !== undefined && !(typeof f.null_threshold === "number" && f.null_threshold > 0 && f.null_threshold <= 1)) return `field ${name} has null_threshold ${String(f.null_threshold)}; use a number above 0 and at most 1`;
+  if (f.horizon !== undefined && !(Number.isInteger(f.horizon) && (f.horizon as number) >= 1 && (f.horizon as number) <= 64)) return `field ${name} has horizon ${String(f.horizon)}; use 1 to 64`;
+  return null;
+}
+
+/** The checks of a decision (Clef) or extraction (Clairic) effect: declared well, a pure read, and heard from. */
+function checkDecisionEffect(e: ManifestEffect, add: AddFn) {
+  const decision = e.kind === "decision";
+  const label = decision ? "decision" : "extraction";
+  if (decision ? e.model === null || !CLEF_MODELS.includes(e.model) : e.model !== CLAIRIC_MODEL)
+    add("error", "DECISION_MODEL_UNKNOWN", e.name, `${e.name} is a ${label} with model ${e.model === null ? "none" : `"${e.model}"`}`, `Use model: ${decision ? CLEF_MODELS.map((x) => `"${x}"`).join(" or ") : `"${CLAIRIC_MODEL}"`}.`);
+  if (decision) {
+    const entries = e.questions === null ? [] : Object.entries(e.questions);
+    const problem = e.questions === null ? "it declares no questions" : entries.length < 1 || entries.length > 64 ? `it declares ${entries.length} questions; Clef takes 1 to 64` : entries.map(([id, q]) => questionProblem(id, q)).find((p) => p !== null);
+    if (problem) add("error", "DECISION_QUESTIONS_INVALID", e.name, `${e.name}: ${problem}`, `Declare 1 to 64 questions, each noul, choice (2 to 255 options) or score (2 to 10 levels), with instructions.`);
+    if (e.mode === "shadow" && e.result)
+      add("error", "DECISION_SHADOW_RESULT", e.name, `${e.name} is a shadow decision but delivers ${e.result}; a shadow answer is recorded for the scorecard and never delivered`, `Remove result, or set mode: "act".`);
+    if (e.mode !== "shadow" && !e.result)
+      add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an act-mode decision with no result, so the actor would never see the answer`, `Add result: "<message>", or set mode: "shadow" to only record it.`);
+    if (e.fields !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a decision but declares fields, which only an extraction uses`, `Use questions, or make it an extraction.`);
+  } else {
+    const entries = e.fields === null ? [] : Object.entries(e.fields);
+    const problem = entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
+    if (problem) add("error", "EXTRACTION_FIELDS_INVALID", e.name, `${e.name}: ${problem}`, `Declare at least one field; see the Clairic field types and limits.`);
+    if (!e.result) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
+    for (const f of ["questions", "mode"] as const)
+      if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is an extraction but declares ${f}, which only a decision uses`, `Remove ${f}, or make it a decision.`);
+  }
+  for (const f of ["deadline", "probe", "completes"] as const)
+    if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${label} but declares ${f}, which only a job uses`, `Remove ${f}: a ${label} is answered within one request.`);
+  if (e.publishes === true) add("error", "DECISION_PUBLISHES", e.name, `${e.name} is a ${label} and publishes; it only reads, so nothing public can come from it`, `Remove publishes: true.`);
+  if (e.idempotency === "none") add("warning", "DECISION_IDEMPOTENCY_NONE", e.name, `${e.name} declares idempotency: "none", but a ${label} is a deterministic read`, `Use idempotency: "key"; a retry is always safe.`);
+}
