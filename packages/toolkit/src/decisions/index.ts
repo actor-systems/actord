@@ -45,20 +45,32 @@ async function sha256Hex(text: string): Promise<string> {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
 function validateAnswers(effect: string, answers: Record<string, unknown>, questions: Readonly<Record<string, ClefQuestion>> | undefined, fields: Readonly<Record<string, ClairicField>> | undefined): void {
   for (const [id, question] of Object.entries(questions ?? {})) {
     const answer = answers[id];
     if (!isRecord(answer)) throw new EffectRejected(`${effect}: the model gave no answer for question "${id}"`);
+    if (answer.type !== question.type)
+      throw new EffectRejected(`${effect}: question "${id}" is a ${question.type} question but the answer's type is ${String(answer.type)}`);
     if (question.type === "choice") {
       if (typeof answer.choice !== "string" || !Object.hasOwn(question.criteria, answer.choice))
-        throw new EffectRejected(`${effect}: question "${id}" answered ${JSON.stringify(answer.choice)}, which is not one of its options`);
+        throw new EffectRejected(`${effect}: question "${id}" answered ${String(answer.choice)}, which is not one of its options`);
     } else if (question.type === "noul") {
-      if (typeof answer.noul !== "number" || !(answer.noul >= 0 && answer.noul <= 1))
-        throw new EffectRejected(`${effect}: question "${id}" answered ${JSON.stringify(answer.noul)}, which is not a number from 0 to 1`);
-    }
+      if (!isFiniteNumber(answer.noul) || answer.noul < 0 || answer.noul > 1)
+        throw new EffectRejected(`${effect}: question "${id}" answered ${String(answer.noul)}, which is not a number from 0 to 1`);
+    } else if (!isFiniteNumber(answer.score) || answer.score < 0 || answer.score > question.criteria.length - 1)
+      throw new EffectRejected(`${effect}: question "${id}" scored ${String(answer.score)}, which is not a number from 0 to ${question.criteria.length - 1}`);
+    if (question.type !== "noul" && (!isRecord(answer.probabilities) || !Object.values(answer.probabilities).every(isFiniteNumber)))
+      throw new EffectRejected(`${effect}: question "${id}" has no probabilities, or one is not a finite number`);
   }
-  for (const id of Object.keys(fields ?? {}))
-    if (!isRecord(answers[id])) throw new EffectRejected(`${effect}: the model gave no value for field "${id}"`);
+  for (const [id, field] of Object.entries(fields ?? {})) {
+    const answer = answers[id];
+    if (!isRecord(answer)) throw new EffectRejected(`${effect}: the model gave no value for field "${id}"`);
+    if (!("value" in answer)) throw new EffectRejected(`${effect}: field "${id}" has no "value" key`);
+    if (answer.type !== undefined && answer.type !== field.type)
+      throw new EffectRejected(`${effect}: field "${id}" is declared ${field.type} but the answer's type is ${String(answer.type)}`);
+  }
 }
 
 function adapterFor(name: string, spec: EffectSpec, options: { ai: WorkersAI; inputs?: DecisionInputs }): EffectAdapter {
@@ -67,6 +79,7 @@ function adapterFor(name: string, spec: EffectSpec, options: { ai: WorkersAI; in
   return {
     async run(input, ctx) {
       if (!isRecord(input) || input.state === undefined) throw new EffectRejected(`${name}: the input needs a "state" to decide or extract from`);
+      if (input.referenceDate !== undefined && typeof input.referenceDate !== "string") throw new EffectRejected(`${name}: referenceDate must be a string`);
       const body: Record<string, unknown> =
         spec.kind === "extraction"
           ? { model: short, state: input.state, fields: spec.fields, ...(typeof input.referenceDate === "string" ? { reference_date: input.referenceDate } : {}) }
@@ -80,13 +93,14 @@ function adapterFor(name: string, spec: EffectSpec, options: { ai: WorkersAI; in
       }
       const response = await options.ai.run(model, body);
       if (!isRecord(response) || !isRecord(response.answers)) throw new EffectRejected(`${name}: the model's response has no "answers"`);
-      validateAnswers(name, response.answers, spec.questions, spec.fields);
       let usage: DecisionValue["usage"] = null;
       if (isRecord(response.usage) && typeof response.usage.input_tokens === "number") {
         usage = { inputTokens: response.usage.input_tokens, outputTokens: typeof response.usage.output_tokens === "number" ? response.usage.output_tokens : 0 };
         const price = PRICE_PER_MILLION_INPUT_TOKENS[model];
         ctx.reportUsage({ ...usage, ...(price === undefined ? {} : { costUsd: (usage.inputTokens * price) / 1e6 }) });
       }
+      // The call is paid for whether or not the answers are usable, so usage is reported first.
+      validateAnswers(name, response.answers, spec.questions, spec.fields);
       const value: DecisionValue = {
         model,
         answers: response.answers,
@@ -104,6 +118,9 @@ function adapterFor(name: string, spec: EffectSpec, options: { ai: WorkersAI; in
 export function decisionAdapters(system: System, options: { ai: WorkersAI; inputs?: DecisionInputs }): Record<string, EffectAdapter> {
   const adapters: Record<string, EffectAdapter> = {};
   for (const [name, spec] of Object.entries(system.effects ?? {}))
-    if ((spec.kind === "decision" || spec.kind === "extraction") && spec.model) adapters[name] = adapterFor(name, spec, options);
+    if (spec.kind === "decision" || spec.kind === "extraction") {
+      if (!spec.model) throw new Error(`effect "${name}" is a ${spec.kind} without a model`);
+      adapters[name] = adapterFor(name, spec, options);
+    }
   return adapters;
 }

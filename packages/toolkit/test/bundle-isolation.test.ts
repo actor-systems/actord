@@ -19,7 +19,7 @@ describe("bundle isolation", () => {
   it("dist/decisions.mjs imports no agent harness, Computer or zod", () => {
     const text = readFileSync(join(dist, "decisions.mjs"), "utf8");
     for (const banned of ["agents", "@earendil-works", "@cloudflare/computer", "zod"])
-      expect(text, banned).not.toMatch(new RegExp(`from\\s*["']${banned.replace("/", "\\/")}(/[^"']*)?["']`));
+      expect(text, banned).not.toMatch(new RegExp(`(?:from\\s*|import\\s*\\(?\\s*|require\\(\\s*)["']${banned.replace("/", "\\/")}(?:/[^"']*)?["']`));
   });
 
   for (const name of ["runtime", "system", "sources"])

@@ -8,11 +8,13 @@ import { PRICE_PER_MILLION_INPUT_TOKENS, decisionAdapters, type DecisionValue } 
 const rejected = (e: unknown) => e instanceof Error && (e as { rejected?: unknown }).rejected === true;
 const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dirname, "fixtures", name), "utf8"));
 const clefResponse = fixture("clef-flash-response.json");
+clefResponse.answers.clarity = { type: "score", score: 1.4, legend: ["murky", "ok", "clear"], probabilities: { "0": 0.1, "1": 0.5, "2": 0.4 }, confidence: 0.5 };
 const clairicResponse = fixture("clairic-response.json");
 
 const questions = {
   route: { type: "choice", instructions: "How should a software factory handle this issue?", criteria: { ready: "Clear", needs_info: "Missing", not_for_factory: "Human" } },
   one_line: { type: "noul", instructions: "Is the issue only one line?" },
+  clarity: { type: "score", instructions: "How clear?", criteria: ["murky", "ok", "clear"] },
 } as const;
 const fields = {
   failing_check: { type: "text", instructions: "The verify check that failed" },
@@ -124,6 +126,19 @@ describe("decisionAdapters", () => {
       reject(run("triage", { answers: { ...clefResponse.answers, route: { type: "choice", choice: "bogus", probabilities: {} } } }), "route"));
     it("a noul outside 0 to 1", () => reject(run("triage", { answers: { ...clefResponse.answers, one_line: { type: "noul", noul: 1.5 } } }), "one_line"));
     it("a missing field", () => reject(run("parse", { answers: { failing_check: clairicResponse.answers.failing_check }, truncated: false }), "run_id"));
+    it("a NaN noul", () => reject(run("triage", { answers: { ...clefResponse.answers, one_line: { type: "noul", noul: NaN } } }), "NaN"));
+    it("a score out of range", () => reject(run("triage", { answers: { ...clefResponse.answers, clarity: { ...clefResponse.answers.clarity, score: 3 } } }), "clarity"));
+    it("a score that is not a number", () => reject(run("triage", { answers: { ...clefResponse.answers, clarity: { type: "score" } } }), "clarity"));
+    it("probabilities that are not numbers", () =>
+      reject(run("triage", { answers: { ...clefResponse.answers, clarity: { ...clefResponse.answers.clarity, probabilities: { "0": "x" } } } }), "clarity"));
+    it("an answer of the wrong type", () => reject(run("triage", { answers: { ...clefResponse.answers, one_line: { type: "choice", noul: 0.2 } } }), "one_line"));
+    it("an empty answers", () => reject(run("triage", { answers: {} }), "route"));
+    it("a field without a value key", () =>
+      reject(run("parse", { answers: { ...clairicResponse.answers, run_id: { type: "number", guess: 1 } }, truncated: false }), "run_id"));
+    it("a field of the wrong type", () =>
+      reject(run("parse", { answers: { ...clairicResponse.answers, run_id: { type: "text", value: "1" } }, truncated: false }), "run_id"));
+    it("a non-string referenceDate", () => reject(decisionAdapters(system, { ai: fakeAI(clairicResponse).ai }).parse!.run({ state: "s", referenceDate: 5 }, ctx().ctx), "referenceDate"));
+    it("extraction input without state", () => reject(decisionAdapters(system, { ai: fakeAI(clairicResponse).ai }).parse!.run({}, ctx().ctx), "state"));
     it("no answers at all", () => reject(run("triage", {}), "answers"));
   });
 
@@ -132,5 +147,24 @@ describe("decisionAdapters", () => {
     const error = await decisionAdapters(system, { ai: fakeAI(boom).ai }).triage!.run({ state: "s" }, ctx().ctx).then(() => null, (e) => e);
     expect(error).toBe(boom);
     expect(rejected(error)).toBe(false);
+  });
+
+  it("passes extra answers through and accepts a null field value", async () => {
+    const answers = { ...clefResponse.answers, extra: { type: "noul", noul: 2 } };
+    const value = (await decisionAdapters(system, { ai: fakeAI({ ...clefResponse, answers }).ai }).triage!.run({ state: "s" }, ctx().ctx)) as DecisionValue;
+    expect(value.answers).toEqual(answers);
+    const parsed = (await decisionAdapters(system, { ai: fakeAI({ answers: { ...clairicResponse.answers, run_id: { type: "number", value: null } } }).ai }).parse!.run({ state: "s" }, ctx().ctx)) as DecisionValue;
+    expect((parsed.answers.run_id as { value: unknown }).value).toBeNull();
+  });
+
+  it("still reports the cost of a response it rejects", async () => {
+    const { ctx: c, usage } = ctx();
+    await decisionAdapters(system, { ai: fakeAI({ ...clefResponse, answers: {} }).ai }).triage!.run({ state: "s" }, c).catch(() => {});
+    expect(usage).toEqual([{ inputTokens: 335, outputTokens: 0, costUsd: (335 * 0.038) / 1e6 }]);
+  });
+
+  it("throws at construction for a decision without a model", () => {
+    const bad = { effects: { oops: { kind: "decision", questions } } } as never;
+    expect(() => decisionAdapters(bad, { ai: fakeAI({}).ai })).toThrow(/oops/);
   });
 });
