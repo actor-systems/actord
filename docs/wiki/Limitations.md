@@ -93,6 +93,9 @@
     number against the source before acting on it.
   - **A forecast's value is a list, one entry per step** (`horizon: 3` gave 3), with each step's detail in `steps`.
     The adapter accepts a list of numbers, or of date strings when the field's `min` is a date, of any length.
+  - **A `datetime` loses its offset.** Spike 7's input said `2026-10-27T19:15:45Z`, and the value came back as
+    `2026-10-27T19:15:45`, with no `Z`. Treat an extracted datetime as having no time zone, and supply the zone yourself
+    when it matters.
   - **Tracked:** none.
 - **Clef truncates long `state` silently.** Text `state` too long for the context window is cut to fit, and the
   response doesn't say so. The window is 65,536 tokens for Clef, and 24,576 for Clef-flash on its model page. A Clef
