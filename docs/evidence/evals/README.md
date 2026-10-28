@@ -1,13 +1,17 @@
 # Eval results
 
-Full runs of the suite (`scripts/eval-suite.sh`): 12 cases × 3 runs × with and without the plugin, agent
+Full runs of the suite (`scripts/eval-suite.sh`): 12 cases (15 from plan 5 on) × 3 runs × with and without the plugin, agent
 `claude-sonnet-5-5`, judge `claude-haiku-5-5`, `--no-publish`, a cost ceiling on every run. Each kept
 workspace is re-run on the host (`*.host.json`), because eval runs deny the loopback port workerd needs
 (decision 0004).
 
-Runs L and M are the current record: two full runs on the plugin at `9f9701a` (no plugin change between
-them). Runs A through K and the deploy re-measurements are in `superseded/`; each measured skills, project
-guidance, test helpers, or hooks that have since changed.
+There is no current record. Plan 5 rewrote every skill, both agents, the starter guidance and the eval scaffolds, so
+runs L and M, the last two full runs (on the plugin at `9f9701a`), measured a plugin that no longer exists, and
+decision 0010 supersedes them. Runs A through M and the deploy re-measurements are in `superseded/`; each measured
+skills, project guidance, test helpers, or hooks that have since changed. Until the owner-approved round after plan 5,
+`g5.evals.run`, `g5.evals.host` and `g1.start-session` report blocked. The suite is now 15 cases (plan 5 added
+`add-timer-retry`, `wire-github-webhook` and `add-triage-decision`), a full run is about $12–13, and the next round is
+two full runs, about $25 with a $14-a-run ceiling.
 
 Spend, all owner-approved: first approval ($50): $41.56 (calibration, run 1, release runs A, B, C). Second
 ($25): $21.44 (injection checks $0.38, runs D and E $20.10, deploy re-measurements $0.96). Third (about $10;
@@ -15,7 +19,9 @@ ceiling $11): $10.35 (run F). Fourth (about $20): $10.74 (start-skill injection 
 Fifth (about $22): $20.34 (runs H and I). Sixth (about $21; ceiling $11 a run): $20.54 (runs J and K).
 Seventh (about $10; ceiling $11): $10.00 (run L). Eighth (about $10; ceiling $11): $10.05 (run M). Total $145.02.
 
-## Runs L and M: the current plugin
+## Runs L and M: before plan 5's skill rewrite (superseded)
+
+On `9f9701a`, with 12 cases. Their files are in `superseded/`; decision 0023 supersedes them.
 
 | Case | L with | L without | L Δ | M with | M without | M Δ | Host runtime pass (with / without, L+M) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
