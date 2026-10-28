@@ -1,9 +1,22 @@
 // The payloads the runtime itself delivers to actors (approval.decided, agent.failed, agent.exhausted), with their
-// hand-written Standard Schemas, so apps declare them with no schema library. This module imports types only, so
-// @actord/toolkit/system can export it: `actord check` loads system.ts under Node, and the sources and agents entry
-// points import cloudflare:workers (through agents/lifecycle), which Node can't load. They re-export it.
-import type { EffectUsage } from "./runtime/index.ts";
+// hand-written Standard Schemas, so apps declare them with no schema library. It imports nothing but types from
+// system.ts (not the runtime, agents or cloudflare:*), so @actord/toolkit/system can export it: `actord check` loads
+// system.ts under Node, and the sources and agents entry points import cloudflare:workers (through
+// agents/lifecycle), which Node can't load. They re-export it.
 import type { StandardResult, StandardSchemaV1 } from "./system.ts";
+
+/**
+ * What an attempt consumed. Every field is optional; reports are summed field by field. A value that isn't a
+ * finite number at or above 0 (NaN, Infinity, a negative number) is ignored, so it can't spoil the result.
+ * Not guaranteed: usage from an attempt that crashed the Durable Object is lost, and usage reported
+ * after an attempt has timed out or ended is dropped.
+ */
+export interface EffectUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  containerSeconds?: number;
+}
 
 type Issue = { message: string; path: [string] | [] };
 

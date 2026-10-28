@@ -38,6 +38,7 @@ import type {
   TimerMessages,
 } from "../system.ts";
 import { durationMs, type Duration } from "../system.ts";
+import type { EffectUsage } from "../payloads.ts";
 import { TIMERS_SCHEMA, type TimerRow, cancelTimer, consumeTimer, dueTimers, earliestTimer, retryTimer, setTimer, timerSet } from "./timers.ts";
 import type { Lifecycle } from "agents/lifecycle";
 import { ActordCapability } from "./capability.ts";
@@ -208,18 +209,8 @@ export class EffectRejected extends Error {
   readonly rejected = true;
 }
 
-/**
- * What an attempt consumed. Every field is optional; reports are summed field by field. A value that isn't a
- * finite number at or above 0 (NaN, Infinity, a negative number) is ignored, so it can't spoil the result.
- * Not guaranteed: usage from an attempt that crashed the Durable Object is lost, and usage reported
- * after an attempt has timed out or ended is dropped.
- */
-export interface EffectUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  costUsd?: number;
-  containerSeconds?: number;
-}
+// EffectUsage (what an attempt consumed) lives in payloads.ts, which agent.failed and agent.exhausted carry it in.
+export type { EffectUsage } from "../payloads.ts";
 
 const USAGE_FIELDS = ["inputTokens", "outputTokens", "costUsd", "containerSeconds"] as const;
 const hasUsage = (u: EffectUsage | undefined): u is EffectUsage => u !== undefined && USAGE_FIELDS.some((f) => u[f] !== undefined);
