@@ -780,9 +780,14 @@ it("[fire-timers-counts-fired] fireTimers counts the timers the drive fired, inc
   await setTimer("fcount", "bad", 60_000);
   expect(await fireTimers(env, system, "Probe", "fcount")).toBe(2);
   expect(await probe("fcount").fired()).toEqual(["ok"]);
-  // The failed one waits for its retry, so a second call right away fires it again.
-  expect((await timerRows("fcount")).map((r) => [r.key, r.attempts])).toEqual([["bad", 1]]);
-  expect(await fireTimers(env, system, "Probe", "fcount")).toBe(1);
+  // The failed one waits for its retry. A second call fires it again, unless the real alarm's 1 s retry got there
+  // first under load (it did in CI's clean clone, #77's report): either way it has been tried again by now.
+  expect((await timerRows("fcount")).map((r) => r.key)).toEqual(["bad"]);
+  const again = await fireTimers(env, system, "Probe", "fcount");
+  expect(again).toBeLessThanOrEqual(1);
+  const [bad] = await timerRows("fcount");
+  expect(bad!.attempts).toBeGreaterThanOrEqual(2);
+  expect(await probe("fcount").fired()).toEqual(["ok"]);
 });
 
 it("[timer-delivery-retry] a timer whose handler fails is retried with backoff, then dropped when attempts run out", async () => {
