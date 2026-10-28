@@ -1,8 +1,8 @@
 # Implementation report: Actor-Native Cloudflare Toolkit v0.1 (release candidate)
 
 > **Note (2026-10-28):** this report is historical. Runs L and M, which it cites as the Claude plugin's eval
-> record, were superseded by plan 5, which rewrote the skills they measured (decision 0023). The current record
-> is [`docs/evidence/evals/README.md`](evidence/evals/README.md).
+> record, were superseded by plan 5, which rewrote the skills they measured (decision 0023). The current record,
+> runs Q and R, is in [`docs/evidence/evals/README.md`](evidence/evals/README.md).
 
 The report charter §11 asks for. Every claim below traces to a command that was run; the full record is
 `docs/verification-report.md` (human) and `verify-report.json` (machine), produced by `npm run verify`.

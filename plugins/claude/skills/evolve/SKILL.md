@@ -39,7 +39,8 @@ Rules that hold for this whole skill:
 3. **Ask the critics:** `boundary-critic` for new or removed actors and routes, and `delivery-auditor` for
    changed handlers and effects. Resolve each objection with code or a test.
 4. **Implement and test:** follow `/actord:implement`, and add tests for the new behavior and for what must
-   not break. Run `actord test`. `actord check` reports the manifest as stale until step 5; that's expected.
+   not break. A test asserts that each receipt it relies on is `handled`, and overrides every effect it asserts
+   on, a new one included. Run `actord test`. `actord check` reports the manifest as stale until step 5; that's expected.
 5. **Classify, then record:** run `actord diff` first. It compares against the manifest committed at `HEAD`,
    or, where git isn't usable, against `actord.manifest.json` on disk, which the next command overwrites.
    Then run `actord graph --write` and `actord verify`. Read `references/compatibility.md` for what each

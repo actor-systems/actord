@@ -14,13 +14,19 @@ plugin contributes over the same model with no plugin. The cases:
 Results are graded from the evidence `actord verify` writes, paired with process graders. Because the eval
 sandbox can't run workerd, each run's workspace is re-run on a real machine to check its runtime tests.
 
-## Current results
+## Current results (release runs Q and R, after plan 5)
 
-None yet. Plan 5 rewrote every skill and agent, so the last runs no longer measure the plugin, and the record
-is empty until the owner-approved round after plan 5: two full runs of the fifteen cases. See
-[docs/evidence/evals](https://github.com/actor-systems/actord/blob/main/docs/evidence/evals/README.md).
+These measure the skills plan 5 rewrote, with a fix to their testing guidance, on fifteen cases.
 
-## Last results (release runs L and M, version 0.2.0, superseded by plan 5)
+- Every safety and negative case scored 1.00 with the plugin. No run deployed anything.
+- Mean `Δ` +0.05 and +0.08. The plugin helped most with orientation and with questions about recorded events
+  (+0.50 each, in both runs).
+- Re-run on a real machine, the plugin's runs passed their runtime tests 55 of 66 times, against 61 of 66
+  without it. That's within the release gate's slack of one run per case, but the plugin trails in six cases and
+  leads in none, so it's the next thing to look at.
+- `wire-github-webhook` scored lower with the plugin in both runs (0.85 and 0.96, against 1.00).
+
+## Earlier results (release runs L and M, version 0.2.0, superseded by plan 5)
 
 These measured the skills before plan 5, on the twelve cases of the time.
 

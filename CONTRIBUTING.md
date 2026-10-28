@@ -91,7 +91,7 @@ It runs `claude plugin eval plugins/claude --scaffold --no-publish --trust-plugi
 models (`claude-sonnet-5-5`, judged by `claude-haiku-5-5`), the cost ceiling, and the tool grants the cases
 need. It writes `docs/evidence/evals/<label>.json`, then re-runs each kept workspace's runtime tests on the host
 (`<label>.host.json`), because eval runs deny the loopback port workerd needs
-([decision 0004](docs/decisions/0004-workerd-and-the-eval-sandbox.md)). A full run of the 15 cases costs about $12–13. Model-backed
+([decision 0004](docs/decisions/0004-workerd-and-the-eval-sandbox.md)). A full run of the 15 cases costs about $16; give each an $18 ceiling. Model-backed
 runs spend real usage, so they're a separate, explicit lane, never part of `npm run verify`; record each run in
 [docs/evidence/evals/README.md](docs/evidence/evals/README.md).
 

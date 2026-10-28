@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # The model-backed release lane (owner-approved; spends real usage). One full run of the eval suite with
 # pinned models, a cost ceiling, no publishing, and kept workspaces, then a host re-run of each workspace's
-# runtime verification (decision 0004). Results: docs/evidence/evals/<label>.json and <label>.host.json.
+# runtime verification (decision 0004), then the kept workspaces are removed (ACTORD_EVAL_KEEP_WORKSPACES=1 keeps
+# them). Results: docs/evidence/evals/<label>.json and <label>.host.json.
 #   eval-suite.sh <label> <max-cost-usd> [case-glob] [subdir]
 # A case glob re-measures one case (after a documented grader correction) into docs/evidence/evals/<subdir>.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 label="${1:?label}"
 ceiling="${2:?max cost in USD}"
+# A full run keeps about 80 GB of workspaces in /tmp until the host re-run has read them, so it stops before
+# spending anything when there isn't room: 100 GB for the suite, 10 GB for one case (ACTORD_EVAL_MIN_FREE_GB).
+need="${ACTORD_EVAL_MIN_FREE_GB:-$([ -n "${3:-}" ] && echo 10 || echo 100)}"
+free="$(df -Pk /tmp | awk 'NR == 2 { print int($4 / 1048576) }')"
+if [ "$free" -lt "$need" ]; then
+  echo "eval-suite: $free GB free in /tmp, $need GB needed; free space or set ACTORD_EVAL_MIN_FREE_GB" >&2
+  exit 2
+fi
 case_args=()
 [ -n "${3:-}" ] && case_args=(--case "$3")
 dir="$root/docs/evidence/evals${4:+/$4}"
@@ -24,7 +33,17 @@ claude plugin eval plugins/claude ${case_args[@]+"${case_args[@]}"} --scaffold -
   "Bash(echo *)" "Bash(printf *)" "Bash(test *)" "Bash(python3 *)" "Bash(which *)" \
   --json "$out" 2>"$log"
 status=$?
+# A host file left by an earlier run of this label must not stand in for this one's.
+rm -f "$dir/$label.host.json"
 "$root/scripts/rerun-eval-workspaces.sh" "$out" "$dir/$label.host.json"
+# The workspaces are the host evidence's only source, so they go only once the re-run has recorded its rows.
+if [ "${ACTORD_EVAL_KEEP_WORKSPACES:-}" != 1 ]; then
+  if jq -e 'length > 0' "$dir/$label.host.json" >/dev/null 2>&1; then
+    "$root/scripts/remove-eval-workspaces.sh" "$out"
+  else
+    echo "eval-suite: no host re-run rows in $dir/$label.host.json, so the kept workspaces stay" >&2
+  fi
+fi
 jq -r '"\(.aggregates.casesPassed)/\(.aggregates.casesTotal) cases at threshold · score \(.aggregates.overallScore) · mean Δ \(.aggregates.meanDelta) · $\(.costUsd) · partial \(.partial)"' "$out"
 jq -r '.cases[] | "  \(.name)  with \(.aggregates.score)  without \(.aggregates.scoreWithout // "-")  Δ \(.aggregates.delta // "-")"' "$out"
 exit "$status"

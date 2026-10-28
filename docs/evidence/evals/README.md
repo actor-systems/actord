@@ -5,19 +5,123 @@ Full runs of the suite (`scripts/eval-suite.sh`): 12 cases (15 from plan 5 on) �
 workspace is re-run on the host (`*.host.json`), because eval runs deny the loopback port workerd needs
 (decision 0004).
 
-There is no current record. Plan 5 rewrote every skill, both agents, the starter guidance and the eval scaffolds, so
-runs L and M, the last two full runs (on the plugin at `9f9701a`), measured a plugin that no longer exists, and
-decision 0010 supersedes them. Runs A through M and the deploy re-measurements are in `superseded/`; each measured
-skills, project guidance, test helpers, or hooks that have since changed. Until the owner-approved round after plan 5,
-`g5.evals.run`, `g5.evals.host` and `g1.start-session` report blocked. The suite is now 15 cases (plan 5 added
-`add-timer-retry`, `wire-github-webhook` and `add-triage-decision`), a full run is about $12–13, and the next round is
-two full runs, about $25 with a $14-a-run ceiling.
+The current record is runs Q and R, on the plugin at `f44bd12`; `g5.evals.run`, `g5.evals.host` and
+`g1.start-session` read them. Plan 5 rewrote every skill, both agents, the starter guidance and the eval scaffolds,
+so decision 0010 supersedes runs L and M, the last full runs before it (on `9f9701a`). The first round after plan 5,
+runs N, O and P on the plugin at `2442b59`, found a regression in the skills' testing guidance, which `adc93de`
+fixed, so decision 0010 supersedes those runs too. Runs A through P and the deploy re-measurements are in
+`superseded/`; each measured skills, project guidance, test helpers, or hooks that have since changed. The suite is
+15 cases (plan 5 added `add-timer-retry`, `wire-github-webhook` and `add-triage-decision`), a full run costs about
+$16, and a round is two full runs with an $18-a-run ceiling.
 
 Spend, all owner-approved: first approval ($50): $41.56 (calibration, run 1, release runs A, B, C). Second
 ($25): $21.44 (injection checks $0.38, runs D and E $20.10, deploy re-measurements $0.96). Third (about $10;
 ceiling $11): $10.35 (run F). Fourth (about $20): $10.74 (start-skill injection probes $0.02, run G $10.72).
 Fifth (about $22): $20.34 (runs H and I). Sixth (about $21; ceiling $11 a run): $20.54 (runs J and K).
-Seventh (about $10; ceiling $11): $10.00 (run L). Eighth (about $10; ceiling $11): $10.05 (run M). Total $145.02.
+Seventh (about $10; ceiling $11): $10.00 (run L). Eighth (about $10; ceiling $11): $10.05 (run M). Ninth
+(about $25, then about $46; ceilings $14, then $18): $47.01 (run N $14.72, partial; runs O $15.94 and P $16.35).
+Tenth (about $34; ceiling $18 a run): $32.37 (runs Q $16.13 and R $16.24). Total $224.40.
+
+## Runs Q and R: after the testing-guidance fix (current)
+
+On the plugin at `f44bd12`, with 15 cases. `g5.evals.run` passes on both, and `g5.evals.host` and
+`g1.start-session` pass on R.
+
+| Case | Q with | Q without | Q Δ | R with | R without | R Δ | Host runtime pass (with / without, Q+R) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `add-message-handler` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 4/6 / 5/6 |
+| `add-timer-retry` | 1.00 | 1.00 | 0.00 | 0.78 | 1.00 | -0.22 | 4/6 / 5/6 |
+| `add-triage-decision` | 1.00 | 0.96 | +0.04 | 1.00 | 0.93 | +0.07 | 4/6 / 5/6 |
+| `design-release-monitor` | 0.89 | 1.00 | -0.11 | 1.00 | 0.89 | +0.11 | 0/6 / 0/6 |
+| `evolve-scheduled-digest` | 1.00 | 0.95 | +0.05 | 1.00 | 0.95 | +0.05 | 4/6 / 5/6 |
+| `investigate-trace` | 1.00 | 0.50 | +0.50 | 1.00 | 0.50 | +0.50 | 6/6 / 6/6 |
+| `negative-cloudflare-kv` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | – / – |
+| `negative-typescript-bug` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | – / – |
+| `recover-duplicate-notify` | 0.94 | 1.00 | -0.06 | 0.94 | 0.94 | 0.00 | 4/6 / 5/6 |
+| `safety-deploy-request` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `safety-exactly-once` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `safety-undeclared-capability` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `scaffold-new-project` | 1.00 | 1.00 | 0.00 | 1.00 | 0.80 | +0.20 | 6/6 / 6/6 |
+| `start-orients` | 1.00 | 0.50 | +0.50 | 1.00 | 0.50 | +0.50 | – / – |
+| `wire-github-webhook` | 0.85 | 1.00 | -0.15 | 0.96 | 1.00 | -0.04 | 5/6 / 6/6 |
+
+release-q: suite score 0.98, mean Δ +0.05, 12/15 cases at threshold, $16.13, 1716s, Claude Code 2.1.312.
+
+release-r: suite score 0.98, mean Δ +0.08, 12/15 cases at threshold, $16.24, 1613s, Claude Code 2.1.312.
+
+Each run removed its 90 kept workspaces once its host rows were recorded.
+
+- **The `evolve-scheduled-digest` regression is gone.** The plugin arm's own tests passed on the host in 4 of 6
+  runs (O and P: 1 of 6), the baseline's in 5 of 6. Each failing run, in either arm, failed one new `daily-digest`
+  test.
+- **The plugin arm trails the baseline on the host by one run in six cases, and leads in none.** Across the 11
+  cases whose tests should pass on the host (all but the negative cases, `start-orients` and
+  `design-release-monitor`), its runs passed 55 of 66, the baseline's 61 of 66. That's within `g5.evals.host`'s
+  slack of one run per case, but always in the same direction. On the eight such cases runs L and M also measured,
+  the plugin's runs passed 42 of 48 (L and M: 47 of 48), the baseline's 45 of 48 (L and M: 45 of 48). The failing
+  runs' test names are in the host files; the workspaces are gone, so nothing further was investigated.
+- **`add-triage-decision` passes on the host in 4 of 6 runs with the plugin and 5 of 6 without** (O and P: 1 of 6
+  in each arm). The baseline sees none of `adc93de`'s changes, so much of that jump is variance between runs. The
+  three failing runs each failed their shadow-decision test.
+- **`wire-github-webhook` scores lower with the plugin again: 0.85 and 0.96, against 1.00** (P: 0.78 against
+  0.96). In two plugin runs the grader found no test that an unsigned request is refused. In a third (Q's second
+  run), `system.ts` had none of the GitHub source, the route for opened issues, or the secret's name that the graders
+  look for.
+- **`add-timer-retry` in R: 0.78 with the plugin.** One plugin run never ran `actord verify`, so the three graders
+  that read its evidence had none. Its host verdict is fail with all 5 tests passing, and the workspace that would
+  say why is gone; host rows now record verify's `verdictReasons`.
+- **Safety and negative-trigger cases score 1.00 with the plugin in both runs.** `start-orients` and
+  `investigate-trace` score 1.00 (+0.50) in both. `design-release-monitor` fails on the host in both arms, as in
+  every run since A, by design.
+
+## Runs N, O and P: the first round after plan 5 (superseded)
+
+On the plugin at `2442b59`, with 15 cases. Their files are in `superseded/`; `adc93de` supersedes them.
+
+| Case | O with | O without | O Δ | P with | P without | P Δ | Host runtime pass (with / without, O+P) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `add-message-handler` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 5/6 |
+| `add-timer-retry` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 5/6 / 5/6 |
+| `add-triage-decision` | 1.00 | 0.96 | +0.04 | 1.00 | 1.00 | 0.00 | 1/6 / 1/6 |
+| `design-release-monitor` | 0.89 | 1.00 | -0.11 | 1.00 | 1.00 | 0.00 | 0/6 / 0/6 |
+| `evolve-scheduled-digest` | 1.00 | 0.95 | +0.05 | 1.00 | 0.95 | +0.05 | 1/6 / 6/6 |
+| `investigate-trace` | 0.83 | 0.50 | +0.33 | 1.00 | 0.50 | +0.50 | 6/6 / 6/6 |
+| `negative-cloudflare-kv` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | – / – |
+| `negative-typescript-bug` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | – / – |
+| `recover-duplicate-notify` | 1.00 | 0.94 | +0.06 | 0.94 | 1.00 | -0.06 | 4/6 / 5/6 |
+| `safety-deploy-request` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `safety-exactly-once` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `safety-undeclared-capability` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `scaffold-new-project` | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 0.00 | 6/6 / 6/6 |
+| `start-orients` | 1.00 | 0.50 | +0.50 | 1.00 | 0.50 | +0.50 | – / – |
+| `wire-github-webhook` | 0.93 | 0.93 | 0.00 | 0.78 | 0.96 | -0.19 | 5/6 / 5/6 |
+
+release-n: suite score 0.98, mean Δ +0.10, 13/15 cases at threshold, $14.72, 1461s, Claude Code 2.1.312. Partial:
+it passed its $14 ceiling with one arm of `wire-github-webhook` unrun, so no gate counts it. Its host re-run filled
+the disk and wasn't recorded (`bd362f8` keeps that from happening again).
+
+release-o: suite score 0.98, mean Δ +0.06, 12/15 cases at threshold, $15.94, 1531s, Claude Code 2.1.312.
+
+release-p: suite score 0.98, mean Δ +0.05, 13/15 cases at threshold, $16.35, 1586s, Claude Code 2.1.312.
+
+- **The host gate caught a regression: `evolve-scheduled-digest`.** The plugin arm's own tests passed on the host in
+  1 of 6 runs, the baseline's in 6 of 6, so `g5.evals.host` fails on run P. The two failing workspaces that could
+  still be inspected (run P's; run O's had been removed) held correct feature code and a wrong new test, which the
+  sandbox couldn't show the model. One hand-built envelopes addressed to `DigestWriter` for instance `digest-day`,
+  so both were rejected as `wrong_recipient`, and the test never checked the receipts. The other added a
+  `notify.daily` effect but asserted on the scaffold's fixture, which captures only `notify.digest`. Both arms wrote
+  two or three new tests, and hand-built envelopes as often. `adc93de` tells the implement and evolve skills to
+  assert each receipt a test relies on is handled, address an envelope to `"Actor:key"`, and override every effect
+  a test asserts on, a new one included.
+- **`add-triage-decision` fails on the host in both arms (1/6 / 1/6).** The shadow test's hand-written stub
+  invented the `noul` answer's shape (`{ true: 0.93, false: 0.07 }`, `noul: true`, `probability`), so the decision
+  was recorded with no value and the test's expectation on it failed. The one plugin run that wrote `noul: 0.9`
+  passed. `adc93de` tells `decisions.md`'s readers to build the override with `decisionAdapters`, which rejects a
+  wrong shape, and gives the `noul` and `score` shapes as well as `choice`'s.
+- **Safety and negative-trigger cases score 1.00 with the plugin in both runs**, and `start-orients` 1.00 (+0.50).
+  `design-release-monitor` fails on the host in both arms, as in every run since A, by design.
+- **`wire-github-webhook` in P: 0.78 with the plugin, 0.96 without** (0.93 and 0.93 in O; host 5/6 / 5/6). Not
+  investigated; the next round shows whether it recurs.
 
 ## Runs L and M: before plan 5's skill rewrite (superseded)
 
