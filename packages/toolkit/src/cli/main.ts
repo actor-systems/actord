@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { VERSION } from "../version.ts";
 import { doctor } from "./commands/doctor.ts";
 import { claimMonitor, events, followEvents, trace } from "./commands/events.ts";
+import { scorecard } from "./commands/scorecard.ts";
 import { hook } from "./commands/hook.ts";
 import { init } from "./commands/init.ts";
 import { followRoom, guard, room } from "./commands/room.ts";
@@ -28,6 +29,8 @@ Commands:
          [--correlation C]     (the monitor's) exits quietly if this session already follows
          [--file F] [--exclusive] the project
   trace <message-id> [--file F] Follow a message's causes and consequences in the local event log
+  scorecard [--effect <name>]  How well decision and extraction effects are calibrated, from the labels
+            [--file F]         (ctx.acted, ctx.outcome) in the local event log
   test [--profile extended]    Run the project's workerd tests (standard skips [extended] tests)
   verify [--out F]             Typecheck, check, test, and classify reliability claims; writes
          [--profile extended]  .actord/evidence.json (verdict pass, fail, or blocked)
@@ -63,6 +66,7 @@ const commands: Record<string, Handler> = {
   events: ({ cwd, values }) =>
     events(cwd, { notable: values.notable === true, actor: str(values.actor), kind: str(values.kind), correlation: str(values.correlation), file: str(values.file) }),
   trace: ({ cwd, values, positionals }) => trace(cwd, positionals[0], { file: str(values.file) }),
+  scorecard: ({ cwd, values }) => scorecard(cwd, { effect: str(values.effect), file: str(values.file) }),
   init: ({ cwd, values, positionals }) => init(cwd, positionals[0], { adopt: values.adopt === true, name: str(values.name), toolkit: str(values.toolkit), host: str(values.host) }),
   verify: ({ cwd, values }) => verify(cwd, { out: str(values.out), profile: str(values.profile) }),
   test: ({ cwd, values }) => test(cwd, { profile: str(values.profile) }),
@@ -101,6 +105,7 @@ export async function main(argv: string[], io = { out: process.stdout, err: proc
         kind: { type: "string" },
         correlation: { type: "string" },
         file: { type: "string" },
+        effect: { type: "string" },
         adopt: { type: "boolean" },
         name: { type: "string" },
         toolkit: { type: "string" },

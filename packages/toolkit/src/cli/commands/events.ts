@@ -13,7 +13,7 @@ export interface EventFilter {
   correlation?: string;
 }
 
-function eventsPath(cwd: string, file?: string): { path: string | null; root: string | null } {
+export function eventsPath(cwd: string, file?: string): { path: string | null; root: string | null } {
   if (file) return { path: resolve(cwd, file), root: findProjectRoot(cwd) };
   const root = findProjectRoot(cwd);
   return { path: root ? join(root, EVENTS_FILE) : null, root };
