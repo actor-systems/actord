@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 215186b Rebuild the plugin dists for plan 4's final-review fixes
+== repository at 273692a Rebuild the plugin dists for R10's forecast check
 == install Claude Code 2.1.312 from npm
 2.1.312 (Claude Code)
 == marketplace add + install
