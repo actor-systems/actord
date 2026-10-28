@@ -16,7 +16,7 @@
 | An actor gaining an effect | risky, needs approval | A person approves the new capability |
 | Schedule change | risky | An alarm already set keeps its old time until it fires once |
 | Kind changed (`actor.kind`) | risky | To model-assisted or agent, output is no longer deterministic; needs a budget and validated output |
-| Budget (`actor.budget`) | compatible if every changed agent limit (`usd`, `turns`, `wallClock`) went down; otherwise risky | Any change to `maxAttempts`, `timeoutMs` or `maxTokens`, and any raised or removed limit, is risky |
+| Budget (`actor.budget`) | compatible if every changed agent limit (`usd`, `turns`, `wallClock`) went down; otherwise risky | Any change to `maxAttempts`, `timeoutMs` or `maxTokens`, and any limit raised, added or removed (or the whole budget added or removed), is risky |
 | A field `actord diff` has no rule for (`actor.changed`, `effect.changed`, `source.changed`) | risky | Check by hand how what is already in flight behaves |
 
 ## Agent actors (`agent.*`)
@@ -60,7 +60,8 @@ the new code is live on running agents; say a restart is what rolls it out.
 | `effect.idempotency` | risky | To `none`: lost acknowledgments become `in_doubt` |
 | `effect.approval` | risky; needs approval when it becomes `none` | |
 | `effect.publishes` | risky; needs approval when it becomes `true` | An email reply that isn't authenticated can no longer approve it |
-| `effect.reconcile`, `effect.result` | risky | In-flight outcomes use the old result message: keep its handler |
+| `effect.reconcile` | risky | Applies to unkeyed attempts that fail after the deploy: turned off, a lost acknowledgment is `in_doubt` at once; turned on, the adapter's `reconcile` decides. Effects already `in_doubt` stay so |
+| `effect.result` | risky | In-flight outcomes use the old result message: keep its handler |
 | `effect.budget` | risky | Applies from the next attempt, including retries of effects already in flight |
 | `effect.expires` | risky | Approvals already waiting keep the expiry they were given |
 | `effect.input` | risky | The tool parameters an agent sees changed |

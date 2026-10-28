@@ -1,7 +1,8 @@
 # Fault matrix: how to test each fault in workerd
 
-Helpers come from `@actord/toolkit/testing` or `cloudflare:test`, except `scriptedModel` (`@actord/toolkit/agents`)
-and `decisionAdapters` (`@actord/toolkit/decisions`). Tag each test with its claim. Working test code for each area is
+Helpers come from `@actord/toolkit/testing` or `cloudflare:test`, except `ingress`, `EffectNotDelivered` and
+`EffectRejected` (`@actord/toolkit/runtime`), `scriptedModel` (`@actord/toolkit/agents`) and `decisionAdapters`
+(`@actord/toolkit/decisions`). Tag each test with its claim. Working test code for each area is
 in the implement skill's references: [runtime.md](../../implement/references/runtime.md) (Testing),
 [timers-and-jobs.md](../../implement/references/timers-and-jobs.md), [sources.md](../../implement/references/sources.md),
 [agents.md](../../implement/references/agents.md) and [decisions.md](../../implement/references/decisions.md).
@@ -16,10 +17,10 @@ expiry due. Give each test its own instance keys and ids.
 | Duplicate business input | Same item in two inputs (different message ids) | Handler's own key check records it once |
 | Malformed / wrong version / off-route | Hand-built envelopes to `stub.receive`: bad payload, `version: 2`, a `from` with no route | `rejected` with `invalid_payload`, `version_mismatch`, `unauthorized_route`; no state change |
 | Delayed / out-of-order | Deliver newer before older | Outcome independent of order (pointers only move forward) |
-| Crash before a durable write | `injectFault({ at: "before-handler" })`, then `settle` | Retried, handled once |
-| Crash after a durable write | `injectFault({ at: "after-handler" })`, then `settle` | Writes rolled back; retry behaves as first attempt (assert a downstream effect that only happens if it did) |
-| Delivery retry and restart | `injectFault({ at: "deliver" })`, `evictDurableObject(sender)`, `settle` | Outbox row survives; delivered after the restart |
-| Retry exhaustion | `injectFault({ at: "deliver", times: 100 })`, `settle` | Dead after 6 attempts; `retry.exhausted` event |
+| Crash before a durable write | `injectFault({ actor: receiver, at: "before-handler" })`, then `settle` | Retried, handled once |
+| Crash after a durable write | `injectFault({ actor: receiver, at: "after-handler" })`, then `settle` | Writes rolled back; retry behaves as first attempt (assert a downstream effect that only happens if it did) |
+| Delivery retry and restart | `injectFault({ actor: sender, at: "deliver" })`, `evictDurableObject(sender)`, `settle` | Outbox row survives; delivered after the restart |
+| Retry exhaustion | `injectFault({ actor: sender, at: "deliver", times: 100 })`, `settle` | Dead after 6 attempts; `retry.exhausted` event |
 | Handler awaits I/O (the canary) | Drive the suspect handler (`ingress`, or `settle` for one fed by another actor), with `captureEvents()` | It fails: receipt `failed`, and a `failed` event whose reason ends `handlers may not await I/O; use ctx.effect`; nothing it did through `ctx` commits. From another actor: retried, then `retry.exhausted` after 6 attempts. The fix is `ctx.effect`, never a passing test |
 | Message during an in-flight effect | An adapter that waits on a promise the test resolves; send a cancel or control message meanwhile | Control message handled during the wait; the late result ignored as stale (generation in the key) |
 
@@ -52,7 +53,7 @@ remove, not a guarantee to claim.
 | Timer across a restart | Set it, `abortAllDurableObjects()`, then `fireTimers` | Fires after the restart, once |
 | Timer handler keeps failing | `injectFault({ actor, type, at: "before-handler", times: 100 })`, then `fireTimers` once per attempt, six times | Retried with backoff; the 6th attempt drops it with `retry.exhausted`, never handled |
 | Job settled by completion | `overrideEffect(name, jobAdapter)`; `settle`; deliver the `completes` message | `ctx.settleJob` in that handler settles it once; one `result` message; the trace says `settled by message` |
-| Job probe | A `JobAdapter` whose `probe` reports done; `runInDurableObject(stub, (i) => i.actor.probeNow(effect, key))`, then `settle` | Settled as the probe reported, once (`settled by probe`) |
+| Job probe | A `JobAdapter` whose `probe` reports done; `runInDurableObject(stub, (i) => i.actor.probeNow(effect, effectKey))`, then `settle` | Settled as the probe reported, once (`settled by probe`) |
 | Job deadline | A probe that never reports done; `expireJobs(env, system, "Actor", key)`, then `settle` | `in_doubt`, "deadline passed"; nothing downstream treats it as done |
 | Job cancel | `ctx.cancelJob(name, key)` from a handler, with `cancel` returning `true`, then `false` or throwing | `true` → `failed` "cancelled"; anything else → `in_doubt` "cancel not confirmed" (`settled by cancel`) |
 | Approval expiry | Park an `approval: "human"` effect; `expireApprovals(env, system, "Actor", key)`, then `settle`; then send the approval | Result `failed` "approval expired", `effect.denied` event; the late `ctx.approve` returns `false`; the effect never runs |
@@ -64,7 +65,7 @@ remove, not a guarantee to claim.
 | Webhook signature | `SELF.fetch` to the source's path with a wrong `X-Hub-Signature-256` | `401`, `source.rejected` (`signature`); nothing delivered |
 | Webhook redelivery | The same signed body and `X-GitHub-Delivery` twice | `202` both times; handled once (the second is `duplicate`) |
 | Webhook replay under a new delivery id | The same signed body with a new `X-GitHub-Delivery` | A new event: the handler's business-key check records it once |
-| Agent budget exhaustion | `scriptedModel(...)` in `options.model` that keeps calling tools; `overrideBudget(actor, { turns: 2 })`, or `{ wallClock: "50ms" }` | One `agent.exhausted` naming the limit; at most one response past `turns`, two requests past `usd` |
+| Agent budget exhaustion | `scriptedModel(...)` in `options.model` that keeps calling tools; `overrideBudget(actor, { turns: 2 })`, or `{ wallClock: "50ms" }` | One `agent.exhausted` message whose `payload.budget` names the limit, and an `effect.failed` event on `agent.session` with `exhausted:<limit>`; at most one response past `turns`, two requests past `usd` |
 | Shadow decision never delivered | `decisionAdapters(system, { ai: stub })` with a scripted answer; request the shadow effect; `settle` | `decision.recorded` with `mode: "shadow"`; no result message and no `sent` event; `requestEffect` gets `confirmed` with no value |
 
 Classify honestly:
