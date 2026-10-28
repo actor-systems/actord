@@ -10,9 +10,8 @@ the wiki generated from `docs/wiki/` (decision 0015); `@actord/toolkit` 0.2.0 is
 plugins ship. `packages/toolkit`, `plugins/claude/`, and `plugins/codex/` share version 0.2.0 and the tag
 `actord--v0.2.0` (`0020f21`); `actord--v0.1.0` marks `623c6ac`, the last commit of the old layout. The
 Codex plugin moved in on `codex-plugin` (its own agent; relicensed Apache-2.0; reference templates ship only in
-its distribution) and was merged by the owner. Release runs L and M were the Claude plugin's eval record until
-plan 5 superseded them (`docs/evidence/evals/README.md`; owner-approved spend $145.02 in eight rounds); the Codex
-plugin has none yet.
+its distribution) and was merged by the owner. Release runs Q and R, after plan 5, are the Claude plugin's eval
+record (`docs/evidence/evals/README.md`; owner-approved spend $224.40 in ten rounds); the Codex plugin has none yet.
 Report: `docs/implementation-report.md`.
 
 **Plan 1 (actord on Lifecycle) is built on `plan1/lifecycle-foundation`, not yet released.** actord is now a
@@ -62,7 +61,12 @@ bindings local (`remoteBindings: false`). Runs L and M are superseded (decision 
 `g5.evals.host` and `g1.start-session` are **blocked** until the owner approves two full runs after merge (about $25,
 $14-a-run ceiling). Issues filed: #89 (`actord check` doesn't flag misspelled fields) and #90 (CLI `--notable` and
 `trace` gaps). Verified from a plain clone at `bb71dca`, after the final review: 59 pass, 0 fail, 4 blocked
-(`g6.mod.typecheck`: no mod declarations on this machine; the three eval gates, per decision 0023).
+(`g6.mod.typecheck`: no mod declarations on this machine; the three eval gates, per decision 0023). Merged as
+`2442b59` (#92). The first eval round after it (runs N, O and P) caught a regression on the host: in
+`evolve-scheduled-digest` the plugin's own new tests misaddressed envelopes and asserted on effects they hadn't
+overridden. `adc93de` fixed the testing guidance, and the eval suite now checks for room in `/tmp` before spending and
+removes the workspaces its run kept (`g5.evals.scripts`). Runs Q and R, on `f44bd12`, pass all three eval gates;
+the plugin arm trails the baseline on the host by one run in six cases (see Open issues).
 
 **#80 (handler I/O) is merged, and #82 replaces its timer with an exact canary on `fix/82-canary-detector`.
 Neither is released yet.**
@@ -89,7 +93,7 @@ Neither is released yet.**
 - **G1 offline-complete** (verify 2026-10-24): `@actord/toolkit` CLI (`doctor`, effect pattern table) bundled
   to `plugins/claude/dist/actord.mjs`; `bin/actord` launcher (prefers project pin); `start` skill; marketplace
   `@actord/toolkit`; README trust section + test; strict validation; isolated install/uninstall smoke;
-  always-on ~66 tok. `g1.start-session` = eval case `start-orients` (blocked until evals approved).
+  always-on ~66 tok. `g1.start-session` = eval case `start-orients` (1.00 in runs Q and R).
 
 - **G2 passed** (verify 2026-10-24): `@actord/toolkit/system` (`defineSystem`, `message`; compile-time route,
   effect, schedule, payload contracts), normalized `actord.manifest.json`, `check` (stable codes),
@@ -132,6 +136,14 @@ Neither is released yet.**
   mermaid` once a topology outgrows the layered layout; edge labels need a background the Room can't know yet.
 
 ## Open issues
+- After plan 5 the Claude plugin's eval runs pass their runtime tests on the host less often than the baseline's:
+  55 of 66 against 61 of 66 in runs Q and R, one run behind in six cases and ahead in none (on the eight cases runs
+  L and M also measured: 42 of 48 against 45 of 48, where L and M had 47 of 48 against 45 of 48). Within
+  `g5.evals.host`'s slack; not yet investigated. `wire-github-webhook` also scores lower with the plugin in runs P,
+  Q and R.
+- #91: `actord check` ignores wrangler's `secrets.required`, so a declared webhook secret still warns
+  `SOURCE_SECRET_UNDECLARED`.
+- #93: `g7.codex.consumer` hangs for 600 s with no output in CI's `pull_request` runs.
 - #89: `actord check` doesn't flag a misspelled optional field, and a misspelled `publishes` skips
   `PUBLISHES_WITHOUT_APPROVAL`.
 - #90: `actord events --notable` lacks `effect.parked`, and `trace` shows source refusals as unknown and draws no
@@ -155,6 +167,10 @@ Neither is released yet.**
 - 2026-10-25, later rounds, each approved before it ran with `--max-cost-usd` per run: run F (~$10), run G and
   start-skill probes (~$20), runs H and I (~$22), runs J and K (~$21), run L (~$10), run M (~$10). Full list
   and spend in `docs/evidence/evals/README.md`.
+- 2026-10-28: the eval round after plan 5, each run with `--max-cost-usd`: run N ($14 ceiling, partial), then runs
+  O and P ($18 each); after O and P found the host regression, the testing-guidance fix and runs Q and R ($18 each).
+  Deleting the 1,115 kept eval workspaces that filled the disk, and removing each run's workspaces after its host
+  re-run from then on.
 - 2026-10-25: G5 gates on host re-runs ("no worse than baseline", one run of slack; decision 0010); runs
   measuring a changed plugin move to `superseded/` (J and K, after L and M).
 - 2026-10-25: rename to `actord` everywhere (CLI, plugin, marketplace; npm `@actord/toolkit`), leaving no
