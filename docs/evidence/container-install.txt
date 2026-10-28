@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at 273692a Rebuild the plugin dists for R10's forecast check
+== repository at f270061 Decision 0023: skills track the runtime; plan 5 progress and contributing notes
 == install Claude Code 2.1.312 from npm
 2.1.312 (Claude Code)
 == marketplace add + install
@@ -144,6 +144,7 @@ not installed
     "package/dist/types/runtime/jobs.d.ts",
     "package/dist/types/model/manifest.d.ts",
     "package/dist/types/cli/output.d.ts",
+    "package/dist/types/payloads.d.ts",
     "package/dist/types/runtime/schedules.d.ts",
     "package/dist/types/agents/scripted-model.d.ts",
     "package/dist/types/system.d.ts",

@@ -58,7 +58,7 @@ hardened (9 of 13 had been broken since `d4103b5`; gate `g5.evals.scaffolds`), t
 15), and the host re-run needs no Cloudflare credentials. Runs L and M are superseded (decision 0023, option A), so
 `g5.evals.run`, `g5.evals.host` and `g1.start-session` are **blocked** until the owner approves two full runs after
 merge (about $25, $14-a-run ceiling). Issues filed: #89 (`actord check` doesn't flag misspelled fields) and #90 (CLI
-`--notable` and `trace` gaps). Verified from a plain clone at `__COMMIT__`: __COUNTS__.
+`--notable` and `trace` gaps). Verified from a plain clone at `f270061`: 59 pass, 0 fail, 4 blocked (`g6.mod.typecheck`: no mod declarations on this machine; the three eval gates, per decision 0023).
 
 **#80 (handler I/O) is merged, and #82 replaces its timer with an exact canary on `fix/82-canary-detector`.
 Neither is released yet.**
