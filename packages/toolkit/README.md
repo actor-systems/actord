@@ -56,12 +56,11 @@ outcome comes back as a message.
 
 - **What fails.** A handler that awaits a `fetch`, a timer or a model fails its delivery with "handlers may not
   await I/O; use ctx.effect". Its transaction would otherwise stay open across an event-loop turn, and other
-  writers' rows could join it. Any await still pending at the next event-loop turn fails the delivery, even
-  `setTimeout(0)` and libraries that use timers internally.
-- **What a handler may await.** `get`, `put`, `list` and `delete`, the alarm calls, `ctx.sql`, `kv`,
+  writers' rows could join it. Any await that yields to the event loop fails the delivery, I/O or not:
+  `setTimeout(0)`, libraries that use timers internally, `sync()`, `getCurrentBookmark()`, a nested
+  `transaction()` and a body read.
+- **What a handler may await.** Microtasks, and `get`, `put`, `list` and `delete`, the alarm calls, `ctx.sql`, `kv`,
   `transactionSync` and Lifecycle's `jobs.push`.
-- **What a handler must not await.** A nested `transaction()`, `sync()`, `getCurrentBookmark()` or a body read.
-  These let a waiting writer in without the delivery failing (#82).
 
 ## With a coding agent
 
