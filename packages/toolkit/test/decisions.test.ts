@@ -26,6 +26,32 @@ const fields = {
   failing_check: { type: "text", instructions: "The verify check that failed" },
   run_id: { type: "number", integer: true },
 } as const;
+// One field of every Clairic type, for the value checks. Spike 7's live call (clairic-response.json) answered text,
+// number, list and date; the other types' answers are written in the published schema's { type, value } shape.
+const typedFields = {
+  failing_check: { type: "text" },
+  run_id: { type: "number", integer: true },
+  files: { type: "list", items: "text" },
+  reported_on: { type: "date" },
+  at_time: { type: "time" },
+  at: { type: "datetime" },
+  took: { type: "duration" },
+  cost: { type: "estimate", min: 0, max: 1000 },
+  ships_on: { type: "estimate", min: "2026-01-01", max: "2027-12-31" },
+  load: { type: "forecast", min: 0, max: 100, horizon: 4 },
+} as const;
+const typedAnswers = {
+  failing_check: clairicResponse.answers.failing_check,
+  run_id: clairicResponse.answers.run_id,
+  files: clairicResponse.answers.files,
+  reported_on: clairicResponse.answers.reported_on,
+  at_time: { type: "time", value: "14:05", confidence: 0.81, p_null: 0.12 },
+  at: { type: "datetime", value: "2026-10-28T14:05:00Z", confidence: 0.77, p_null: 0.14 },
+  took: { type: "duration", value: 5400, confidence: 0.66, p_null: 0.2 },
+  cost: { type: "estimate", value: 120.5, mean: 130, median: 120.5, p10: 80, p90: 210, confidence: 0.4 },
+  ships_on: { type: "estimate", value: "2026-12-01", confidence: 0.35 },
+  load: { type: "forecast", value: 42, confidence: 0.3 },
+};
 
 const system = defineSystem({
   name: "t",
@@ -35,6 +61,7 @@ const system = defineSystem({
     triage: { kind: "decision", model: "@cf/cloudflare/clef-flash", questions },
     parse: { kind: "extraction", model: "@cf/cloudflare/clairic", fields },
     risk: { kind: "decision", model: "@cf/cloudflare/clef-flash", questions: scoreQuestions },
+    typed: { kind: "extraction", model: "@cf/cloudflare/clairic", fields: typedFields },
     mail: { target: "mail" },
   },
   routes: [],
@@ -53,7 +80,7 @@ const sha = async (text: string) => [...new Uint8Array(await crypto.subtle.diges
 
 describe("decisionAdapters", () => {
   it("makes adapters only for decisions and extractions", () => {
-    expect(Object.keys(decisionAdapters(system, { ai: fakeAI({}).ai })).sort()).toEqual(["parse", "risk", "triage"]);
+    expect(Object.keys(decisionAdapters(system, { ai: fakeAI({}).ai })).sort()).toEqual(["parse", "risk", "triage", "typed"]);
   });
 
   it("prices the three models", () => {
@@ -100,6 +127,15 @@ describe("decisionAdapters", () => {
     const value = (await decisionAdapters(system, { ai: f.ai }).triage!.run({ state: "s" }, c)) as DecisionValue;
     expect(usage).toEqual([]);
     expect(value.usage).toBeNull();
+  });
+
+  it("reports no usage when the response's usage has no input_tokens", async () => {
+    for (const bad of [{ output_tokens: 0 }, { input_tokens: "335", output_tokens: 0 }, { input_tokens: Number.NaN }]) {
+      const { ctx: c, usage } = ctx();
+      const value = (await decisionAdapters(system, { ai: fakeAI({ ...clefResponse, usage: bad }).ai }).triage!.run({ state: "s" }, c)) as DecisionValue;
+      expect(usage, JSON.stringify(bad)).toEqual([]);
+      expect(value.usage, JSON.stringify(bad)).toBeNull();
+    }
   });
 
   it("stores the exact input in R2 before calling the model", async () => {
@@ -150,6 +186,63 @@ describe("decisionAdapters", () => {
     it("a non-string referenceDate", () => reject(decisionAdapters(system, { ai: fakeAI(clairicResponse).ai }).parse!.run({ state: "s", referenceDate: 5 }, ctx().ctx), "referenceDate"));
     it("extraction input without state", () => reject(decisionAdapters(system, { ai: fakeAI(clairicResponse).ai }).parse!.run({}, ctx().ctx), "state"));
     it("no answers at all", () => reject(run("triage", {}), "answers"));
+
+    // Probabilities: non-empty, the chosen option's (a choice) or every level's (a score), and only declared ones.
+    const route = clefResponse.answers.route;
+    const risk = scoreResponse.answers.risk;
+    const withRoute = (probabilities: unknown) => run("triage", { ...clefResponse, answers: { ...clefResponse.answers, route: { ...route, probabilities } } });
+    const withRisk = (probabilities: unknown) => run("risk", { ...scoreResponse, answers: { ...scoreResponse.answers, risk: { ...risk, probabilities } } });
+    it("a choice with empty probabilities", () => reject(withRoute({}), 'question "route" has no probabilities'));
+    it("a choice with no probabilities", () => reject(withRoute(undefined), 'question "route" has no probabilities'));
+    it("a choice whose probabilities leave out its answer", () => reject(withRoute({ needs_info: 0.5, not_for_factory: 0.5 }), 'question "route"\'s probabilities leave out its answer, ready'));
+    it("a choice whose probabilities name an undeclared option", () => reject(withRoute({ ...route.probabilities, maybe: 0 }), 'question "route"\'s probabilities name "maybe", which is not one of its options'));
+    it("a choice whose probabilities name an Object.prototype key", () => reject(withRoute(JSON.parse('{"ready":0.9,"constructor":0.1}')), '"constructor", which is not one of its options'));
+    it("a score with empty probabilities", () => reject(withRisk({}), 'question "risk" has no probabilities'));
+    it("a score whose probabilities leave out a level", () => reject(withRisk({ "0": 0.2, "1": 0.7, "3": 0.1 }), 'question "risk"\'s probabilities leave out level 2'));
+    it("a score whose probabilities name an undeclared level", () => reject(withRisk({ ...risk.probabilities, "4": 0 }), 'question "risk"\'s probabilities name "4", which is not one of its levels (0 to 3)'));
+
+    // Field values, by Clairic type. An error names the field and the value's kind, never the value: it reaches the log.
+    const typed = (name: string, answer: unknown) => run("typed", { ...clairicResponse, answers: { ...typedAnswers, [name]: answer } });
+    for (const [name, value, kind] of [
+      ["run_id", "40454645115", "a string"],
+      ["run_id", Number.POSITIVE_INFINITY, "a number that isn't finite"],
+      ["files", ".github/workflows/verify.yml", "a string"],
+      ["failing_check", 7, "a number"],
+      ["reported_on", 20261028, "a number"],
+      ["at_time", ["14:05"], "a list"],
+      ["at", { iso: "2026-10-28T14:05:00Z" }, "an object"],
+      ["took", "90m", "a string"],
+      ["cost", "120.5", "a string"],
+      ["ships_on", 20261201, "a number"],
+      ["load", [42, 43], "a list"],
+      ["load", true, "a boolean"],
+    ] as const)
+      it(`${/^[aeiou]/.test((typedFields as Record<string, { type: string }>)[name]!.type) ? "an" : "a"} ${(typedFields as Record<string, { type: string }>)[name]!.type} field whose value is ${kind}`, async () => {
+        const answer = { ...(typedAnswers as Record<string, object>)[name], value };
+        await reject(typed(name, answer), `field "${name}" is ${/^[aeiou]/.test((typedFields as Record<string, { type: string }>)[name]!.type) ? "an" : "a"} ${(typedFields as Record<string, { type: string }>)[name]!.type} field, but its value is ${kind}`);
+        const error = await typed(name, answer).then(() => null, (e: Error) => e.message);
+        if (typeof value === "string") expect(error).not.toContain(value);
+      });
+    it("a field answer without a type", async () => {
+      const { type: _t, ...untyped } = clairicResponse.answers.run_id;
+      await reject(run("parse", { ...clairicResponse, answers: { ...clairicResponse.answers, run_id: untyped } }), 'field "run_id" is declared number but the answer\'s type is undefined');
+    });
+  });
+
+  it("accepts every Clairic type's value, and null for any of them", async () => {
+    const adapter = decisionAdapters(system, { ai: fakeAI({ ...clairicResponse, answers: typedAnswers }).ai }).typed!;
+    expect(((await adapter.run({ state: "s" }, ctx().ctx)) as DecisionValue).answers).toEqual(typedAnswers);
+    const nulls = Object.fromEntries(Object.entries(typedAnswers).map(([name, a]) => [name, { type: a.type, value: null, p_null: 0.93 }]));
+    const parsed = (await decisionAdapters(system, { ai: fakeAI({ ...clairicResponse, answers: nulls }).ai }).typed!.run({ state: "s" }, ctx().ctx)) as DecisionValue;
+    expect(parsed.answers).toEqual(nulls);
+  });
+
+  it("reports usage before looking for answers: a response with usage and no answers still costs", async () => {
+    const { ctx: c, usage } = ctx();
+    const error = await decisionAdapters(system, { ai: fakeAI({ model: "clef-flash", usage: { input_tokens: 335, output_tokens: 0 } }).ai }).triage!.run({ state: "s" }, c).then(() => null, (e) => e);
+    expect(rejected(error)).toBe(true);
+    expect((error as Error).message).toContain('has no "answers"');
+    expect(usage).toEqual([{ inputTokens: 335, outputTokens: 0, costUsd: (335 * 0.038) / 1e6 }]);
   });
 
   it("lets a throw from ai.run propagate as itself", async () => {
