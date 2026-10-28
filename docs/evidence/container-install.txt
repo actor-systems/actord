@@ -1,5 +1,5 @@
 == container: Linux aarch64, node v24.22.1, npm 11.19.1
-== repository at f270061 Decision 0023: skills track the runtime; plan 5 progress and contributing notes
+== repository at bb71dca Rebuild the plugin dists for the final review's fixes (plan 5)
 == install Claude Code 2.1.312 from npm
 2.1.312 (Claude Code)
 == marketplace add + install

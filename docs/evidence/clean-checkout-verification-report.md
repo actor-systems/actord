@@ -1,6 +1,6 @@
 # Verification report
 
-Generated 2026-10-28T07:37:13.441Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
+Generated 2026-10-28T08:20:37.876Z by `npm run verify` (`scripts/verify.mjs`). Machine-readable copy: `verify-report.json`.
 
 ## Versions
 
@@ -73,14 +73,14 @@ Generated 2026-10-28T07:37:13.441Z by `npm run verify` (`scripts/verify.mjs`). M
 | `g4.runtime.probe` Runtime guarantees in workerd: denied capability, reconcile, approval, orphaned attempts | G4 | pass | host | `npx --no-install vitest run --config vitest.runtime.config.ts` |  |
 | `g5.cli.unit` init, hooks (check-on-edit, evidence gate, heredoc note), claim classification | G5 | pass | host | `npx --no-install vitest run test/g5.test.ts` |  |
 | `g5.skills.lint` Seven skills and two read-only critics follow the charter's authoring rules | G5 | pass | host | `node --test tests/skills.test.mjs` |  |
-| `g5.skills.snippets` Every // actord:check block in the plugin skills typechecks against the built toolkit | G5 | pass | host | `npm run --silent build -w @actord/toolkit && node --test tests/skill-snippets.test.mjs` |  |
+| `g5.skills.snippets` Every // actord:check block in the plugin skills typechecks against the built toolkit and wrangler's runtime types, and actord check loads each system block | G5 | pass | host | `npm run --silent build -w @actord/toolkit && node --test tests/skill-snippets.test.mjs` |  |
 | `g5.evals.static` Eval suite structure: case mix, paired graders, safety and negative-trigger assertions | G5 | pass | host | `node --test tests/evals.test.mjs` |  |
 | `g5.evals.scaffolds` Every eval scaffold's paths resolve from its own location, and every source patch applies to its example | G5 | pass | host | `node --test tests/eval-scaffolds.test.mjs` |  |
 | `g5.inventory` claude plugin details lists 7 skills, 2 agents, 3 hooks; always-on ≤ 1,500 tokens | G5 | pass | host | `scripts/budget.sh && grep docs/evidence/plugin-details.txt` | always-on ~821 tokens |
 | `g5.starter.smoke` A fresh starter from actord init verifies PASS offline; regenerating changes nothing | G5 | pass | host | `scripts/starter-smoke.sh` |  |
 | `g5.verify.blocked` actord verify inside the default sandbox reports BLOCKED, static evidence passing | G5 | pass | host | `scripts/verify-blocked.sh` |  |
 | `g5.examples.verify` actord verify passes on both reference apps | G5 | pass | host | `cd examples/release-radar && node ../../plugins/claude/dist/actord.mjs verify && cd ../briefing-desk && node ../../plugins/claude/dist/actord.mjs verify` |  |
-| `g5.evals.run` Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0 | G5 | blocked | host | `claude plugin eval plugins/claude --scaffold --no-publish --max-cost-usd … (owner-approved lane)` | model-backed; awaiting the owner-approved eval lane ($50 total ceiling) |
+| `g5.evals.run` Model-backed eval suite: Δ per case recorded; safety and negative-trigger cases at 1.0 | G5 | blocked | host | `claude plugin eval plugins/claude --scaffold --no-publish --max-cost-usd … (owner-approved lane)` | model-backed; awaiting the owner-approved post-plan-5 eval round (two full runs, about $25, a $14-a-run ceiling) |
 | `g5.evals.host` Host re-runs of the newest full eval run: no case's plugin arm passes runtime tests in more than one run fewer than the baseline | G5 | blocked | host | `scripts/rerun-eval-workspaces.sh <run>.json <run>.host.json (owner-approved lane)` | no full eval run recorded |
 | `g6.cli.room` actord room, guard, and the monitor lock (CLI unit tests) | G6 | pass | host | `cd packages/toolkit && NO_COLOR=1 npx vitest run test/room.test.ts` |  |
 | `g6.fixtures` The mod's recorded CLI fixtures match the CLI's current document shapes (schema pin) | G6 | pass | host | `node scripts/record-room-fixtures.mjs --check` |  |
