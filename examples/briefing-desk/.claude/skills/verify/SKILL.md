@@ -11,7 +11,8 @@ allowed-tools: Bash(npm run verify) Bash(npx actord verify *)
    `blocked` means a check couldn't run (for example, the sandbox denies the local port workerd needs).
    It is not a pass.
 3. Don't commit or call the work done while the verdict is `fail`. Fix the cause, or say plainly what
-   is still failing.
+   is still failing. A test failing with `handlers may not await I/O; use ctx.effect` names a handler
+   that awaits: move that I/O into `ctx.effect` and handle its result message.
 
 Evidence comes from the commands above, not from reading the code. Deploying is never part of
 verification; it needs a person's approval.

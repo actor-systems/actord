@@ -15,7 +15,8 @@ allowed-tools: Bash(npm run verify) Bash(npx actord verify *)
    \`blocked\` means a check couldn't run (for example, the sandbox denies the local port workerd needs).
    It is not a pass.
 3. Don't commit or call the work done while the verdict is \`fail\`. Fix the cause, or say plainly what
-   is still failing.
+   is still failing. A test failing with \`handlers may not await I/O; use ctx.effect\` names a handler
+   that awaits: move that I/O into \`ctx.effect\` and handle its result message.
 
 Evidence comes from the commands above, not from reading the code. Deploying is never part of
 verification; it needs a person's approval.
@@ -39,9 +40,9 @@ export function claudeMd(name: string): string {
 
 An actor system on Cloudflare Durable Objects, built with @actord/toolkit.
 - The declaration is \`system.ts\` (actors, messages, routes, effects). Actors live in \`src/actors/\`, contracts in \`src/messages/\`.
-- \`npx actord check\` validates what the compiler can't; \`npx actord graph\` prints the topology.
+- Handlers may not await I/O: any await that yields to the event loop fails the delivery. Request I/O with \`ctx.effect\` and handle its result message; storage calls and microtasks are fine.
+- \`npx actord check\` validates what the compiler can't; \`npx actord graph\` prints the topology. \`npm run verify\` runs everything and writes \`.actord/evidence.json\`: run it before committing.
 - \`npm test\` runs workerd tests and records events in \`.actord/events.ndjson\`; \`npx actord trace <id>\` explains one.
-- \`npm run verify\` runs everything and writes \`.actord/evidence.json\`. Run it before committing.
 - When adding behavior, keep public read methods (names and return shapes) and existing tests as they are; prove the change with a new test.
 - Deploys need a person's approval. Asked to deploy, give the plan from \`npx actord diff\`; never run \`wrangler deploy\` unasked.
 - Write and change files with the Write and Edit tools, not shell redirection or heredocs.
