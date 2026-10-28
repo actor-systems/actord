@@ -13,9 +13,12 @@ import { signApprovalToken } from "./token.ts";
 export type { ApprovalRequest } from "../runtime/index.ts";
 export { type ApprovalDecided, approvalDecided } from "../payloads.ts";
 
-/** The part of a send_email binding (Cloudflare Email Service) that approvalEmail uses. */
+/**
+ * The part of a send_email binding (Cloudflare Email Service) that approvalEmail and the email source's replies use:
+ * exactly the message they send, so workerd's SendEmail (whose builder takes wider fields) is assignable to it.
+ */
 export interface SendEmailLike {
-  send(message: { from: string | { email: string; name?: string }; to: string | string[]; subject: string; text: string; headers?: Record<string, string> }): Promise<unknown>;
+  send(message: { from: string; to: string; subject: string; text: string; headers?: Record<string, string> }): Promise<unknown>;
 }
 
 /** The effect adapter that emails an approval request to the owner. */
