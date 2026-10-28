@@ -98,13 +98,15 @@ with the binding can call `receive`).
   - **When it runs while the handler is pending.** The delivery fails with #80's message from inside its
     transaction, and rolls back before the next queued writer runs. That writer then commits.
   - **When the handler finishes first.** The canary runs after the transaction has ended, and does nothing.
-  - **The timer is gone.** The canary ran before it in every case it caught.
+  - **The timer is gone.** Phase 1's experiment found the canary ran before it in every case the timer caught
+    (findings on #82; that comparison isn't kept as a test).
 - **Verified in local workerd** (1.20261019.1):
   - **Placement.** A canary requested beside the delivery's transaction, from `deliver`'s own context, never runs
-    while that transaction is open, even across a fetch. It has to be requested inside (`[canary-placement]`).
-  - **What it catches.** It runs exactly when a waiting writer would get in, and ahead of it: during every yield,
-    the six the sentinel missed included, and never during microtasks or the storage awaits above
-    (`[canary-catalogue]`, `[handler-io-fails-loudly]`, `[storage-awaits-allowed]`).
+    while that transaction is open, even across `scheduler.wait(1)` or `sync()`. It has to be requested inside
+    (`[canary-placement]`).
+  - **What it catches.** It runs exactly when a waiting writer would get in, and ahead of it. Every yield fails the
+    delivery, the six the sentinel missed included (`[handler-io-fails-loudly]`, which covers `scheduler.wait`,
+    `setTimeout(0)`, a fetch and those six), and the storage awaits above never do (`[storage-awaits-allowed]`).
   - **Writers.** A writer requested beside a failing handler, as it starts or during its await, runs after the
     rollback and commits (`[canary-ordering]`, `[beside-transaction-nested]`, `[canary-writer-fate]`). I/O started
     outside the transaction can't call back until it ends (`[canary-io-writer]`).
