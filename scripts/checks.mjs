@@ -92,6 +92,7 @@ export const gates = [
       "g5.skills.lint",
       "g5.skills.snippets",
       "g5.evals.static",
+      "g5.evals.scaffolds",
       "g5.inventory",
       "g5.starter.smoke",
       "g5.verify.blocked",
@@ -268,6 +269,8 @@ export const checks = [
   // Built first (the snippets typecheck against packages/toolkit/dist/types), so it holds under --only too.
   command("g5.skills.snippets", "G5", "Every // actord:check block in the plugin skills typechecks against the built toolkit", "npm run --silent build -w @actord/toolkit && node --test tests/skill-snippets.test.mjs"),
   command("g5.evals.static", "G5", "Eval suite structure: case mix, paired graders, safety and negative-trigger assertions", "node --test tests/evals.test.mjs"),
+  // Static: running every scaffold clones node_modules each time, about a minute even in parallel.
+  command("g5.evals.scaffolds", "G5", "Every eval scaffold's paths resolve from its own location, and every source patch applies to its example", "node --test tests/eval-scaffolds.test.mjs"),
   {
     id: "g5.inventory",
     gate: "G5",
