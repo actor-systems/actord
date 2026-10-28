@@ -4,6 +4,7 @@ A decision puts typed questions to Clef on Workers AI and gets a probability for
 asks Clairic for typed values, each with a confidence. Both are effects: keyed, retried, budgeted and traced like
 any other, and every confirmed answer is recorded for `actord scorecard` (decision 0020). The adapters come from
 `@actord/toolkit/decisions`, which needs no peer dependency.
+The example's actor is `model-assisted`, but a decision fits a `deterministic` actor just as well, as `design` teaches.
 
 ```ts
 // actord:check system

@@ -99,7 +99,7 @@ export const AgentExhausted = message({ version: 1, description: "A session ran 
 | `@ingress` | The Worker's own code: `ingress(env, system, "Actor", type, payload, { key, id })` | Nothing more |
 | `@clock` | A schedule's tick, with `payload.at` the time it was due | A `schedules` entry for that message on the receiving actor |
 | `@timer` | A timer the actor set for itself: `ctx.after(delay, …)` or `ctx.at(epochMs, …)` | `to` is that actor; without the route the call is a type error |
-| `@<source>` | A declared source (`@github` above) | The source under `sources`; a webhook maps each message on exactly one route |
+| `@<source>` | A declared source (`@github` above) | The source under `sources`; each message the source maps needs exactly one route |
 | An actor name | `ctx.send(type, payload, { to?, key? })`, or an effect's `result` (a self-route) | Both actors declared |
 
 `clock`, `ingress`, `timer` and `rpc` can't name a source (`SOURCE_NAME_RESERVED`). Any other `@name` without a
@@ -118,7 +118,8 @@ isolation, scheduling, permissions; `ACTOR_UNJUSTIFIED` otherwise), and optional
 
 - An agent's budget bounds each session: `usd` (dollars), `turns`, and `wallClock` (a duration such as `"45m"`).
   It's `AGENT_BUDGET_INCOMPLETE` without all three, and `ACTOR_BUDGET_MISSING` without a budget. The budget type
-  also accepts `maxTokens`, but nothing enforces it.
+  also accepts `maxTokens`, but nothing enforces it. It can overshoot, and `usd` isn't enforced for an unpriced
+  model: see Limitations.
 - `schedules: [{ every: "15m", message }]` or `[{ cron: "0 9 * * *", message }]` (UTC), each on a route from `@clock`.
   They run per instance, and each instance ticks once it has started, so an instance nothing has reached never
   ticks.
@@ -141,16 +142,18 @@ Every effect has `description` and `idempotency`. Its `kind` is `"call"` unless 
 | `kind: "decision"`, `model`, `questions`, `mode` | Decisions | Clef (`@cf/cloudflare/clef` or `clef-flash`) answers 1–64 questions (`noul`, `choice` or `score`) with a probability for each answer. `mode: "shadow"` records the answer and delivers nothing, so it declares no `result` |
 | `kind: "extraction"`, `model`, `fields` | Extractions | Clairic (`@cf/cloudflare/clairic`) returns typed values, each with a confidence |
 
-A decision or extraction is a read: declare it `idempotency: "key"`, with no `deadline`, `probe`, `completes` or
-`publishes`. Its result can't approve anything. In depth: jobs and timers in `../../implement/references/timers-and-jobs.md`, decisions in
-`../../implement/references/decisions.md`, adapters and outcomes in `../../implement/references/runtime.md`.
+A decision or extraction is a read: declare it `idempotency: "key"` (`none` warns), with no `deadline`, `probe`,
+`completes` or `publishes`. Its result can't approve anything. In depth: jobs and timers in
+`../../implement/references/timers-and-jobs.md`, decisions in `../../implement/references/decisions.md`, adapters
+and outcomes in `../../implement/references/runtime.md`.
 
 ## Sources and approvals
 
 - `webhook({ path, verify: "github", secret, events })` maps `"<X-GitHub-Event>.<action>"` to `{ message, key, map }`.
   The delivery id is the envelope id, so a redelivery is a duplicate.
 - `inboundEmail({ secret, owner, from, send, authserv?, message })` accepts only the owner's reply to an approval
-  request. Every field names an env entry or binding. Its `message` uses the `approvalDecided` schema.
+  request. `secret`, `owner`, `from`, `send` and `authserv` name env entries or bindings; `message` is the
+  declared message, which uses the `approvalDecided` schema.
 - `approvals: { notify: "<effect>" }` names the effect that tells a person an approval is waiting. That effect
   has `idempotency: "none"` and no approval of its own, and every actor with an approval-gated effect lists it. With
   an email source, each such actor also needs a route from it.

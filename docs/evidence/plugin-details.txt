@@ -21,7 +21,7 @@ Per-component (rounded)
   evolve                 ~100       ~750
   reliability            ~160       ~760
   implement               ~70        ~1k
-  boundary-critic         ~70       ~720
+  boundary-critic         ~70       ~740
   delivery-auditor        ~60       ~630
 
   On-invoke cost is paid each time a skill or agent fires.

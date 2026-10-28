@@ -33,8 +33,9 @@ Prefer the lightest model use that does the job, and flag each heavier one:
 - An `agent` or `model-assisted` actor whose output is a fixed choice, a yes or no, a score, or typed facts from
   text: a **decision or extraction effect** (Clef, Clairic) of the actor that owns the item does it, and that
   actor can stay `deterministic`.
-- An `agent` actor, or an actor of any kind, that only starts outside work and waits on it (a CI run, a batch):
-  a **job effect** (`kind: "job"`, with a `deadline` and a `probe` or `completes`) does it.
+- An `agent` actor, or an actor of any kind, that starts outside work and waits on it (a CI run, a batch), and
+  has no state of its own beyond the wait: a **job effect** (`kind: "job"`, with a `deadline` and a `probe` or
+  `completes`) of the actor that wants the outcome does it.
 - An `agent` whose steps are known in advance: a `model-assisted` actor runs fixed steps for less.
 - Keep an `agent` only when the model must choose its own steps: edit files, run commands, try again.
 
