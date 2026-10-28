@@ -122,7 +122,7 @@ export class Coder extends withWorkspaceContainer(class extends DurableObject<En
     "repo.cloned": ({ payload }, ctx) => {
       const task = ctx.sql.exec<{ issue: number; title: string }>("SELECT issue, title FROM task WHERE id = 1").toArray()[0];
       if (payload.status !== "confirmed" || !task) return ctx.note("clone did not land; no session", { status: payload.status, error: payload.error });
-      ctx.send("task.start", { issue: task.issue, title: task.title });
+      ctx.send("task.start", { issue: task.issue, title: task.title }, { key: ctx.key }); // this issue's instance, not "main"
     },
     "task.done": ({ payload }, ctx) => {
       ctx.sql.exec("INSERT INTO results (branch, summary) VALUES (?, ?)", payload.branch, payload.summary);

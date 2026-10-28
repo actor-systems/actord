@@ -211,6 +211,7 @@ it("[job-deadline-in-doubt] a run that never reports is in doubt at its deadline
 });
 
 it("[schedule-tick] a scheduled tick is delivered with its time", async () => {
+  overrideEffect("ci.run", { async start() { return { runId: 2 }; }, async probe() { return { done: false }; } }); // no real CI call
   await ingress(env, system, "CiWatcher", "run.requested", { sha: "def5678" }, { key: "def5678" }); // the instance must exist
   const events = captureEvents();
   await tick(env, system, "CiWatcher", "def5678", "report.due");
