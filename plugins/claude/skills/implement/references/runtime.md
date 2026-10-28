@@ -63,8 +63,6 @@ import { injectFault, overrideBudget, overrideEffect, resetSeams, settle, tick }
 ```
 
 - `settle(env, system)` delivers everything pending and waits for running effects, fast-forwarding backoff.
-- Test handlers in workerd. A storage fake's `transaction()` must queue behind an open transaction, as workerd's
-  does, or every handler that awaits fails with "handlers may not await I/O".
 - `tick(env, system, "Actor", key)` delivers a scheduled wake due now, so its `payload.at` is the current
   time, as when the alarm fires on schedule. Each call is a new wake.
 - Storage persists across the tests in one file (each file starts empty), and effects dedupe by key per
