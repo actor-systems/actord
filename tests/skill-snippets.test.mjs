@@ -92,7 +92,21 @@ interface DurableObjectState {
   };
   blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
 }
-interface Env {}
+// The bindings and vars the implement references read, each as narrow as the toolkit's own structural type.
+interface Env {
+  AI: import("@actord/toolkit/decisions").WorkersAI;
+  DECISION_INPUTS: import("@actord/toolkit/decisions").DecisionInputs;
+  TRANSCRIPTS: import("@actord/toolkit/agents").TranscriptBucket;
+  MAIL: import("@actord/toolkit/sources").SendEmailLike;
+  OWNER: string;
+  APPROVAL_FROM: string;
+  APPROVAL_SECRET: string;
+}
+// What \`wrangler types\` declares for its default Text rule: an agent's instructions file.
+declare module "*.txt" {
+  const value: string;
+  export default value;
+}
 `;
 
 const exportsMap = JSON.parse(
@@ -102,8 +116,26 @@ const paths = {};
 for (const [sub, target] of Object.entries(exportsMap))
   if (target.types)
     paths[`@actord/toolkit${sub.slice(1)}`] = [join(toolkit, target.types)];
-paths["agents"] = [join(repo, "node_modules/agents")];
-paths["agents/*"] = [join(repo, "node_modules/agents/*")];
+// The other packages a snippet may import, mapped entry by entry through their own `exports`: `paths` ignore
+// `exports`, so a "agents/*" → "node_modules/agents/*" mapping can't find "agents/lifecycle" (dist/lifecycle).
+const typesIn = (target) =>
+  typeof target === "string"
+    ? /\.d\.[cm]?ts$/.test(target)
+      ? target
+      : null
+    : target && typeof target === "object"
+      ? (target.types ?? typesIn(target.import) ?? typesIn(target.default))
+      : null;
+for (const pkg of ["agents", "zod", "vitest"]) {
+  const root = join(repo, "node_modules", pkg);
+  const entries = JSON.parse(
+    readFileSync(join(root, "package.json"), "utf8"),
+  ).exports;
+  for (const [sub, target] of Object.entries(entries)) {
+    const types = !sub.includes("*") && typesIn(target);
+    if (types) paths[`${pkg}${sub.slice(1)}`] = [join(root, types)];
+  }
+}
 for (const scope of ["@earendil-works", "@cloudflare"])
   paths[`${scope}/*`] = [join(repo, "node_modules", scope, "*")];
 

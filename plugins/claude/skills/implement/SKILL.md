@@ -15,9 +15,12 @@ Rules that hold for this whole skill:
   change as unverified and give the exact command to run on the host.
 - **Change the declaration first.** Edit `system.ts`, then let the compiler and `actord check` show every
   handler and send that no longer fits.
-- **Handlers are storage-only.** Each handler runs inside one storage transaction, so its writes, outgoing
-  messages, and effect intents commit together. Don't `await` network, model, or other slow work inside a
-  handler. Request it with `ctx.effect(name, input, { key })` and handle the declared `result` message.
+- **Handlers may not await I/O.** Each handler runs inside one storage transaction, so its writes, sends, timers
+  and effect requests commit together. A `fetch`, a model or container call, a timer (`setTimeout(0)` included), or
+  any other await that yields to the event loop fails the delivery with `handlers may not await I/O; use ctx.effect`,
+  rolls the transaction back, and fails again on every retry. Request the work with `ctx.effect(name, input, { key })`
+  and handle the declared `result` message. Only microtasks and the storage calls `references/runtime.md` lists
+  may be awaited.
 - **Assume every message can arrive twice.** Make writes idempotent: key rows by business id, upsert, and
   use generation counters to drop stale results.
 - **Effects:** use an idempotency key when the destination honors one. Otherwise declare
@@ -38,9 +41,14 @@ Rules that hold for this whole skill:
 1. Read the diagnostics above. Fix every `error` before adding anything.
 2. Update `system.ts` and `src/messages/` for the change: new messages start at version 1, and a changed
    contract stays backward compatible (`actord diff` checks), or follow `/actord:evolve`.
-3. Implement handlers with `actorRuntime(...)` (API: `references/runtime.md`). The class keeps a public
-   `receive(envelope)` and forwards `alarm()`. Add the binding and `exports` entry to `wrangler.jsonc`, and
-   export the class from the Worker entry.
+3. Implement handlers with `actorRuntime(...)` (API: `references/runtime.md`). The class installs
+   `Lifecycle.install(this)` and keeps a public `receive(envelope)`; Lifecycle owns the alarm, so it defines no
+   `alarm()`. Add the binding and `exports` entry to `wrangler.jsonc`, and export the class from the Worker entry.
+   Read the reference for what the change touches:
+   - a timer, a schedule, a job effect, or an approval that expires: `references/timers-and-jobs.md`;
+   - a webhook, inbound email, or approval by email reply: `references/sources.md`;
+   - an actor declared `kind: "agent"`, or a workspace: `references/agents.md`;
+   - a decision or an extraction (Clef, Clairic), or the scorecard: `references/decisions.md`.
 4. For every handler that requests an effect or calls a model, launch the `delivery-auditor` subagent on
    those files and resolve its findings, by changing code or by adding the fault test it proposes.
 5. Write tests in workerd (`references/runtime.md`, Testing). Tag each with the claim it establishes,
