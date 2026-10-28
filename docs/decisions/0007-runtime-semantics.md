@@ -118,4 +118,5 @@ with the binding can call `receive`).
   it. A nested `transaction()` it was awaiting runs after the rollback and commits, its `this.actor.requestEffect`
   is accepted, and its direct `this.ctx.storage` writes are accepted (`[abandoned-handler-limits]`,
   `[request-effect-in-handler]`). The fix is #80's: don't await I/O in a handler.
-- **Breaking:** nothing beyond #80's, except that the six awaits the sentinel missed now fail the delivery too.
+- **Breaking:** the six awaits now fail the delivery too, and an abandoned handler's awaited nested `transaction()`
+  and later `requestEffect` now take effect (What remains); storage fakes must queue transactions.
