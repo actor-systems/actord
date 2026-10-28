@@ -53,7 +53,7 @@ const sha = async (text: string) => [...new Uint8Array(await crypto.subtle.diges
 
 describe("decisionAdapters", () => {
   it("makes adapters only for decisions and extractions", () => {
-    expect(Object.keys(decisionAdapters(system, { ai: fakeAI({}).ai })).sort()).toEqual(["parse", "triage"]);
+    expect(Object.keys(decisionAdapters(system, { ai: fakeAI({}).ai })).sort()).toEqual(["parse", "risk", "triage"]);
   });
 
   it("prices the three models", () => {
