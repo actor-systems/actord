@@ -86,13 +86,12 @@ const wranglerConfig = {
   ],
   send_email: [{ name: "MAIL" }],
   vars: { OWNER: "owner@example.com", APPROVAL_FROM: "actord@example.com" },
+  // As sources.md teaches: a clean clone has no .dev.vars, so `wrangler types` learns the secrets from here.
+  secrets: { required: ["APPROVAL_SECRET"] },
 };
-// Secrets come from .dev.vars, which `wrangler types` reads as it does in a project.
-const devVars = "APPROVAL_SECRET=test-secret\n";
 
 function runtimeTypes(dir) {
   writeFileSync(join(dir, "wrangler.jsonc"), JSON.stringify(wranglerConfig));
-  writeFileSync(join(dir, ".dev.vars"), devVars);
   // No Cloudflare credentials and an empty HOME: `wrangler types` reads only the config and its bundled workerd.
   const run = spawnSync(
     join(repo, "node_modules/.bin/wrangler"),
