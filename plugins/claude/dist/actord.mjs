@@ -248,19 +248,19 @@ function readJsonc(path) {
 }
 
 // src/cli/commands/doctor.ts
-var NODE_FLOOR = [22, 18, 0];
+var NODE_FLOOR = [22, 19, 0];
 var MODS_FLOOR = "2.1.287";
 var EVAL_FLOOR = "2.1.269";
-function doctor(cwd, env = process.env) {
+function doctor(cwd, env = process.env, nodeVersion = process.versions.node) {
   const findings = [];
   const add = (f) => findings.push(f);
-  const node = process.versions.node.split(".").map(Number);
+  const node = nodeVersion.split(".").map(Number);
   add(
-    compare(node, NODE_FLOOR) >= 0 ? { id: "node", status: "ok", message: `Node.js ${process.versions.node}` } : {
+    compare(node, NODE_FLOOR) >= 0 ? { id: "node", status: "ok", message: `Node.js ${nodeVersion}` } : {
       id: "node",
       status: "error",
-      message: `Node.js ${process.versions.node} is older than 22.18, which loads system.ts natively`,
-      fix: "Install Node.js 22.19 or later, the floor @actord/toolkit declares (24 LTS recommended)."
+      message: `Node.js ${nodeVersion} is older than 22.19, the floor @actord/toolkit declares`,
+      fix: "Install Node.js 22.19 or later (24 LTS recommended)."
     }
   );
   const source = env.ACTORD_LAUNCHER === "plugin-bundle" ? "plugin bundle" : env.ACTORD_LAUNCHER === "project-pin" ? "project pin" : "direct";
