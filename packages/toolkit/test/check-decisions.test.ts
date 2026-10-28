@@ -5,23 +5,28 @@ import { z } from "zod";
 import { checkProject } from "../src/model/check.ts";
 import type { Project } from "../src/model/load.ts";
 import { normalize } from "../src/model/manifest.ts";
-import { defineSystem, type EffectSpec, type MessageSpec, message } from "../src/system.ts";
+import { type ActorSpec, defineSystem, type EffectSpec, type MessageSpec, message, pi } from "../src/system.ts";
 
 const Start = message({ version: 1, description: "Start", payload: z.object({}) });
 const Answer = message({ version: 1, description: "The answer", payload: z.object({}) });
 
-function codes(fx: EffectSpec, opts: { routeResult?: boolean } = {}) {
+const JUDGE: ActorSpec = { binding: "JUDGE", kind: "deterministic", purpose: "Asks a model", justification: ["state"], effects: ["ask"] };
+/** Judge as an agent actor that may use `tools` (the agent's own fields don't matter to these checks). */
+const agentJudge = (tools: string[], effects = ["ask"]): ActorSpec => ({ ...JUDGE, kind: "agent", harness: pi(), model: { id: "@cf/deepseek-ai/deepseek-v4.1-flash-1017" }, budget: { usd: 1, turns: 10, wallClock: "10m" }, on: { go: "start" }, effects, tools });
+const Clerk: ActorSpec = { binding: "CLERK", kind: "deterministic", purpose: "Files things", justification: ["state"], effects: [] };
+
+function codes(fx: EffectSpec, opts: { routeResult?: boolean; judge?: ActorSpec; actors?: Record<string, ActorSpec>; effects?: Record<string, EffectSpec>; routes?: Array<{ from: string; message: string; to: string }>; subject?: string } = {}) {
   const { routeResult = true } = opts;
   const system = defineSystem({
     name: "decisions",
-    messages: { "go": Start, "answered": Answer } as Record<string, MessageSpec>,
-    actors: { Judge: { binding: "JUDGE", kind: "deterministic", purpose: "Asks a model", justification: ["state"], effects: ["ask"] } },
-    effects: { ask: fx },
-    routes: [{ from: "@ingress", message: "go", to: "Judge" }, ...(routeResult ? [{ from: "Judge" as const, message: "answered", to: "Judge" as const }] : [])],
+    messages: { "go": Start, "answered": Answer, "filed": Answer } as Record<string, MessageSpec>,
+    actors: { Judge: opts.judge ?? JUDGE, ...opts.actors } as Record<"Judge", ActorSpec & { effects: readonly "ask"[] }>,
+    effects: { ask: fx, ...opts.effects },
+    routes: [{ from: "@ingress", message: "go", to: "Judge" }, ...(routeResult ? [{ from: "Judge" as const, message: "answered", to: "Judge" as const }] : []), ...(opts.routes ?? [])] as never,
   });
   const project: Project = { root: "/nowhere", system, manifest: normalize(system), loadError: null, config: null, configFile: null, entryFile: null, entryExports: null, committedManifest: null, committedManifestRaw: null };
   return checkProject(project)
-    .filter((d) => /^(DECISION|EXTRACTION)_/.test(d.code))
+    .filter((d) => /^(DECISION|EXTRACTION)_/.test(d.code) && (opts.subject === undefined || d.subject === opts.subject))
     .map((d) => `${d.severity}:${d.code}`);
 }
 
@@ -153,6 +158,39 @@ describe("decision and extraction checks", () => {
     expect(codes(decision({ result: undefined }))).toEqual(["warning:DECISION_RESULT_MISSING"]);
     expect(codes(extraction({ result: undefined }))).toEqual(["warning:DECISION_RESULT_MISSING"]);
     expect(codes(decision({ mode: "shadow", result: undefined }))).toEqual([]);
+  });
+
+  it("DECISION_RESULT_MISSING: not for a decision or an extraction every actor that requests it uses only as an agent tool", () => {
+    // A tool's answer is the tool's return value: the session sees it with no result message.
+    expect(codes(decision({ result: undefined }), { judge: agentJudge(["ask"]) })).toEqual([]);
+    expect(codes(extraction({ result: undefined }), { judge: agentJudge(["ask"]) })).toEqual([]);
+    // Requested but not offered as a tool: the actor would never see the answer.
+    expect(codes(decision({ result: undefined }), { judge: agentJudge([]) })).toEqual(["warning:DECISION_RESULT_MISSING"]);
+    // A tool of one actor, and requested by another that isn't an agent: the other never sees its answer.
+    expect(codes(decision({ result: undefined }), { judge: agentJudge(["ask"]), actors: { Clerk: { ...Clerk, effects: ["ask"] } } })).toEqual(["warning:DECISION_RESULT_MISSING"]);
+  });
+
+  // DECISION_RESULT_SHARED, negative-style: each way a decision's result type reaches a handler from something other
+  // than its own decision, which turns off ctx.approve and ctx.deny in that handler, and the declarations that don't.
+  it("DECISION_RESULT_SHARED: a result type another effect also delivers, or that another sender routes, is a warning", () => {
+    const SHARED = ["warning:DECISION_RESULT_SHARED"];
+    const notify: EffectSpec = { description: "Notify", idempotency: "key", result: "answered" };
+    // Another effect's result: its handler can't approve either.
+    expect(codes(decision(), { effects: { notify }, judge: { ...JUDGE, effects: ["ask", "notify"] }, subject: "ask" })).toEqual(SHARED);
+    expect(codes(extraction(), { effects: { notify }, judge: { ...JUDGE, effects: ["ask", "notify"] }, subject: "ask" })).toEqual(SHARED);
+    // Two decisions sharing one result: each is flagged.
+    expect(codes(decision(), { effects: { ask2: decision() }, judge: { ...JUDGE, effects: ["ask", "ask2"] } })).toEqual([...SHARED, ...SHARED]);
+    // Routed to the actor from another sender: an external one, or another actor.
+    expect(codes(decision(), { routes: [{ from: "@ingress", message: "answered", to: "Judge" }] })).toEqual(SHARED);
+    expect(codes(decision(), { actors: { Clerk }, routes: [{ from: "Clerk", message: "answered", to: "Judge" }] })).toEqual(SHARED);
+    // Sent on to another actor, whose handler of it can't approve.
+    expect(codes(decision(), { actors: { Clerk }, routes: [{ from: "Judge", message: "answered", to: "Clerk" }] })).toEqual(SHARED);
+    // Not flagged: a result only its own decision delivers, to the actor itself; a shadow decision, which has no
+    // result; another effect with a result of its own; and another sender's route of a different message.
+    expect(codes(decision())).toEqual([]);
+    expect(codes(decision({ mode: "shadow", result: undefined }), { effects: { notify } })).toEqual([]);
+    expect(codes(decision(), { effects: { notify: { ...notify, result: "filed" } }, judge: { ...JUDGE, effects: ["ask", "notify"] }, routes: [{ from: "Judge", message: "filed", to: "Judge" }] })).toEqual([]);
+    expect(codes(decision(), { routes: [{ from: "@ingress", message: "filed", to: "Judge" }] })).toEqual([]);
   });
 
   it("DECISION_IDEMPOTENCY_NONE: they are deterministic reads, so key is always safe", () => {

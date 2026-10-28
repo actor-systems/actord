@@ -194,7 +194,7 @@ export function checkProject(project: Project): Diagnostic[] {
             add("error", "JOB_COMPLETES_ROUTE_MISSING", `${a.name} → ${e.name}`, `${a.name} requests job ${e.name}, which completes with ${done}, but ${messages.has(done) ? `no route delivers ${done} to ${a.name}` : `${done} isn't a declared message`}`, `Declare ${done} and a route that delivers it to ${a.name}, for example { from: "@ingress", message: "${done}", to: "${a.name}" }.`);
       }
     }
-    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, add);
+    if (e.kind === "decision" || e.kind === "extraction") checkDecisionEffect(e, m, add);
     else if (e.questions !== null || e.fields !== null || e.mode !== null || e.model !== null)
       add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${e.kind} effect but declares ${[e.model !== null && "model", e.questions !== null && "questions", e.fields !== null && "fields", e.mode !== null && "mode"].filter(Boolean).join(", ")}, which only a decision or an extraction uses`, `Set kind: "decision" or kind: "extraction", or remove the field.`);
     if (!m.actors.some((a) => a.effects.includes(e.name))) add("warning", "EFFECT_UNUSED", e.name, `Effect ${e.name} is declared but no actor may request it`);
@@ -392,9 +392,13 @@ function fieldProblem(name: string, f: unknown): string | null {
 }
 
 /** The checks of a decision (Clef) or extraction (Clairic) effect: declared well, a pure read, and heard from. */
-function checkDecisionEffect(e: ManifestEffect, add: AddFn) {
+function checkDecisionEffect(e: ManifestEffect, m: Manifest, add: AddFn) {
   const decision = e.kind === "decision";
   const label = decision ? "decision" : "extraction";
+  // A tool's answer is the tool's return value, so an effect every requester uses only as an agent tool is heard from
+  // without a result message.
+  const requesters = m.actors.filter((a) => a.effects.includes(e.name));
+  const toolOnly = requesters.length > 0 && requesters.every((a) => a.tools?.includes(e.name));
   if (decision ? e.model === null || !CLEF_MODELS.includes(e.model) : e.model !== CLAIRIC_MODEL)
     add("error", "DECISION_MODEL_UNKNOWN", e.name, `${e.name} is a ${label} with model ${e.model === null ? "none" : `"${e.model}"`}`, `Use model: ${decision ? CLEF_MODELS.map((x) => `"${x}"`).join(" or ") : `"${CLAIRIC_MODEL}"`}.`);
   if (decision) {
@@ -405,19 +409,30 @@ function checkDecisionEffect(e: ManifestEffect, add: AddFn) {
       add("error", "DECISION_MODE_INVALID", e.name, `${e.name} has mode ${JSON.stringify(e.mode)}; a typo here would silently act on the answer`, `Use mode: "act" or mode: "shadow".`);
     if (e.mode === "shadow" && e.result)
       add("error", "DECISION_SHADOW_RESULT", e.name, `${e.name} is a shadow decision but delivers ${e.result}; a shadow answer is recorded for the scorecard and never delivered`, `Remove result, or set mode: "act".`);
-    if (e.mode !== "shadow" && !e.result)
+    if (e.mode !== "shadow" && !e.result && !toolOnly)
       add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an act-mode decision with no result, so the actor would never see the answer`, `Add result: "<message>", or set mode: "shadow" to only record it.`);
     if (e.fields !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a decision but declares fields, which only an extraction uses`, `Use questions, or make it an extraction.`);
   } else {
     const entries = e.fields === null || Array.isArray(e.fields) ? [] : Object.entries(e.fields);
     const problem = Array.isArray(e.fields) ? "fields is a list; declare an object keyed by field name" : entries.length < 1 ? "it declares no fields" : entries.map(([n, f]) => fieldProblem(n, f)).find((p) => p !== null);
     if (problem) add("error", "EXTRACTION_FIELDS_INVALID", e.name, `${e.name}: ${problem}`, `Declare at least one field; see the Clairic field types and limits.`);
-    if (!e.result) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
+    if (!e.result && !toolOnly) add("warning", "DECISION_RESULT_MISSING", e.name, `${e.name} is an extraction with no result, so the actor would never see what it extracted`, `Add result: "<message>".`);
     for (const f of ["questions", "mode"] as const)
       if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is an extraction but declares ${f}, which only a decision uses`, `Remove ${f}, or make it a decision.`);
   }
   for (const f of ["deadline", "probe", "completes"] as const)
     if (e[f] !== null) add("error", "DECISION_FIELD_MISPLACED", e.name, `${e.name} is a ${label} but declares ${f}, which only a job uses`, `Remove ${f}: a ${label} is answered within one request.`);
   if (e.publishes === true) add("error", "DECISION_PUBLISHES", e.name, `${e.name} is a ${label} and publishes; it only reads, so nothing public can come from it`, `Remove publishes: true.`);
+  // The approval guard goes by message type: every handler of a decision's result type loses ctx.approve and ctx.deny.
+  // A type that also arrives as another effect's result, or from any sender but the receiver itself, takes them away
+  // from handlers that aren't hearing this decision.
+  if (e.result) {
+    const result = e.result;
+    const others = m.effects.filter((x) => x.name !== e.name && x.result === result).map((x) => x.name);
+    const routed = m.routes.filter((r) => r.message === result && r.from !== r.to).map((r) => `${r.from} → ${r.to}`);
+    const ways = [...(others.length > 0 ? [`the result of ${others.join(" and ")}`] : []), ...(routed.length > 0 ? [`routed ${routed.join(", ")}`] : [])];
+    if (ways.length > 0)
+      add("warning", "DECISION_RESULT_SHARED", e.name, `${e.name}'s result, ${result}, is also ${ways.join(", and ")}, so ctx.approve and ctx.deny throw in every handler of ${result}`, `Give ${e.name} a result message of its own, routed only from ${requesters.length === 1 ? requesters[0]!.name : "each requesting actor"} to itself.`);
+  }
   if (e.idempotency === "none") add("warning", "DECISION_IDEMPOTENCY_NONE", e.name, `${e.name} declares idempotency: "none", but a ${label} is a deterministic read`, `Use idempotency: "key"; a retry is always safe.`);
 }
