@@ -3,7 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 import { Lifecycle, LifecycleCapability, type LifecycleJobContext } from "agents/lifecycle";
 import { z } from "zod";
 import { agentExhausted, agentFailed } from "../../src/agents/index.ts";
-import { actorRuntime, type Envelope } from "../../src/runtime/index.ts";
+import { decisionAdapters, type WorkersAI } from "../../src/decisions/index.ts";
+import { actorRuntime, type Envelope, type HandlerContext } from "../../src/runtime/index.ts";
 import { computer, containerBackend, defineSystem, inboundEmail, message, pi, webhook } from "../../src/system.ts";
 import { type ApprovalDecided, applyDecision, approvalDecided, handleEmail, handleWebhook } from "../../src/sources/index.ts";
 
@@ -25,6 +26,10 @@ export const system = defineSystem({
     "probe.nested": message({ version: 1, description: "Call requestEffect from inside a handler, which it refuses", payload: z.object({ key: z.string(), after: z.boolean().optional() }) }),
     "probe.effect": message({ version: 1, description: "Request a named effect", payload: z.object({ effect: z.enum(["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job-plain", "gateway.job-approval"]), key: z.string(), twice: z.boolean().optional(), fail: z.boolean().optional() }) }),
     "probe.outcome": message({ version: 1, description: "Effect outcome", payload: Outcome }),
+    "probe.decide": message({ version: 1, description: "Request a decision or an extraction", payload: z.object({ effect: z.enum(["decide.route", "decide.shadow", "extract.facts"]), key: z.string(), state: z.string() }) }),
+    "probe.decided": message({ version: 1, description: "A decision's outcome", payload: Outcome }),
+    "probe.extracted": message({ version: 1, description: "An extraction's outcome", payload: Outcome }),
+    "probe.label": message({ version: 1, description: "Label a recorded decision or extraction", payload: z.object({ decision: z.string(), action: z.string().optional(), actual: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional() }) }),
     // Its payload validates only once __probeHold settles: receive() awaits validation before the handler's transaction
     // opens, so this holds a delivery in flight with no transaction open, and no await inside the handler ([lifecycle-alarm-not-held]).
     "probe.held": message({
@@ -72,7 +77,7 @@ export const system = defineSystem({
       kind: "deterministic",
       purpose: "Exercises runtime edge cases",
       justification: ["state"],
-      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain", "gateway.job-approval", "notify.approval"],
+      effects: ["gateway.reconcilable", "gateway.plain", "gateway.approval", "gateway.publish", "gateway.keyed", "gateway.budgeted", "gateway.job", "gateway.job-plain", "gateway.job-approval", "notify.approval", "decide.route", "decide.shadow", "extract.facts"],
       schedules: [
         { every: "1h", message: "probe.tick.hourly" },
         { cron: "0 9 * * *", message: "probe.tick.daily" },
@@ -115,6 +120,43 @@ export const system = defineSystem({
     "gateway.job": { description: "Long work, settled later", kind: "job", idempotency: "key", deadline: "1h", probe: { every: "1m" }, completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-plain": { description: "Long work whose start can't be retried", kind: "job", idempotency: "none", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
     "gateway.job-approval": { description: "Long work a person must approve first", kind: "job", idempotency: "key", approval: "human", deadline: "1h", completes: { message: "probe.job.done" }, result: "probe.outcome" },
+    // Run by decisionAdapters over stubAi (below), which each test scripts ([decision-*], decisions.test.ts).
+    "decide.route": {
+      description: "Route an issue",
+      kind: "decision",
+      model: "@cf/cloudflare/clef-flash",
+      idempotency: "key",
+      result: "probe.decided",
+      questions: {
+        route: { type: "choice", instructions: "How should a software factory handle this issue?", criteria: { ready: "Clear enough to implement now", needs_info: "Missing information the factory must ask for", not_for_factory: "Needs a human: design, policy, or out of scope" } },
+        one_line: { type: "noul", instructions: "Is the issue only a one-line description with no acceptance criteria?" },
+        risk: { type: "score", instructions: "How risky is merging this change?", criteria: ["No risk", "Low", "Medium", "High"] },
+      },
+    },
+    "decide.shadow": {
+      description: "Route an issue in shadow: recorded, never delivered",
+      kind: "decision",
+      model: "@cf/cloudflare/clef-flash",
+      idempotency: "key",
+      mode: "shadow",
+      questions: { route: { type: "choice", instructions: "How should a software factory handle this issue?", criteria: { ready: "Clear enough to implement now", needs_info: "Missing information the factory must ask for", not_for_factory: "Needs a human: design, policy, or out of scope" } } },
+    },
+    "extract.facts": {
+      description: "Extract an issue's facts",
+      kind: "extraction",
+      model: "@cf/cloudflare/clairic",
+      idempotency: "key",
+      result: "probe.extracted",
+      fields: {
+        failing_check: { type: "text", instructions: "The verify check that failed" },
+        commit: { type: "text", instructions: "The commit SHA that failed" },
+        run_id: { type: "number", integer: true },
+        files: { type: "list", items: "text", instructions: "Repository file paths the issue names" },
+        done_when: { type: "list", items: "text", instructions: "The acceptance criteria" },
+        reported_on: { type: "date", instructions: "The date the failure happened" },
+        owner: { type: "text", instructions: "Who owns the failing check" },
+      },
+    },
     // Scribe's tools (agent.ts registers recording adapters; tests override them to hang or fail).
     "note.keyed": { description: "Write a note; a retry with the same key writes it once", idempotency: "key", input: z.object({ text: z.string() }), result: "scribe.noted" },
     "note.plain": { description: "Write a note; a retry may write it twice", idempotency: "none", input: z.object({ text: z.string() }), result: "scribe.noted" },
@@ -137,6 +179,10 @@ export const system = defineSystem({
     { from: "@ingress", message: "probe.nested", to: "Probe" },
     { from: "@ingress", message: "probe.effect", to: "Probe" },
     { from: "Probe", message: "probe.outcome", to: "Probe" },
+    { from: "@ingress", message: "probe.decide", to: "Probe" },
+    { from: "Probe", message: "probe.decided", to: "Probe" },
+    { from: "Probe", message: "probe.extracted", to: "Probe" },
+    { from: "@ingress", message: "probe.label", to: "Probe" },
     { from: "Probe", message: "probe.held", to: "Probe" },
     { from: "@ingress", message: "probe.timer.set", to: "Probe" },
     { from: "@ingress", message: "probe.timer.cancel", to: "Probe" },
@@ -170,6 +216,42 @@ export const system = defineSystem({
 
 /** The same system without approvals.notify, which instances keyed "quiet-…" run ([approval-notify-absent]). */
 const unnotified: typeof system = { ...system, approvals: undefined };
+/**
+ * The same system with a result forced onto the shadow decision, which `actord check` refuses (DECISION_SHADOW_RESULT)
+ * and the runtime must ignore. Instances keyed "forced-…" run it ([decision-shadow-silent]).
+ */
+const forcedShadowResult = { ...system, effects: { ...system.effects, "decide.shadow": { ...system.effects["decide.shadow"], result: "probe.decided" } } } as typeof system;
+const systemFor = (name: string | undefined): typeof system => (name?.startsWith("quiet-") ? unnotified : name?.startsWith("forced-") ? forcedShadowResult : system);
+
+/** The Workers AI binding the decision adapters call: each test scripts globalThis.__probeAi ([decision-*]). */
+const stubAi: WorkersAI = {
+  async run(model, body) {
+    const script = (globalThis as { __probeAi?: (model: string, body: unknown) => unknown }).__probeAi;
+    if (!script) throw new Error("stub Workers AI: no __probeAi scripted");
+    return script(model, body);
+  },
+};
+
+/**
+ * A decision's or an extraction's result: kept for the test. Keys starting "try-approve" also try ctx.approve and
+ * ctx.deny on this instance's parked gateway.approval, and keep what each did ([decision-cannot-approve]).
+ */
+function answered(message: string, payload: z.infer<typeof Outcome>, ctx: HandlerContext<typeof system, "Probe">): void {
+  const tried: Record<string, string> = {};
+  if (payload.key.startsWith("try-approve")) {
+    for (const [call, run] of [
+      ["approve", () => ctx.approve("gateway.approval", ctx.key)],
+      ["deny", () => ctx.deny("gateway.approval", ctx.key, "no")],
+    ] as const) {
+      try {
+        tried[call] = String(run());
+      } catch (err) {
+        tried[call] = (err as Error).message;
+      }
+    }
+  }
+  ctx.sql.exec("INSERT INTO answers (message, key, status, value, error, tried) VALUES (?, ?, ?, ?, ?, ?)", message, payload.key, payload.status, payload.value === undefined ? null : JSON.stringify(payload.value), payload.error ?? null, JSON.stringify(tried));
+}
 
 /** Another Lifecycle capability with its own job, to show actord shares the object's one alarm. */
 class Pinger extends LifecycleCapability {
@@ -200,9 +282,10 @@ export class Probe extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS settled (key TEXT NOT NULL, ok INTEGER NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS decided (payload TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS storage_awaits (key TEXT NOT NULL, seen TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS answers (message TEXT NOT NULL, key TEXT NOT NULL, status TEXT NOT NULL, value TEXT, error TEXT, tried TEXT NOT NULL)");
   }
 
-  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, this.ctx.id.name?.startsWith("quiet-") ? unnotified : system, "Probe", {
+  actor = actorRuntime({ lifecycle: this.lifecycle, ctx: this.ctx, env: this.env }, systemFor(this.ctx.id.name), "Probe", {
     // requestEffect is for code outside handlers. `after` calls it once the handler has awaited something.
     "probe.nested": async ({ payload }) => {
       if (payload.after) await Promise.resolve();
@@ -293,6 +376,8 @@ export class Probe extends DurableObject<Env> {
       attempt("settleJob", () => ctx.settleJob("gateway.job", key, { status: "confirmed" }));
       attempt("cancelJob", () => ctx.cancelJob("gateway.job", key));
       attempt("note", () => ctx.note("after the await"));
+      attempt("acted", () => ctx.acted(`decide.route:${key}`, "routed"));
+      attempt("outcome", () => ctx.outcome(`decide.route:${key}`, { route: "ready" }));
       const probeIO = ((globalThis as { __probeIO?: Record<string, unknown> }).__probeIO ??= {});
       probeIO[key] = { tried, readable: { self: ctx.self, key: ctx.key, now: typeof ctx.now() }, ctx };
     },
@@ -319,6 +404,16 @@ export class Probe extends DurableObject<Env> {
     },
     "probe.misbehave": (_m, ctx) => {
       ctx.effect("gateway.undeclared" as never, {}, { key: "x" });
+    },
+    "probe.decide": ({ payload }, ctx) => {
+      ctx.effect(payload.effect, { state: payload.state }, { key: payload.key });
+    },
+    "probe.decided": ({ type, payload }, ctx) => answered(type, payload, ctx),
+    "probe.extracted": ({ type, payload }, ctx) => answered(type, payload, ctx),
+    // Labels a recorded decision or extraction; a bad label throws, and this delivery fails ([decision-labels]).
+    "probe.label": ({ payload }, ctx) => {
+      if (payload.action !== undefined) ctx.acted(payload.decision, payload.action);
+      if (payload.actual !== undefined) ctx.outcome(payload.decision, payload.actual);
     },
     "probe.effect": ({ payload }, ctx) => {
       ctx.effect(payload.effect, { key: payload.key }, { key: payload.key });
@@ -400,13 +495,23 @@ export class Probe extends DurableObject<Env> {
       ctx.sql.exec("INSERT INTO approvals (key, ok) VALUES (?, ?)", payload.effectKey, ok ? 1 : 0);
       ctx.sql.exec("INSERT INTO decided (payload) VALUES (?)", JSON.stringify(payload));
     },
-  }, { backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40 }); // a test can hold a retry back
+  }, {
+    backoffMs: () => (globalThis as { __probeBackoffMs?: number }).__probeBackoffMs ?? 40, // a test can hold a retry back
+    effects: decisionAdapters(systemFor(this.ctx.id.name), { ai: stubAi }),
+  });
 
   receive(envelope: Envelope) {
     return this.actor.receive(envelope);
   }
   decide(key: string, decision: "approve" | "deny") {
     return this.actor.decide(key, decision);
+  }
+  /** Every decision or extraction result this instance handled, with its value parsed. */
+  answers() {
+    return this.ctx.storage.sql
+      .exec<{ message: string; key: string; status: string; value: string | null; error: string | null; tried: string }>("SELECT message, key, status, value, error, tried FROM answers ORDER BY rowid")
+      .toArray()
+      .map(({ value, tried, ...r }) => ({ ...r, value: value === null ? null : (JSON.parse(value) as unknown), tried: JSON.parse(tried) as Record<string, string> }));
   }
   outcomes() {
     return this.ctx.storage.sql

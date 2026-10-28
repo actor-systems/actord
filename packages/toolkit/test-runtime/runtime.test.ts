@@ -392,7 +392,9 @@ for (const io of ["storage", "microtasks"] as const) {
     overrideEffect("gateway.keyed", { run: async () => "ran" });
     const key = `pass-${io}`;
     expect(await ioCall(key, io)).toMatchObject({ status: "handled" });
-    expect(probeIO(key)?.tried).toEqual({ "sql.exec": "ok", send: "ok", effect: "ok", approve: "ok", deny: "ok", after: "ok", at: "ok", cancelTimer: "ok", settleJob: "ok", cancelJob: "ok", note: "ok" });
+    // The labels reach their lookup: this instance has recorded no decision to label.
+    const unrecorded = `no decision or extraction is recorded as "decide.route:${key}"`;
+    expect(probeIO(key)?.tried).toEqual({ "sql.exec": "ok", send: "ok", effect: "ok", approve: "ok", deny: "ok", after: "ok", at: "ok", cancelTimer: "ok", settleJob: "ok", cancelJob: "ok", note: "ok", acted: unrecorded, outcome: unrecorded });
     await settle(env, system);
     expect(await leftBy(key)).toMatchObject({
       fired: [`${key}:before`, `${key}:after`],
@@ -415,7 +417,7 @@ it("[handler-ctx-closed] once its delivery has ended, a handler's ctx refuses ev
   expect(await ioCall("closed-io", "wait")).toMatchObject({ status: "failed", error: IO_REFUSED });
   await eventually(async () => expect(probeIO("closed-io")).toBeDefined());
   const abandoned = probeIO("closed-io")!;
-  expect(abandoned.tried).toEqual({ "sql.exec": CTX_CLOSED, send: CTX_CLOSED, effect: CTX_CLOSED, approve: CTX_CLOSED, deny: CTX_CLOSED, after: CTX_CLOSED, at: CTX_CLOSED, cancelTimer: CTX_CLOSED, settleJob: CTX_CLOSED, cancelJob: CTX_CLOSED, note: CTX_CLOSED });
+  expect(abandoned.tried).toEqual({ "sql.exec": CTX_CLOSED, send: CTX_CLOSED, effect: CTX_CLOSED, approve: CTX_CLOSED, deny: CTX_CLOSED, after: CTX_CLOSED, at: CTX_CLOSED, cancelTimer: CTX_CLOSED, settleJob: CTX_CLOSED, cancelJob: CTX_CLOSED, note: CTX_CLOSED, acted: CTX_CLOSED, outcome: CTX_CLOSED });
   // Only what the handler is, not what it does, stays readable.
   expect(abandoned.readable).toEqual({ self: "Probe:closed-io", key: "closed-io", now: "number" });
   await settle(env, system);
