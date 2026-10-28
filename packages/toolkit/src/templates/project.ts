@@ -186,8 +186,10 @@ export default {
 import { actorEvents } from "@actord/toolkit/vitest";
 import { defineConfig } from "vitest/config";
 
+// remoteBindings: false keeps every binding local: Workers AI has no local mode, so once an "ai" binding is
+// declared its calls fail in the tests instead of opening a remote session on your Cloudflare credentials.
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } }), actorEvents()],
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, remoteBindings: false }), actorEvents()],
 });
 `,
     "tests/greeting.test.ts": `import { env } from "cloudflare:workers";

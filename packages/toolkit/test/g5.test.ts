@@ -30,6 +30,8 @@ describe("actord init", () => {
     expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).name).toBe("fresh-app");
     expect(JSON.parse(readFileSync(join(dir, ".claude/settings.json"), "utf8")).permissions.ask).toEqual(askRules());
     expect(readFileSync(join(dir, "CLAUDE.md"), "utf8").trim().split("\n").length).toBeLessThanOrEqual(10);
+    // A binding added later (Workers AI has no local mode) must not open a remote session from the tests.
+    expect(readFileSync(join(dir, "vitest.config.ts"), "utf8")).toContain("remoteBindings: false");
   });
 
   it("creates in a directory holding only .git, node_modules, and Claude Code's own .claude state", () => {
