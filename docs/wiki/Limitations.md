@@ -57,34 +57,19 @@
   by then. The session's `wallClock` keeps running while it waits: the session's job ends at `wallClock` plus 10
   minutes, though the approval stays open for its expiry (3 days by default), so a later approval's result is only a
   note. An app whose approvals take long needs a longer `wallClock`. Tracked: none.
-- **A handler that awaits I/O fails on every attempt, and each attempt can cost another writer's rows.** A handler
-  that awaits I/O or a timer fails its delivery ("handlers may not await I/O; use ctx.effect", #80), so the pattern
-  can't ship unnoticed. It fails on every attempt: up to 6 for a message before it dead-letters, or until
-  `retry.exhausted` for a timer. These writers start transactions beside a handler: pi's session store, Computer's
-  vfs sync-back, Lifecycle's job rows and actord's drain settlements.
-  - **Each attempt.** A writer's transaction that is already waiting when the handler yields runs nested in the
-    handler's, before the sentinel fires.
-    - The failed delivery's rollback takes its rows, though its own `transaction()` resolved
-      (`[sentinel-ordering]`).
-    - Each attempt also reruns the abandoned handler's post-await code, and its I/O.
-    - A writer whose transaction starts from I/O that arrives after the handler started runs after the rollback,
-      and commits.
-  - **Upgrading makes it certain.** Before #80, a writer nested in a handler that awaited I/O and then committed
-    kept its rows. Now every such delivery fails. So an app that upgrades with such a handler goes from occasional
-    loss to loss on every attempt, until the handler is fixed.
-  - **The abandoned handler.** It keeps running until its await returns. Its `ctx` refuses every call, but its
-    direct `this.ctx.storage` writes and its `this.actor.requestEffect` calls are accepted.
-  - **Awaits that beat the sentinel.** These let a waiting writer in, but finish before the sentinel fires
-    (`[storage-await-no-macrotask]`):
-    - a nested `transaction()`;
-    - `sync()` and `getCurrentBookmark()`;
-    - `Request` and `Response` body reads (`text()`, `json()`).
+- **An abandoned handler can still write.** A handler that yields to the event loop fails its delivery ("handlers may
+  not await I/O; use ctx.effect", #80, #82), on every attempt: up to 6 for a message before it dead-letters, or until
+  `retry.exhausted` for a timer. The handler itself keeps running until its await returns, so each attempt reruns its
+  post-await code and its I/O. Its `ctx` refuses every call, but it can still write outside the failed delivery:
+  - a nested `transaction()` it was awaiting runs after the rollback, as a transaction of its own, and commits
+    (`[abandoned-handler-limits]`);
+  - its `this.actor.requestEffect` calls are accepted, and their effects run (`[request-effect-in-handler]`);
+  - its direct `this.ctx.storage` writes are accepted (`[abandoned-handler-limits]`).
 
-    If the handler then throws, the rollback takes that writer's rows, and the delivery fails with the handler's
-    own error, not #80's (`[beside-transaction-nested]`). Handlers must not await them. This was measured in local
-    workerd: in production, `sync()` and the bookmark call may do real I/O, and then fail the delivery instead.
-
-  This applies to every actor. Tracked in #82.
+  Writers beside it, such as pi's session store, Computer's vfs sync-back, Lifecycle's job rows and actord's drain
+  settlements, are safe: the delivery rolls back before any of them runs, and they commit (`[canary-ordering]`). The
+  fix is #80's: don't await I/O in a handler; use `ctx.effect`. Measured in local workerd. This applies to every
+  actor. Tracked: none.
 - **The `corsProxy` residual.** Computer 0.8.0's push ignores the `corsProxy` it is passed, and reads `http.corsProxy`
   from the workspace's `.git/config`, which the agent can write with `exec`. The toolkit refuses a push when one is
   set, checking just before the push, and only storage, never the network, runs between that check and Computer's

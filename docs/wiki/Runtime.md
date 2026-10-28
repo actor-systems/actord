@@ -8,7 +8,7 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 | Refuses malformed, unauthorized-route, wrong-version, and invalid-payload messages | Envelope checks against `system.ts`; Standard Schema validation |
 | Handles a message id at most once per actor | SQLite inbox, retained 7 days |
 | A handler's writes, its outgoing messages, and its effect intents commit together or not at all | `ctx.storage.transaction()` around each handler |
-| A handler that awaits I/O fails its delivery, and nothing it wrote commits | A `setTimeout(0)` sentinel is queued before the handler runs. If it fires before the handler settles, the handler awaited I/O or a timer, so the transaction throws `<Actor>.<type>: handlers may not await I/O; use ctx.effect` and rolls back. The delivery then fails like any other. Microtasks and most storage awaits finish before it without letting another writer in. A few awaits let one in and still finish first, so they aren't caught (below). Once the delivery ends, every `ctx` method throws `<Actor>.<type>: this handler's delivery has ended; its ctx can't be used`, `ctx.sql.exec` included; `self`, `key` and `now` stay readable. #80 |
+| A handler that awaits I/O fails its delivery, and nothing it wrote commits | Just before the handler runs, a no-op canary transaction is requested inside the handler's transaction. It is first in that transaction's queue, so it runs at the handler's first yield to the event loop, before any other writer could run nested in the handler's transaction. The transaction then throws `<Actor>.<type>: handlers may not await I/O; use ctx.effect` and rolls back, and the delivery fails like any other. A writer that was waiting runs after the rollback, and commits. If the handler finishes first, the canary runs after the transaction and does nothing. Once the delivery ends, every `ctx` method throws `<Actor>.<type>: this handler's delivery has ended; its ctx can't be used`, `ctx.sql.exec` included; `self`, `key` and `now` stay readable. #80, #82 |
 | Delivers at least once, then dead-letters | SQLite outbox; alarm retries with backoff, up to 6 attempts |
 | Never reports an unacknowledged external effect as delivered | Retries only with an idempotency key; otherwise `in_doubt` |
 | A timer set by a handler is delivered after its delay, even across restarts, and handled at most once; it is set only if the handler commits, and cancelling it or setting its key again before it fires wins. A handler that keeps failing is retried with backoff, and after 6 attempts the timer is dropped (`retry.exhausted`), not delivered | `_actors_timers` row, written in the handler's transaction and removed in the transaction that handles it; id derived from the key, the due time and the message that set it |
@@ -29,16 +29,15 @@ guarantees, each backed by tests in workerd (see `examples/release-radar/tests/`
 
 **Handlers may not await I/O.** Request I/O with `ctx.effect`, and handle its result message.
 
-- **What fails.** Anything that crosses an event-loop turn fails the delivery with `handlers may not await I/O; use
-  ctx.effect`: a `fetch`, a timer, a container call, a model. Any await still pending at the next event-loop turn
-  fails the delivery, even `setTimeout(0)` and libraries that use timers internally.
+- **What fails.** A `fetch`, a timer, a container call or a model fails the delivery with `handlers may not await
+  I/O; use ctx.effect`. So does any other await that yields to the event loop, I/O or not: `setTimeout(0)`,
+  libraries that use timers internally, `sync()`, `getCurrentBookmark()`, a nested `transaction()`, and a `Request`
+  or `Response` body read (`text()`, `json()`).
 - **What a handler may await.** Microtasks, and these storage calls: `get`, `put`, `list` and `delete`, the alarm
-  calls, `ctx.sql`, `kv`, `transactionSync` and Lifecycle's `jobs.push`. `[storage-await-no-macrotask]` shows they
-  keep a writer waiting beside the handler out of its transaction.
-- **What a handler must not await, though the sentinel misses it.** A nested `transaction()`, `sync()`,
-  `getCurrentBookmark()`, and a `Request` or `Response` body read (`text()`, `json()`). Each lets a waiting writer
-  run inside the handler's transaction, yet finishes before the sentinel fires. If the handler then throws, the
-  writer's rows roll back with it, and the delivery fails with the handler's own error (#82).
+  calls, `ctx.sql`, `kv`, `transactionSync` and Lifecycle's `jobs.push`. They don't yield: `[storage-awaits-allowed]`
+  shows a writer waiting beside the handler stays out of its transaction, and the delivery is handled.
+- **The abandoned handler.** A handler whose delivery failed keeps running until its await returns, and can still
+  write outside the delivery. Limitations has what it can do.
 
 **Effect keys.** An effect key identifies one effect for the actor's lifetime. Requesting it again records `effect.duplicate` and runs nothing. A new attempt at the same logical work needs a new key, for example one that includes an attempt or generation number.
 

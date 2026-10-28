@@ -69,29 +69,53 @@ with the binding can call `receive`).
   (`[beside-transaction-nested]`). Its rollback then takes their rows: pi's session store, Computer's vfs sync-back,
   Lifecycle's job rows, actord's own drain settlements.
 - **Change:**
-  - **The sentinel.** The runtime queues a `setTimeout(0)` sentinel before calling the handler, and races the
-    handler against it.
-  - **When the sentinel fires first.** The transaction closure throws `<Actor>.<type>: handlers may not await I/O;
+  - **The detector.** The runtime races the handler against a detector that fires if the handler yields to the
+    event loop. #80 used a `setTimeout(0)` sentinel; #82 replaced it with a canary transaction (next amendment).
+  - **When the detector fires first.** The transaction closure throws `<Actor>.<type>: handlers may not await I/O;
     use ctx.effect`. The transaction rolls back, and the delivery fails like any other.
-  - **When the handler settles first.** The sentinel is cleared.
   - **The closed ctx.** Once the delivery ends, the handler's `ctx` refuses every call, `sql.exec` included, with
     `<Actor>.<type>: this handler's delivery has ended; its ctx can't be used`. `self`, `key` and `now` stay
     readable.
 - **Verified in workerd.**
-  - **Storage.** No storage await a handler can reach outlasts the sentinel (`[storage-await-no-macrotask]`).
-    These also keep a writer waiting beside the handler out of its transaction, so a handler may await them: the
-    KV calls (`get`, `put`, `list`, `delete`), the alarm calls, `sql`, `kv`, `transactionSync` and Lifecycle's
-    `jobs.push`.
-  - **Awaits the sentinel misses.** These let a waiting writer run nested, and still finish before the sentinel: a
-    nested `transaction()`, `sync()`, `getCurrentBookmark()`, and `Request` and `Response` body reads (`text()`,
-    `json()`). If the handler then throws, the rollback takes that writer's rows, and the delivery fails with the
-    handler's own error (`[beside-transaction-nested]`). A handler must not await them. #82 proposes an exact
-    detector.
-  - **A transaction already requested.** One requested beside the handler runs nested before the sentinel, so the
-    failed delivery still rolls it back.
-  - **A transaction begun later.** One begun by I/O that arrives after the handler started runs after the rollback,
-    and commits. `[sentinel-ordering]` pins both.
+  - **Storage.** The storage awaits a handler may make don't yield, and keep a writer waiting beside the handler out
+    of its transaction (`[storage-awaits-allowed]`): the KV calls (`get`, `put`, `list`, `delete`), the alarm calls,
+    `sql`, `kv`, `transactionSync` and Lifecycle's `jobs.push`.
 - **Breaking:** a handler that awaited I/O used to commit. It now fails its delivery on every attempt.
   - A message dead-letters after 6 attempts.
   - A timer is dropped with `retry.exhausted`.
   - The I/O the handler started still runs on each attempt.
+
+## Amendment (#82): a canary transaction replaces the sentinel
+- **Problem:** #80's `setTimeout(0)` sentinel missed awaits that let a waiting writer run nested in the handler's
+  transaction and still finished before a timer: a nested `transaction()`, `sync()`, `getCurrentBookmark()`, and
+  `Request` and `Response` body reads. If the handler then threw, the rollback took that writer's rows. And in a
+  delivery the sentinel did fail, a writer already waiting ran nested first, and rolled back with it.
+- **Change:**
+  - **The canary.** Just before calling the handler, inside its transaction, `deliver` requests a no-op transaction.
+    workerd queues a transaction requested during an open one's turns behind it, and runs that queue, nested, once
+    the open one yields to the event loop. Nothing else can be queued there before the canary, so it runs at the
+    handler's first yield, ahead of any other writer.
+  - **When it runs while the handler is pending.** The delivery fails with #80's message from inside its
+    transaction, and rolls back before the next queued writer runs. That writer then commits.
+  - **When the handler finishes first.** The canary runs after the transaction has ended, and does nothing.
+  - **The timer is gone.** The canary ran before it in every case it caught.
+- **Verified in local workerd** (1.20261019.1):
+  - **Placement.** A canary requested beside the delivery's transaction, from `deliver`'s own context, never runs
+    while that transaction is open, even across a fetch. It has to be requested inside (`[canary-placement]`).
+  - **What it catches.** It runs exactly when a waiting writer would get in, and ahead of it: during every yield,
+    the six the sentinel missed included, and never during microtasks or the storage awaits above
+    (`[canary-catalogue]`, `[handler-io-fails-loudly]`, `[storage-awaits-allowed]`).
+  - **Writers.** A writer requested beside a failing handler, as it starts or during its await, runs after the
+    rollback and commits (`[canary-ordering]`, `[beside-transaction-nested]`, `[canary-writer-fate]`). I/O started
+    outside the transaction can't call back until it ends (`[canary-io-writer]`).
+  - **Every path.** A direct `receive`, an RPC delivery, a timer, the outbox drain (to the same instance and to
+    another) and a schedule's tick all run the canary (`[canary-every-path]`).
+  - **When the handler finishes first.** The canary writes nothing, logs nothing, and has run by the next turn after
+    `receive` returns (`[canary-quiet]`).
+- **Cost.** About 20 µs per delivery for the no-op transaction, roughly 10% of a local in-object delivery. Net of
+  removing the timer, the real `deliver` measured about 10 µs slower (`[canary-overhead]`, run by hand).
+- **What remains: the abandoned handler.** It keeps running after its delivery fails, and can still write outside
+  it. A nested `transaction()` it was awaiting runs after the rollback and commits, its `this.actor.requestEffect`
+  is accepted, and its direct `this.ctx.storage` writes are accepted (`[abandoned-handler-limits]`,
+  `[request-effect-in-handler]`). The fix is #80's: don't await I/O in a handler.
+- **Breaking:** nothing beyond #80's, except that the six awaits the sentinel missed now fail the delivery too.

@@ -111,18 +111,16 @@ Spike 3 (`docs/evidence/spike-3-agents-in-workerd.md`) showed the two can share 
     own `fauxProvider` replaces usage with a text-length estimate and a cost of 0, so it can't test a budget (spike 3).
 
 ## The handler-I/O hazard
-A handler's transaction that spans an event-loop turn lets other writers' rows join it. Pi's storage, Computer's
-vfs sync-back, Lifecycle's job rows and actord's own drain settlements all write beside a handler. If the handler
-then throws, their rows roll back with it. The runtime test `[beside-transaction-nested]` pins what workerd does: a
-transaction started from outside runs inside the handler's once the handler yields to the event loop. A tool's
-`requestEffect` in that window is refused (`REQUESTED_IN_HANDLER`).
+A handler's transaction that spans an event-loop turn would let other writers' rows join it. Pi's storage,
+Computer's vfs sync-back, Lifecycle's job rows and actord's own drain settlements all write beside a handler. If the
+handler then threw, their rows would roll back with it. workerd queues a transaction requested beside the handler
+behind the handler's, and runs it inside the handler's once the handler yields to the event loop.
 
-The hazard is older than agent actors. The owner's ruling, now in place (#80, decision 0007's amendment): race each
-handler against a macrotask sentinel, and fail the delivery loudly ("handlers may not await I/O; use ctx.effect").
-In the delivery that fails, a transaction already requested beside the handler still runs nested first, and rolls
-back with it (`[sentinel-ordering]`). A few awaits let such a writer in without the delivery failing (#82). The
-agent runtime's own handlers (the `on` verbs, tool results, the session's
-settlement) await no I/O.
+The hazard is older than agent actors. The owner's rulings, now in place (#80 and #82, decision 0007's amendments):
+a no-op canary transaction requested just before each handler runs at the handler's first yield, and fails the
+delivery loudly ("handlers may not await I/O; use ctx.effect"). It is first in the queue, so the delivery rolls back
+before any writer beside it runs, and those writers commit (`[canary-ordering]`, `[beside-transaction-nested]`). The
+agent runtime's own handlers (the `on` verbs, tool results, the session's settlement) await no I/O.
 
 ## Rejected alternatives
 - **The harness's completion settles the job** (spec §7.2). `PiHarness` has no completion callback.

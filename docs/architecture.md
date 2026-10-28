@@ -44,8 +44,8 @@ step because deleting an export destroys its data (decision 0006).
 
 **Runtime guarantees are few, tested, and stated with their limits.** Each handler runs in one SQLite
 transaction (writes, inbox mark, outgoing messages, effect intents commit together). It may await some storage
-calls, but not I/O: a handler still unsettled at the next event-loop turn fails its delivery ("handlers may not
-await I/O; use ctx.effect", decision 0007's #80 amendment). Delivery is at least once
+calls, but not I/O: a handler that yields to the event loop fails its delivery ("handlers may not await I/O; use
+ctx.effect", decision 0007's #80 and #82 amendments). Delivery is at least once
 with an inbox for dedupe and an outbox drained by alarms with bounded retries and a dead letter; effects run
 after commit, retried only with an idempotency key and otherwise reported `in_doubt`. Exactly-once external
 effects, global ordering, and cross-actor transactions are not offered. Each guarantee rests on a probe of
