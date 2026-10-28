@@ -194,8 +194,49 @@ as the `referenceDate`, with confidence 0.97 and `p_null` 0.32, under the defaul
 id or long number against the source before acting on it. Limitations lists the rest: list confidences, forecasts,
 datetimes without an offset, Clef's silent truncation, the price table, and the R2 inputs bucket's contents.
 
-## Testing
+## Testing a decision without the model
 
-Pass a stub `{ run(model, body) }` as `ai` to `decisionAdapters` and script its responses, as
-`packages/toolkit/test-runtime/src/index.ts` does (`stubAi`). The recorded responses in
-`packages/toolkit/test/fixtures/` show the real shapes.
+Tests never call the real model, and never need Cloudflare credentials.
+
+- In the test, replace each decision and extraction it reaches with `overrideEffect`: the adapter `decisionAdapters`
+  builds over a stub `{ run(model, body) }` that returns a scripted response. The recorded responses in
+  `packages/toolkit/test/fixtures/` show the real shapes; `packages/toolkit/test-runtime/src/index.ts` scripts them
+  the same way (`stubAi`).
+- Set `remoteBindings: false` on `cloudflareTest` in `vitest.config.ts`. Workers AI has no local mode, so a declared
+  `ai` binding is remote. Without the option, vitest opens a remote Workers AI session on whatever Cloudflare
+  credentials it finds, and a decision no test overrides calls the real model; with no credentials, no test starts.
+  With it, that call fails locally (`Binding AI needs to be run remotely`) and never reaches Cloudflare.
+
+```ts
+// actord:check
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { actorEvents } from "@actord/toolkit/vitest";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" }, remoteBindings: false }), actorEvents()],
+});
+```
+
+```ts
+// actord:check
+import { decisionAdapters, type WorkersAI } from "@actord/toolkit/decisions";
+import { overrideEffect, resetSeams } from "@actord/toolkit/testing";
+import { afterEach, beforeEach } from "vitest";
+import system from "./system";
+
+// Clef's answer to decide.route.next's one question, in the recorded shape. A choice's probabilities name only its
+// options, the chosen one included; a score's name every level.
+const clef: WorkersAI = {
+  async run() {
+    return {
+      model: "clef",
+      answers: { route: { type: "choice", choice: "needs_info", probabilities: { ready: 0.2, needs_info: 0.7, not_for_factory: 0.1 }, confidence: 0.5 } },
+      usage: { input_tokens: 300, output_tokens: 0 },
+    };
+  },
+};
+
+beforeEach(() => overrideEffect("decide.route.next", decisionAdapters(system, { ai: clef })["decide.route.next"]!));
+afterEach(() => resetSeams());
+```
