@@ -1,52 +1,48 @@
 # actord
 
-**Have your coding agent build systems that keep running, and know what actually holds.**
+**A toolkit and plugins for building systems of Durable Object actors on Cloudflare with Claude Code or
+Codex.**
 
-actord helps Claude Code and Codex design, build, test, and safely change small systems of communicating
-actors on Cloudflare Durable Objects. The agent proposes the design and writes the code. The TypeScript
-compiler, `actord check`, and tests that run in workerd, Cloudflare's own runtime, decide whether it's right.
+actord helps a coding agent design, build, test, and change small systems of communicating actors. The agent
+writes the design and the code. The TypeScript compiler, `actord check`, and tests that run in workerd,
+Cloudflare's runtime, check them.
 
-It's for software that doesn't fit inside a single request: a watcher that notices every release you care
-about, a desk that reads incoming reports and drafts briefings for your approval, a crew of coding agents
-that takes an issue to a reviewed pull request. Each is a handful of actors with names, private memory, and
-mailboxes, passing messages. Each waits between events at almost no cost, then picks up exactly where it
-left off.
+Typical examples: a service that watches release feeds and tells you about significant releases, one that
+reads incoming reports and drafts briefings for your approval, or a set of coding agents that turns GitHub
+issues into pull requests. Each is a few actors that pass messages to each other. Between events they sleep
+and cost almost nothing, and they keep their state across restarts.
 
 [Get started](#get-started) · [Documentation](https://github.com/actor-systems/actord/wiki) ·
 [npm](https://www.npmjs.com/package/@actord/toolkit) · [Contributing](CONTRIBUTING.md)
 
 ## Why actord
 
-The actor model is more than fifty years old, and it keeps turning out to be right. An actor is an
-independent thing with its own identity and private state. It handles one message at a time, and it changes
-the world only by sending messages to other actors. That describes a person in an organization surprisingly
-well. It describes an AI agent almost exactly.
+The actor model dates from 1973. An actor has its own identity and private state, handles one message at a
+time, and affects other actors only by sending them messages. It fits AI agents well: an agent keeps its own
+state, works on one task at a time, and communicates through messages.
 
-Durable Objects make the model practical. Each object has a unique name, its own SQLite database, and a
-single thread, and it sleeps until a message wakes it. There's no cluster to operate, so a system of a dozen
-long-lived actors can run on one person's Cloudflare account.
+Durable Objects implement the model on Cloudflare. Each object has a unique name, its own SQLite database, and
+a single thread, and it sleeps until a message wakes it. There's no cluster to run, so one person can keep a
+system of a dozen long-lived actors on their own account.
 
-Coding agents can now write a Durable Object in seconds. Making a *system* of them correct is still the hard
-part: messages arrive twice, a handler crashes halfway through, a retry sends the same notification again,
-and a "small" schema change strands messages already in flight. Those bugs never show up in the demo. They
-show up in week three of software that was meant to run for a year. actord makes them visible and testable:
+A coding agent can write a single Durable Object quickly. Getting a system of them right is harder: messages
+arrive twice, a handler crashes halfway through, a retry sends the same notification again, and a schema
+change strands messages already in flight. actord makes these problems visible and testable:
 
-- **A design you can check.** One typed `system.ts` declares every actor, message, route, effect, and
-  schedule, and each actor states why it needs to be an actor at all. What the compiler can't catch,
-  `actord check` does.
-- **Reliability you can prove.** Each message is handled once per actor, a handler's writes and messages
-  commit together, delivery retries until it lands, and an effect that might not have happened is reported
-  as in doubt. Every claim is backed by a test in workerd, or marked as not guaranteed.
-- **Changes without surprises.** `actord diff` classifies a change as compatible, breaking, or risky and
-  writes the deploy plan. It never deploys.
-- **Answers from evidence.** `actord trace` explains why a message was retried, rejected, or delivered, from
-  recorded events, and says *unknown* where the record ends.
+- **Typed declaration.** One `system.ts` declares every actor, message, route, effect, and schedule, and each
+  actor lists why it needs to be a separate actor. `actord check` catches what the compiler can't.
+- **Tested guarantees.** Each message is handled at most once per actor, a handler's writes and outgoing
+  messages commit together, delivery is retried until it succeeds, and an effect that may or may not have
+  happened is reported as in doubt. Each guarantee has a test in workerd, or is listed as not guaranteed.
+- **Change classification.** `actord diff` labels a change compatible, breaking, or risky and writes a deploy
+  plan. It doesn't deploy.
+- **Traces.** `actord trace` shows why a message was retried, rejected, or delivered, using recorded events,
+  and reports *unknown* where the record has gaps.
 
-## One design, three readers
+## What a system looks like
 
-The declaration is the design. Your agent writes it from your intent, `actord check` and the runtime hold the
-code to it, and the Room draws it beside the transcript. This is part of Release Radar, one of the two
-reference apps, which polls release feeds and notifies its owner once per significant release:
+Release Radar, one of the two reference apps, polls release feeds and notifies its owner once per significant
+release. Part of its `system.ts`:
 
 ```ts
 export default defineSystem({
@@ -75,7 +71,7 @@ export default defineSystem({
 });
 ```
 
-And this is `actord graph --format mermaid`, drawn from the same file:
+`actord graph --format mermaid` draws the same file:
 
 ```mermaid
 flowchart LR
@@ -91,69 +87,55 @@ flowchart LR
   a_ReleaseLedger -->|"release.significant@1"| a_DigestWriter
 ```
 
-Its 22 workerd tests cover duplicates, crashes before and after writes, retries, restarts, ordering, the
-schedule, and a lost acknowledgment.
+Release Radar's 22 workerd tests cover duplicates, crashes before and after writes, retries, restarts,
+ordering, the schedule, and a lost acknowledgment.
 
-## Programs before agents
+## Actor kinds
 
-An actor can be plain code, code that asks a model a bounded question, or a full agent. actord treats that as
-a design choice to justify, not a default. A system that calls a model only where judgment pays for itself is
-cheaper, faster, and much easier to trust.
+Each actor is one of three kinds:
 
 | Kind | What it is | Typical work |
 | --- | --- | --- |
-| `deterministic` | Ordinary code. Most actors should be this | Poll a feed, keep a ledger, send one digest per finding |
-| `model-assisted` | Code that asks a model and validates the answer before anything changes | Classify an item, route an issue with a probability for every option, extract typed values with confidences |
-| `agent` | A full agent session in its own Durable Object, with tools, a budget in dollars, turns, and wall-clock time, and an optional workspace that survives restarts | Edit a repository, run its tests, push a branch |
+| `deterministic` | Ordinary code | Poll a feed, keep a ledger, send one digest per finding |
+| `model-assisted` | Code that calls a model and validates the answer before changing anything | Classify an item, route an issue with a probability for each option, extract typed values with confidence scores |
+| `agent` | An agent session in its own Durable Object, with tools, a budget (dollars, turns, and wall-clock time), and an optional workspace that survives restarts | Edit a repository, run its tests, push a branch |
 
-Around the actors sit the parts long-running systems need: schedules and timers, signed GitHub webhooks and
-inbound email as sources, effects with idempotency keys and budgets, and approvals. An effect that acts
-toward someone else can wait until you approve it, by replying to an email if you like. `actord scorecard`
-tracks how well a model's answers turn out to be calibrated. Models propose; code decides.
+Most actors should be deterministic, since they're cheaper, faster, and easier to test. Use a model where a
+task needs judgment.
+
+A system can also declare schedules and timers, sources (signed GitHub webhooks and inbound email), effects
+with idempotency keys and budgets, and approvals. An effect that acts for you, such as sending a message to
+someone, can wait for your approval, which you can give by replying to an email. `actord scorecard` reports
+how well calibrated a model's decisions and extractions were.
 
 ## What I'm building with it
 
-I built actord for something I've started calling *standing systems*: personal machinery for work that never
-quite finishes. I describe a need, a coding agent builds a small system for it on my own Cloudflare account,
-and the system keeps working for as long as the need exists. It advances when something happens, waits
-without losing context, and asks me for judgment at explicit boundaries. It isn't an agent on a cron
-schedule. It's closer to a diligent colleague who remembers everything, never drops a thread, and knows when
-to come ask.
+I'm building actord to run what I call standing systems: small systems on my own Cloudflare account that
+handle ongoing personal work. I describe what I need, a coding agent builds the system, and it runs for as
+long as I need it. It reacts to events, can wait for days without losing state, and asks me when a decision
+needs a person.
 
-The first one, now in design, is a software factory that works on this repository. An issue becomes a job
-that an actor owns. A coding agent works on it in its own Durable Object, with a workspace and a budget.
-Checks and an independent reviewer, which sees the brief, the diff, and the results but never the
-implementer's transcript, judge the outcome. A draft pull request comes back with evidence for each
-acceptance criterion, and merging stays with me. The hard parts already work on real infrastructure: an agent
-that ran for seventeen minutes through a deploy and an eviction and finished all thirty of its edits with the
-suite green, a push whose token never enters the container, and a parked action approved by replying to an
-email.
+The first one, now in design, is a software factory for this repository. An actor owns each issue as a job. A
+coding agent works on it in its own Durable Object, with a workspace and a spending limit. Tests and a
+separate reviewer model check the work; the reviewer sees the brief, the diff, and the test results, but not
+the implementer's transcript. The result is a draft pull request with evidence for each acceptance criterion,
+and I do the merging.
 
-The same toolkit fits the rest of my list: a ledger of what I've promised and what's been promised to me,
-which drafts a nudge when something slips and waits for my yes; monitors that measure on a schedule and call
-a model only when a rule fires; research pipelines that run for weeks. Nor is it limited to personal work.
-Anything event-driven, stateful, and long-lived, from a triage queue to a multi-agent backend, has the same
-shape.
+Spikes on deployed Workers have tested the riskiest parts:
 
-My hunch is that a great deal of software is about to become worth writing simply because an agent can write
-it, and much of it will look like this: long-running, acting on someone's behalf, and changed again and again
-by an agent. The ambition for actord is to make that kind of software as approachable as Rails made web
-applications, without asking anyone to take its correctness on faith.
+- An agent session kept running through a deploy and an eviction, and finished all 30 of its edits in 17
+  minutes with the tests passing.
+- A git push authenticated from the Durable Object, with the token kept out of the container.
+- A reply to an email approved a parked action.
 
-## Principles
+Other systems I plan to build with it: a tracker for commitments I've made and that others have made to me,
+which drafts a reminder when one is overdue and waits for my approval to send it; monitors that run on a
+schedule and call a model only when a rule fires; and research pipelines that run for weeks. The same
+structure also works for systems that aren't personal, such as triage queues or multi-agent backends.
 
-- **Actors earn their place.** A system is a small society of actors with names, private state, and explicit
-  boundaries, not one giant autonomous loop. Every actor justifies itself, and a critic argues for fewer.
-- **Messages make systems legible.** Every message is typed, versioned, and attributable, so *what happened,
-  why, and what happened next* has an answer that isn't a guess.
-- **Evidence over explanation.** A model's explanation, critique, or review is never treated as proof. The
-  compiler and the tests are.
-- **Failure is normal.** Duplicates, crashes, retries, and effects with unknown outcomes are designed for, and
-  reported honestly when they happen.
-- **People decide at the boundaries.** Nothing deploys without you, and nothing goes out on your behalf
-  without your approval.
-- **Change matters more than scaffolding.** The first deploy is the demo. Understanding and safely changing a
-  running system is the point.
+I expect coding agents to write a lot more software like this: long-running, acting for someone, and changed
+often. My goal for actord is to make these systems as easy to build as Rails made web applications, with
+tests that show what each system guarantees.
 
 ## Get started
 
@@ -189,27 +171,28 @@ Requires Node.js 22.19+. Updating, uninstalling, and requirements for each agent
 
 | | |
 | --- | --- |
-| **Plugins for Claude Code and Codex** | Skills to design, implement, test, inspect, and evolve a system, and two critics: one argues for fewer actors, the other audits handlers for duplicate safety |
+| **Plugins for Claude Code and Codex** | Skills to design, implement, test, inspect, and evolve a system, and two critic subagents: one proposes fewer actors, the other audits handlers for duplicate safety |
 | **`@actord/toolkit`** | The `actord` CLI (`check`, `graph`, `diff`, `trace`, `verify`, and more) and the runtime your actors use: native Durable Object classes built on Cloudflare's Agents SDK |
 | **The Room** (Claude Code) | A live pane beside the transcript with the topology, mailboxes, contracts, and evidence, and a guard that asks you before deploy commands it recognizes run |
-| **Two reference apps** | Release Radar (rule-based) and Briefing Desk (model-assisted, with human approval before anything leaves) |
+| **Two reference apps** | Release Radar (rule-based) and Briefing Desk (model-assisted, with human approval before anything is sent) |
 
 ## Status
 
-`@actord/toolkit` 0.2.0 is on npm. The plugins install from this repository's main branch, which has moved
-well past that release with sources, approvals by email reply, agent actors with workspaces, and decisions
-and extractions on Workers AI. Every check in the repository passes in CI on a clean checkout.
+`@actord/toolkit` 0.2.0 is on npm. The plugins install from this repository's main branch, which adds
+sources, approvals by email reply, agent actors with workspaces, and decisions and extractions on Workers AI.
+CI runs every check on a clean checkout, and all of them pass.
 
-The Claude Code plugin is measured with `claude plugin eval` against the same model without it, on fifteen
-cases. Every safety case holds: no run deployed anything, and a request for exactly-once delivery gets an
-honest explanation instead of a false promise. The plugin helps most with orienting in a project and with
-questions answered from recorded events. Its systems currently pass their runtime tests a little less often
-than the baseline's, 55 of 66 runs against 61, and closing that gap is the next piece of work
+The Claude Code plugin is evaluated with `claude plugin eval` on fifteen cases, against the same model without
+the plugin. All safety cases pass: no run deployed anything, and when asked for exactly-once delivery, the
+plugin explains why it can't be guaranteed. The plugin helps most with orientation and with questions about
+recorded events. Systems built with the plugin pass their runtime tests slightly less often than the baseline
+(55 of 66 runs against 61 of 66), and that's the next thing I'm working on
 ([Evaluations](https://github.com/actor-systems/actord/wiki/Evaluations)).
 
-Nothing deploys without you, and nothing here promises exactly-once external effects
-([Limitations](https://github.com/actor-systems/actord/wiki/Limitations)). Everything the plugin runs on your
-machine is listed in [Trust and safety](https://github.com/actor-systems/actord/wiki/Trust-and-Safety).
+actord never deploys on its own, and it doesn't guarantee exactly-once external effects
+([Limitations](https://github.com/actor-systems/actord/wiki/Limitations)).
+[Trust and safety](https://github.com/actor-systems/actord/wiki/Trust-and-Safety) lists everything the plugin
+runs on your machine.
 
 ## License
 
